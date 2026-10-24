@@ -151,7 +151,7 @@
   1. 创建运行实例，绑定版本
   2. 渲染变量（第 8 节），在内存中注入连接信息（第 6 节）
   3. 调 `/submit-job`，带上 console 生成的 `jobId`（2026-10-24 补充，见下）
-  4. **阻塞轮询** `/job-info`（间隔 10 秒），直到任务结束
+  4. **阻塞轮询** `/job-info`（间隔 2 秒），直到任务结束
   5. 写入最终状态、指标，归档日志，执行行数校验（第 10 节）
   6. 根据结果返回成功或失败，让 XXL-JOB 的超时和阻塞策略生效
 - **失败重试由 console 处理器在同一个运行实例内完成，XXL-JOB 的失败重试次数固定为 0**（2026-10-23 改动）。原因是 XXL-JOB 每次重试都会生成一条新的调度日志，处理器无法把它和上一次失败关联起来。每次尝试在 `job_instance_attempt` 里记一条，有各自的 Zeta jobId 和日志，详见 [schema.md](schema.md) §4.2
@@ -413,14 +413,14 @@ updated_at >= '$[yyyy-MM-dd-1] 00:00:00' and updated_at < '$[yyyy-MM-dd] 00:00:0
 - **编辑页** `/jobs/:id/edit`：同步配置（向导或脚本）、调度（`/edit/schedule`）、基本信息（`/edit/basic`，名称、描述、所属项目）三部分各自保存，只有同步配置生成新版本。向导每一步都能保存，保存时先检查前面各步，再做预检查，有错误就停在出错的步骤或预检查页。有未保存修改时页签上有标记，离开页面会确认。没有权限的人打开编辑地址会被带回详情页
 - 任务移到另一个项目需要对目标项目有修改权限，之后运行时引用的是新项目的参数；已有运行记录的 `project_id` 不变
 
-**引擎指标**：BatchJobRunner 每次轮询（默认 10 秒，`console.run.poll-interval`）拿到 `/job-info` 的 metrics 后：
+**引擎指标**：BatchJobRunner 每次轮询（默认 2 秒，`console.run.poll-interval`）拿到 `/job-info` 的 metrics 后：
 
 - 覆盖 `job_instance_attempt.metrics_json`（最新快照），并更新 `job_instance` 的读写行数和字节数（只更新这几列，不会覆盖并发的停止操作），所以列表和概览在运行中就能看到进度
 - 往 `job_metric_sample`（V7）写一行累计值；吞吐量曲线由相邻两点的差值算出（行/秒），不存速率
 - `EngineMetrics` 解析出总量（`SourceReceivedCount`、`SinkWriteCount`、字节数、引擎给出的平均 QPS）和表级指标（`TableSourceReceived*`、`TableSinkWrite*`，键为 `Source[0].库.表`，值是一段 JSON 字符串）
 - 运行实例详情页新增"运行指标"区块（`GET /api/instances/{id}/metrics?attemptNo=`），按尝试分别显示
 
-`job_metric_sample` 目前不清理，每次运行约"运行秒数 ÷ 10"行；等日志保留策略（P3）一起做清理。
+`job_metric_sample` 目前不清理，每次运行约"运行秒数 ÷ 2"行；等日志保留策略（P3）一起做清理。
 
 ### 10.5 概览页（2026-10-24 实现）
 

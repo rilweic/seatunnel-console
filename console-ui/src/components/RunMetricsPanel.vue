@@ -89,7 +89,7 @@ const tables = computed(() =>
     <template v-if="showChart">
       <div class="block-title">吞吐量</div>
       <EChart v-if="rates.length >= 2" :option="chartOption" height="220px" />
-      <div v-else class="empty">运行时间太短，采样点不足；运行超过两个轮询周期（默认 10 秒）后会显示速率曲线</div>
+      <div v-else class="empty">运行时间太短，采样点不足；运行超过两个轮询周期（默认 2 秒）后会显示速率曲线</div>
     </template>
 
     <div class="block-title">表级指标<span class="tip">SeaTunnel 按插件统计，表名为 库.表（PostgreSQL 为 库.schema.表）</span></div>

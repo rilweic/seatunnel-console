@@ -454,9 +454,29 @@ export interface LogView {
   message: string | null
 }
 
+export type InstanceListFilters = {
+  projectId?: string
+  jobId?: string
+  jobName?: string
+  status?: string
+  backfillId?: string
+  startedFrom?: string
+  startedTo?: string
+  mine?: boolean
+}
+
+export interface InstanceFeed {
+  items: InstanceView[]
+  hasMore: boolean
+  nextCursorTime: string | null
+  nextCursorId: string | null
+}
+
 export const instanceApi = {
-  list: (params: { projectId?: string; jobId?: string; status?: string; backfillId?: string; mine?: boolean; page?: number; size?: number }) =>
-    get<PageResult<InstanceView>>('/instances', params),
+  list: (params: InstanceListFilters & { page?: number; size?: number }) => get<PageResult<InstanceView>>('/instances', params),
+  feed: (params: InstanceListFilters & { cursorTime?: string; cursorId?: string; size?: number }) =>
+    get<InstanceFeed>('/instances/feed', params),
+  count: (params: InstanceListFilters) => get<number>('/instances/count', params),
   rerun: (id: string, useLatestVersion: boolean) => post<{ instanceId: string }>(`/instances/${id}/rerun`, { useLatestVersion }),
   detail: (id: string) => get<InstanceDetail>(`/instances/${id}`),
   log: (id: string, attemptNo: number) => get<LogView>(`/instances/${id}/attempts/${attemptNo}/log`),

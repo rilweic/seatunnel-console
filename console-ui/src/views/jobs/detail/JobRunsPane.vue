@@ -89,9 +89,11 @@ defineExpose({ load })
   </el-table>
   <el-pagination
     v-model:current-page="query.page"
-    :page-size="query.size"
+    v-model:page-size="query.size"
+    :page-sizes="[10, 20, 50, 100]"
     :total="total"
-    layout="total, prev, pager, next"
+    layout="total, sizes, prev, pager, next"
+    @size-change="apply()"
     @current-change="apply(false)"
   />
 </template>

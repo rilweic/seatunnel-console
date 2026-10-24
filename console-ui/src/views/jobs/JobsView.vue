@@ -125,11 +125,11 @@ onMounted(() => {
       <el-table-column label="当前版本" width="90">
         <template #default="{ row }">{{ row.currentVersionNo ? `v${row.currentVersionNo}` : '未保存' }}</template>
       </el-table-column>
-      <el-table-column label="最近运行" width="190">
+      <el-table-column label="最近运行" width="220">
         <template #default="{ row }">
           <template v-if="row.activity?.lastRunStatus">
             <el-tag :type="statusTag[row.activity.lastRunStatus as RunStatus]">{{ statusText[row.activity.lastRunStatus as RunStatus] }}</el-tag>
-            <span class="sub inline">{{ formatTime(row.activity.lastRunAt).slice(5, 16) }}</span>
+            <span class="sub inline">{{ formatTime(row.activity.lastRunAt).slice(0, 16) }}</span>
           </template>
           <span v-else class="sub">未运行</span>
         </template>
@@ -160,9 +160,11 @@ onMounted(() => {
     </el-table>
     <el-pagination
       v-model:current-page="query.page"
-      :page-size="query.size"
+      v-model:page-size="query.size"
+      :page-sizes="[10, 20, 50, 100]"
       :total="total"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next"
+      @size-change="apply()"
       @current-change="apply(false)"
     />
   </el-card>

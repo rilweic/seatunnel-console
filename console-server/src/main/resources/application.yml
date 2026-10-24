@@ -37,6 +37,8 @@ console:
     password: ${CONSOLE_ZETA_PASSWORD:admin123}
     connect-timeout: 5s
     request-timeout: 30s
+  run:
+    poll-interval: ${CONSOLE_RUN_POLL_INTERVAL:2s}
   # Embedded XXL-JOB executor + admin OpenAPI (xxl-job-admin >= 3.5.0). Set enabled=false to run without it.
   xxl-job:
     enabled: ${CONSOLE_XXL_JOB_ENABLED:true}

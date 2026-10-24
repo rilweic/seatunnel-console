@@ -96,16 +96,48 @@ public class RunController {
         return Result.ok();
     }
 
+    @GetMapping("/api/instances/feed")
+    public Result<InstanceService.InstanceFeed> feed(
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String jobId,
+            @RequestParam(required = false) String jobName,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String backfillId,
+            @RequestParam(required = false) LocalDateTime startedFrom,
+            @RequestParam(required = false) LocalDateTime startedTo,
+            @RequestParam(defaultValue = "false") boolean mine,
+            @RequestParam(required = false) LocalDateTime cursorTime,
+            @RequestParam(required = false) String cursorId,
+            @RequestParam(required = false) Integer size) {
+        return Result.ok(instanceService.feed(projectId, jobId, jobName, status, backfillId, startedFrom, startedTo, mine, cursorTime, cursorId, size));
+    }
+
+    @GetMapping("/api/instances/count")
+    public Result<Long> count(
+            @RequestParam(required = false) String projectId,
+            @RequestParam(required = false) String jobId,
+            @RequestParam(required = false) String jobName,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String backfillId,
+            @RequestParam(required = false) LocalDateTime startedFrom,
+            @RequestParam(required = false) LocalDateTime startedTo,
+            @RequestParam(defaultValue = "false") boolean mine) {
+        return Result.ok(instanceService.count(projectId, jobId, jobName, status, backfillId, startedFrom, startedTo, mine));
+    }
+
     @GetMapping("/api/instances")
     public Result<PageResult<InstanceView>> list(
             @RequestParam(required = false) String projectId,
             @RequestParam(required = false) String jobId,
+            @RequestParam(required = false) String jobName,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String backfillId,
+            @RequestParam(required = false) LocalDateTime startedFrom,
+            @RequestParam(required = false) LocalDateTime startedTo,
             @RequestParam(defaultValue = "false") boolean mine,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
-        return Result.ok(instanceService.list(projectId, jobId, status, backfillId, mine, page, size));
+        return Result.ok(instanceService.list(projectId, jobId, jobName, status, backfillId, startedFrom, startedTo, mine, page, size));
     }
 
     @GetMapping("/api/instances/{id}")

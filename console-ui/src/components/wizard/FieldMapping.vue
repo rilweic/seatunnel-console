@@ -390,18 +390,20 @@ function timeFields(t: WizardTable) {
         </el-table-column>
         <el-table-column label="操作" width="170">
           <template #default="{ row }">
-            <el-button v-if="!row.masked" link type="primary" @click="processing = row">处理</el-button>
-            <el-button v-if="row.masked" link type="primary" @click="restore([row.name])">恢复</el-button>
-            <el-tooltip v-else-if="lockedKey(row)" content="按主键 upsert 需要主键字段" placement="top">
-              <span><el-button link type="primary" disabled>屏蔽</el-button></span>
-            </el-tooltip>
-            <el-button v-else link type="primary" @click="mask([row.name])">屏蔽</el-button>
-            <el-button
-              v-if="!row.masked && table.fieldNames?.[row.name] != null"
-              link
-              type="info"
-              @click="followRule(table!, row.name)"
-            >还原</el-button>
+            <div class="row-actions">
+              <el-button v-if="!row.masked" link type="primary" @click="processing = row">处理</el-button>
+              <el-button v-if="row.masked" link type="primary" @click="restore([row.name])">恢复</el-button>
+              <el-tooltip v-else-if="lockedKey(row)" content="按主键 upsert 需要主键字段" placement="top">
+                <span><el-button link type="primary" disabled>屏蔽</el-button></span>
+              </el-tooltip>
+              <el-button v-else link type="primary" @click="mask([row.name])">屏蔽</el-button>
+              <el-button
+                v-if="!row.masked && table.fieldNames?.[row.name] != null"
+                link
+                type="info"
+                @click="followRule(table!, row.name)"
+              >还原</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -631,6 +633,16 @@ function timeFields(t: WizardTable) {
 
 .table-box :deep(tr.masked .f-name) {
   text-decoration: line-through;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.table-box .row-actions :deep(.el-button.el-button.is-link) {
+  margin-left: 0;
 }
 
 .f-name {

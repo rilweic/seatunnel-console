@@ -91,7 +91,7 @@ public class RunExecutor {
             EngineLogService engineLogService,
             LogStorage logStorage,
             ObjectMapper objectMapper,
-            @Value("${console.run.poll-interval:10s}") Duration pollInterval) {
+            @Value("${console.run.poll-interval:2s}") Duration pollInterval) {
         this.recorder = recorder;
         this.jobService = jobService;
         this.renderer = renderer;

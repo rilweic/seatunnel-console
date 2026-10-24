@@ -107,6 +107,9 @@ public class InstanceService {
      */
     public record RunMetrics(Integer attemptNo, EngineMetrics metrics, List<SampleView> samples) {}
 
+    public record InstanceFeed(
+            List<InstanceView> items, boolean hasMore, LocalDateTime nextCursorTime, String nextCursorId) {}
+
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
 
     private final JobInstanceMapper instanceMapper;
@@ -148,24 +151,46 @@ public class InstanceService {
 
     /** @param mine only runs of the current user's jobs, whoever or whatever triggered them */
     public PageResult<InstanceView> list(
-            String projectId, String jobId, String status, String backfillBatchId, boolean mine, Integer page, Integer size) {
-        Page<JobInstance> result =
-                instanceMapper.selectPage(
-                        Pages.of(page, size),
-                        new LambdaQueryWrapper<JobInstance>()
-                                .select(JobInstance.class, f -> !f.getColumn().equals("config_masked"))
-                                .eq(blank(projectId), JobInstance::getProjectId, projectId)
-                                .eq(blank(jobId), JobInstance::getJobDefinitionId, jobId)
-                                .eq(blank(status), JobInstance::getStatus, status)
-                                .eq(blank(backfillBatchId), JobInstance::getBackfillBatchId, backfillBatchId)
-                                .inSql(mine, JobInstance::getJobDefinitionId,
-                                        "select id from job_definition where created_by = " + quote(CurrentUser.idOrNull()))
-                                .orderByDesc(JobInstance::getCreatedAt));
+            String projectId, String jobId, String jobName, String status, String backfillBatchId,
+            LocalDateTime startedFrom, LocalDateTime startedTo, boolean mine, Integer page, Integer size) {
+        Page<JobInstance> result = instanceMapper.selectPage(
+                Pages.of(page, size),
+                filters(projectId, jobId, jobName, status, backfillBatchId, startedFrom, startedTo, mine)
+                        .select(JobInstance.class, f -> !f.getColumn().equals("config_masked"))
+                        .orderByDesc(JobInstance::getCreatedAt));
         Map<String, String> projectNames = projectNames(result.getRecords());
         Map<String, JobDefinition> jobs = jobs(result.getRecords());
         Map<String, Integer> versionNos = versionNos(result.getRecords());
         Map<String, String> userNames = users.names(result.getRecords().stream().map(JobInstance::getCreatedBy).toList());
         return Pages.result(result).map(i -> view(i, projectNames, jobs, versionNos, userNames));
+    }
+
+    public InstanceFeed feed(
+            String projectId, String jobId, String jobName, String status, String backfillBatchId,
+            LocalDateTime startedFrom, LocalDateTime startedTo, boolean mine,
+            LocalDateTime cursorTime, String cursorId, Integer size) {
+        int limit = size == null || size < 1 ? 20 : Math.min(size, Pages.MAX_SIZE);
+        List<JobInstance> records = instanceMapper.selectList(
+                filters(projectId, jobId, jobName, status, backfillBatchId, startedFrom, startedTo, mine)
+                        .select(JobInstance.class, f -> !f.getColumn().equals("config_masked"))
+                        .and(cursorTime != null && blank(cursorId), w -> w
+                                .lt(JobInstance::getCreatedAt, cursorTime)
+                                .or(sameTime -> sameTime
+                                        .eq(JobInstance::getCreatedAt, cursorTime)
+                                        .lt(JobInstance::getId, cursorId)))
+                        .orderByDesc(JobInstance::getCreatedAt)
+                        .orderByDesc(JobInstance::getId)
+                        .last("limit " + (limit + 1)));
+        boolean hasMore = records.size() > limit;
+        List<JobInstance> page = records.stream().limit(limit).toList();
+        JobInstance last = page.isEmpty() ? null : page.get(page.size() - 1);
+        return new InstanceFeed(views(page), hasMore, hasMore ? last.getCreatedAt() : null, hasMore ? last.getId() : null);
+    }
+
+    public long count(
+            String projectId, String jobId, String jobName, String status, String backfillBatchId,
+            LocalDateTime startedFrom, LocalDateTime startedTo, boolean mine) {
+        return instanceMapper.selectCount(filters(projectId, jobId, jobName, status, backfillBatchId, startedFrom, startedTo, mine));
     }
 
     public InstanceDetail detail(String id) {
@@ -280,6 +305,26 @@ public class InstanceService {
         return attemptMapper.selectList(new LambdaQueryWrapper<JobInstanceAttempt>()
                 .eq(JobInstanceAttempt::getInstanceId, instanceId)
                 .orderByAsc(JobInstanceAttempt::getAttemptNo));
+    }
+
+    private static LambdaQueryWrapper<JobInstance> filters(
+            String projectId, String jobId, String jobName, String status, String backfillBatchId,
+            LocalDateTime startedFrom, LocalDateTime startedTo, boolean mine) {
+        return new LambdaQueryWrapper<JobInstance>()
+                .eq(blank(projectId), JobInstance::getProjectId, projectId)
+                .eq(blank(jobId), JobInstance::getJobDefinitionId, jobId)
+                .apply(blank(jobName), "job_definition_id in (select id from job_definition where name like {0})",
+                        "%" + Pages.literal(jobName) + "%")
+                .eq(blank(status), JobInstance::getStatus, status)
+                .eq(blank(backfillBatchId), JobInstance::getBackfillBatchId, backfillBatchId)
+                .and(startedFrom != null, w -> w
+                        .and(started -> started.isNotNull(JobInstance::getStartedAt).ge(JobInstance::getStartedAt, startedFrom))
+                        .or(pending -> pending.isNull(JobInstance::getStartedAt).ge(JobInstance::getCreatedAt, startedFrom)))
+                .and(startedTo != null, w -> w
+                        .and(started -> started.isNotNull(JobInstance::getStartedAt).lt(JobInstance::getStartedAt, startedTo))
+                        .or(pending -> pending.isNull(JobInstance::getStartedAt).lt(JobInstance::getCreatedAt, startedTo)))
+                .inSql(mine, JobInstance::getJobDefinitionId,
+                        "select id from job_definition where created_by = " + quote(CurrentUser.idOrNull()));
     }
 
     /** User ids are UUIDs, never user input, but quote them safely anyway for the inSql fragment. */
