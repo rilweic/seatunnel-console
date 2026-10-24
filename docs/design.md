@@ -115,7 +115,10 @@
 9. 用到 Jdbc 连接器时，每个节点的 `lib/` 下都要放对应的 JDBC 驱动
 10. SeaTunnel 在**接收任务时**就会校验数据源，比如 Jdbc 的 query 引用了不存在的表。这类失败直接返回 HTTP 500，**响应里没有根因**，也不会生成作业日志；根因只写在 master 节点的 `logs/seatunnel-engine-server.log` 里。console 会把这类失败标记为"提交被拒绝"，并在页面上给出这个提示
 
-健康检查项：REST 是否连通、认证是否开启、所需 connector 是否齐全、集群版本和已导入元数据的版本是否一致。
+健康检查（"集群健康"页，2026-10-24 实现）分两层：
+
+- **快速检查**（打开页面自动执行，不提交作业）：逐个 master 是否连通、是否开启认证、版本是否为 3.0；worker 节点；所需连接器是否已安装（向导用到的 Jdbc source/sink、Elasticsearch sink，加上所有任务当前版本实际引用的连接器，缺失时列出受影响的任务；通过 `/option-rules` 返回 404 判断，只能检查响应的那个 master）；XXL-JOB admin 是否可访问；console 数据目录是否可写
+- **运行诊断**（手动触发）：同时提交几个很小的真实作业。FakeSource → Console 作业结束后能否读到它的日志（检查第 8 条 routingAppender）；每个 MySQL / PostgreSQL 数据源一个 `select 1` 作业（检查第 9 条驱动，以及 worker 到数据库的网络）。最多等 90 秒，超时的作业会被停止
 
 ## 5. 调度：XXL-JOB
 

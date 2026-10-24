@@ -6,6 +6,8 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.engine.ConnectorOption;
 import com.dataintegration.console.engine.EngineClient;
+import com.dataintegration.console.engine.EngineWorker;
+import com.dataintegration.console.engine.MasterStatus;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.EngineLogFile;
@@ -182,6 +184,21 @@ class BatchJobRunnerTest {
         @Override
         public List<ConnectorOption> connectorOptions(String pluginType, String plugin) {
             return List.of();
+        }
+
+        @Override
+        public List<MasterStatus> probeMasters() {
+            return List.of();
+        }
+
+        @Override
+        public List<EngineWorker> workers() {
+            return List.of();
+        }
+
+        @Override
+        public boolean hasConnector(String pluginType, String plugin) {
+            return true;
         }
 
         @Override

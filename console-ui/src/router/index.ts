@@ -22,7 +22,7 @@ const router = createRouter({
           component: () => import('@/views/instances/InstanceDetailView.vue'),
           meta: { title: '运行详情', menu: '/instances' },
         },
-        { path: 'cluster', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群' } },
+        { path: 'cluster', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群健康检查' } },
       ],
     },
   ],

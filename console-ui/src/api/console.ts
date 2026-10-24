@@ -358,6 +358,30 @@ export const backfillApi = {
   resume: (id: string) => post<BackfillView>(`/backfills/${id}/resume`),
 }
 
+export interface HealthCheck {
+  group: string
+  name: string
+  status: 'OK' | 'WARN' | 'ERROR'
+  message: string
+}
+
+export interface ClusterHealth {
+  checks: HealthCheck[]
+  masters: { url: string; reachable: boolean; authRequired: boolean | null; version: string | null; latencyMillis: number; error: string | null }[]
+  workers: {
+    address: string
+    totalHeapBytes: number
+    availableHeapBytes: number
+    totalSlots: number
+    freeSlots: number
+    dynamicSlot: boolean
+    runningJobs: number
+  }[]
+  overview: Record<string, string>
+}
+
 export const clusterApi = {
   overview: () => get<Record<string, string>>('/cluster/overview'),
+  health: () => get<ClusterHealth>('/cluster/health'),
+  diagnose: () => post<HealthCheck[]>('/cluster/diagnose'),
 }

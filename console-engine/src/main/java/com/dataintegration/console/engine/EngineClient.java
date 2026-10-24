@@ -20,6 +20,18 @@ public interface EngineClient {
      */
     List<ConnectorOption> connectorOptions(String pluginType, String plugin);
 
+    /** Probes every configured master separately, for the health check page. */
+    List<MasterStatus> probeMasters();
+
+    /** Worker nodes and their resources. */
+    List<EngineWorker> workers();
+
+    /**
+     * Whether the cluster has a connector installed. Only the master that answers is asked, so a
+     * connector missing on other nodes is not detected.
+     */
+    boolean hasConnector(String pluginType, String plugin);
+
     /** Cluster overview, used by the cluster health check page. */
     Map<String, String> overview();
 

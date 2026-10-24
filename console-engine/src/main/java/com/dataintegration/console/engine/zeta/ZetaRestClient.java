@@ -4,6 +4,8 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.engine.ConnectorOption;
 import com.dataintegration.console.engine.EngineClient;
+import com.dataintegration.console.engine.EngineWorker;
+import com.dataintegration.console.engine.MasterStatus;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.EngineLogFile;
@@ -68,6 +70,77 @@ public class ZetaRestClient implements EngineClient {
         Map<String, String> result = new LinkedHashMap<>();
         body.properties().forEach(e -> result.put(e.getKey(), e.getValue().asString()));
         return result;
+    }
+
+    @Override
+    public List<MasterStatus> probeMasters() {
+        List<MasterStatus> result = new ArrayList<>();
+        for (String master : config.masterUrls()) {
+            long start = System.currentTimeMillis();
+            try {
+                HttpResponse<String> response = httpClient.send(
+                        decorate(HttpRequest.newBuilder().GET(), master + "/overview", "application/json"),
+                        HttpResponse.BodyHandlers.ofString());
+                long latency = System.currentTimeMillis() - start;
+                if (response.statusCode() / 100 != 2) {
+                    result.add(new MasterStatus(master, true, null, null, latency,
+                            "/overview returned HTTP " + response.statusCode()
+                                    + (response.statusCode() == 401 ? " (check console.zeta.username / password)" : "")));
+                    continue;
+                }
+                String version = textOrNull(mapper.readTree(response.body()), "projectVersion");
+                result.add(new MasterStatus(master, true, authRequired(master), version, latency, null));
+            } catch (IOException e) {
+                result.add(new MasterStatus(master, false, null, null, System.currentTimeMillis() - start, e.toString()));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "interrupted while probing Zeta", e);
+            }
+        }
+        return result;
+    }
+
+    /** True when the master refuses a request without credentials. */
+    private Boolean authRequired(String master) throws InterruptedException {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(master + "/overview"))
+                    .timeout(config.requestTimeout())
+                    .GET()
+                    .build();
+            return httpClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 401;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    @Override
+    public List<EngineWorker> workers() {
+        List<EngineWorker> workers = new ArrayList<>();
+        for (JsonNode w : send("/resource/workers", HttpRequest.newBuilder().GET(), "application/json").path("workers")) {
+            workers.add(new EngineWorker(
+                    textOrNull(w, "address"),
+                    w.path("totalHeapMemoryBytes").asLong(),
+                    w.path("availableHeapMemoryBytes").asLong(),
+                    w.path("totalSlots").asInt(),
+                    w.path("freeSlots").asInt(),
+                    w.path("dynamicSlot").asBoolean(),
+                    w.path("runningJobIds").size()));
+        }
+        return workers;
+    }
+
+    /** {@code /option-rules} answers 404 for a connector the master does not have. */
+    @Override
+    public boolean hasConnector(String pluginType, String plugin) {
+        try {
+            connectorOptions(pluginType, plugin);
+            return true;
+        } catch (ConsoleException e) {
+            if (e.getCode() == ErrorCodes.ENGINE_REQUEST_FAILED && e.getMessage().contains("HTTP 404")) {
+                return false;
+            }
+            throw e;
+        }
     }
 
     /** {@code GET /option-rules?type=&plugin=} (3.0); required option groups are flattened. */

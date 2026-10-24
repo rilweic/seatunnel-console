@@ -36,7 +36,7 @@ const menus = [
   { path: '/datasources', title: '数据源', icon: Coin },
   { path: '/jobs', title: '任务', icon: Tickets },
   { path: '/instances', title: '运行实例', icon: Connection },
-  { path: '/cluster', title: '集群', icon: Monitor },
+  { path: '/cluster', title: '集群健康', icon: Monitor },
 ]
 
 const roleText = computed(() => (userStore.user?.role === 'ADMIN' ? '管理员' : '普通用户'))
