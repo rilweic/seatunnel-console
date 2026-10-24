@@ -212,6 +212,8 @@ const UNIT_TEXT: Record<string, string> = { day: '天', hour: '小时', month: '
   display: flex;
   flex-direction: column;
   width: 100%;
+  /* the layout follows the editor's own width, so it also fits dialogs */
+  container-type: inline-size;
 }
 
 .head,
@@ -346,24 +348,54 @@ const UNIT_TEXT: Record<string, string> = { day: '天', hour: '小时', month: '
   margin-top: 12px;
 }
 
-@media (max-width: 720px) {
+/* narrow (e.g. in a dialog): one card per parameter, the value on its own full-width line */
+@container (max-width: 780px) {
   .head {
     display: none;
   }
 
   .row {
-    grid-template-columns: 1fr 28px;
+    grid-template-columns: minmax(0, 1fr) 130px 28px;
+    margin-bottom: 10px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
   }
 
-  .c-name,
-  .c-type,
-  .c-value {
+  .c-name {
     grid-column: 1;
   }
 
-  .c-del {
+  .c-type {
     grid-column: 2;
+  }
+
+  .c-del {
+    grid-column: 3;
     grid-row: 1;
+  }
+
+  .c-value {
+    grid-column: 1 / -1;
+  }
+
+  .add {
+    margin-top: 2px;
+  }
+}
+
+@container (max-width: 480px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) 28px;
+  }
+
+  .c-type {
+    grid-column: 1;
+  }
+
+  .format {
+    width: 100%;
   }
 }
 </style>
