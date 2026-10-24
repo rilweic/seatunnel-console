@@ -65,4 +65,20 @@ class ClusterControllerTest {
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value(ErrorCodes.ENGINE_UNAVAILABLE));
     }
+
+    @Test
+    @WithMockUser
+    void unknownPathIs404NotAnInternalError() throws Exception {
+        mockMvc.perform(get("/api/no-such-thing"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(ErrorCodes.NOT_FOUND));
+    }
+
+    @Test
+    @WithMockUser
+    void wrongMethodIs405NotAnInternalError() throws Exception {
+        mockMvc.perform(get("/api/cluster/diagnose"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.code").value(ErrorCodes.INVALID_ARGUMENT));
+    }
 }
