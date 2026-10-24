@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, DataBoard, Folder, Monitor, Tickets, User } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -41,14 +41,30 @@ function toggle() {
   }
 }
 
-const menus = computed(() => [
-  { path: '/dashboard', title: '概览', icon: DataBoard },
-  { path: '/projects', title: '项目', icon: Folder },
-  { path: '/datasources', title: '数据源', icon: Coin },
-  { path: '/jobs', title: '任务', icon: Tickets },
-  { path: '/instances', title: '运行实例', icon: Connection },
-  { path: '/cluster', title: '集群健康', icon: Monitor },
-  ...(userStore.isAdmin ? [{ path: '/users', title: '用户管理', icon: User }] : []),
+/** Menu groups in the order of daily work: the jobs first, the things set up once after them. */
+const menuGroups = computed(() => [
+  { title: '', items: [{ path: '/dashboard', title: '概览', icon: DataBoard }] },
+  {
+    title: '数据同步',
+    items: [
+      { path: '/jobs', title: '任务', icon: Tickets },
+      { path: '/instances', title: '运行实例', icon: Timer },
+    ],
+  },
+  {
+    title: '资源配置',
+    items: [
+      { path: '/datasources', title: '数据源', icon: Coin },
+      { path: '/projects', title: '项目', icon: Folder },
+    ],
+  },
+  {
+    title: '运维管理',
+    items: [
+      { path: '/cluster', title: '集群健康', icon: Monitor },
+      ...(userStore.isAdmin ? [{ path: '/users', title: '用户管理', icon: User }] : []),
+    ],
+  },
 ])
 
 const roleText = computed(() => (userStore.user?.role === 'ADMIN' ? '管理员' : '普通用户'))
@@ -104,10 +120,15 @@ async function logout() {
           <el-icon><component :is="collapsed ? DArrowRight : DArrowLeft" /></el-icon>
         </div>
         <el-menu :default-active="activeMenu" :collapse="collapsed" :collapse-transition="false" router class="menu">
-          <el-menu-item v-for="menu in menus" :key="menu.path" :index="menu.path">
-            <el-icon><component :is="menu.icon" /></el-icon>
-            <template #title>{{ menu.title }}</template>
-          </el-menu-item>
+          <template v-for="group in menuGroups" :key="group.title">
+            <li v-if="group.title" class="menu-group" :title="collapsed ? group.title : undefined">
+              <span v-if="!collapsed">{{ group.title }}</span>
+            </li>
+            <el-menu-item v-for="menu in group.items" :key="menu.path" :index="menu.path">
+              <el-icon><component :is="menu.icon" /></el-icon>
+              <template #title>{{ menu.title }}</template>
+            </el-menu-item>
+          </template>
         </el-menu>
       </aside>
       <main class="content">
@@ -297,6 +318,23 @@ async function logout() {
 
 .menu :deep(.el-menu-item) {
   padding-left: 24px !important;
+}
+
+.menu-group {
+  margin-top: 14px;
+  padding: 6px 24px 6px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  letter-spacing: 1px;
+  list-style: none;
+}
+
+/* collapsed: the group title becomes a thin divider */
+.menu.el-menu--collapse .menu-group {
+  margin: 10px 16px;
+  padding: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .menu.el-menu--collapse :deep(.el-menu-item) {
