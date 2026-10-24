@@ -94,10 +94,10 @@ public class ScheduleService {
         XxlJobAdminClient client = requireClient();
         CronSchedule.parseSchedule(command.cron(), LocalDateTime.now());
         if (command.enabled() && job.getCurrentVersionId() == null) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before enabling its schedule");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "任务还没有保存过版本，先在「同步配置」保存再启用调度");
         }
         if (command.failRetryCount() < 0 || command.retryIntervalSeconds() < 0 || command.timeoutSeconds() < 0) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "retry count, retry interval and timeout must not be negative");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "重试次数、重试间隔和超时不能是负数");
         }
 
         JobSchedule schedule = scheduleMapper.selectById(jobId);
@@ -157,13 +157,24 @@ public class ScheduleService {
      * 00:00:00 when the job has no cron.
      */
     public static List<LocalDateTime> backfillTimes(String cron, LocalDate start, LocalDate end, int max) {
+        return backfillTimes(cron, start, end, max, null);
+    }
+
+    /**
+     * @param notAfter the last time a run may be scheduled for, so a backfill never runs a time
+     *     that has not come yet; null for none
+     */
+    public static List<LocalDateTime> backfillTimes(String cron, LocalDate start, LocalDate end, int max, LocalDateTime notAfter) {
         if (end.isBefore(start)) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "end date is before start date");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "结束日期不能早于开始日期");
         }
         LocalDateTime until = end.plusDays(1).atStartOfDay();
+        if (notAfter != null && notAfter.plusNanos(1).isBefore(until)) {
+            until = notAfter.plusNanos(1);
+        }
         List<LocalDateTime> times = new ArrayList<>();
         if (cron == null) {
-            for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) {
+            for (LocalDate day = start; !day.isAfter(end) && day.atStartOfDay().isBefore(until); day = day.plusDays(1)) {
                 times.add(day.atStartOfDay());
                 if (times.size() > max) {
                     break;
@@ -177,10 +188,10 @@ public class ScheduleService {
             }
         }
         if (times.size() > max) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "a backfill may have at most " + max + " runs; narrow the date range");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "一次补数最多 " + max + " 次运行，请缩小日期范围");
         }
         if (times.isEmpty()) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "the schedule never fires in this date range");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "这段日期内没有要补的运行：调度在这段时间不触发，或者今天的触发时间还没到");
         }
         return times;
     }

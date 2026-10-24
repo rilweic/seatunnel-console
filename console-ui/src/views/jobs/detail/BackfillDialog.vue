@@ -59,9 +59,16 @@ async function create() {
   <el-dialog v-model="visible" title="补数" width="700px">
     <el-form label-width="90px">
       <el-form-item label="日期范围">
-        <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD" start-placeholder="开始日期" end-placeholder="结束日期" />
+        <el-date-picker
+          v-model="range"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          :disabled-date="(d: Date) => d.getTime() > Date.now()"
+        />
         <div class="tip">
-          选的是<b>计划时间</b>的日期，<code>${system.biz.date}</code> 是计划时间的前一天。任务有调度时，按调度的 cron 生成范围内的每个触发时间；没有调度时每天 00:00 一次。
+          选的是<b>计划时间</b>的日期，<code>${system.biz.date}</code> 是计划时间的前一天。任务有调度时，按调度的 cron 生成范围内的每个触发时间；没有调度时每天 00:00 一次。最晚补到今天，今天还没到点的运行不补。
         </div>
       </el-form-item>
       <el-form-item v-if="plan || planError" label="计划">

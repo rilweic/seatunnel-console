@@ -105,8 +105,9 @@ public class BackfillService {
 
     public Plan plan(String jobId, LocalDate start, LocalDate end) {
         jobService.require(jobId);
+        requireNoOpenBatch(jobId);
         String cron = scheduleService.cronOf(jobId);
-        List<LocalDateTime> times = ScheduleService.backfillTimes(cron, start, end, MAX_RUNS);
+        List<LocalDateTime> times = times(cron, start, end);
         return new Plan(times.size(), cron, times.get(0), times.get(times.size() - 1));
     }
 
@@ -116,13 +117,14 @@ public class BackfillService {
         jobService.lockJob(jobId);
         JobDefinition job = jobService.requireEditable(jobId);
         if (job.getCurrentVersionId() == null) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before backfilling it");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "任务还没有保存过版本，先保存再补数");
         }
+        requireNoOpenBatch(jobId);
         if (startupParams != null) {
             startupParams.keySet().forEach(Variables::validateName);
         }
         String cron = scheduleService.cronOf(jobId);
-        List<LocalDateTime> times = ScheduleService.backfillTimes(cron, start, end, MAX_RUNS);
+        List<LocalDateTime> times = times(cron, start, end);
 
         BackfillBatch batch = new BackfillBatch();
         batch.setJobDefinitionId(jobId);
@@ -157,6 +159,27 @@ public class BackfillService {
         return view(require(batchId));
     }
 
+    /** One open (running or paused) batch per job: two would take turns on the job, in an order nobody chose. */
+    private void requireNoOpenBatch(String jobId) {
+        BackfillBatch open = batchMapper.selectOne(new LambdaQueryWrapper<BackfillBatch>()
+                .eq(BackfillBatch::getJobDefinitionId, jobId)
+                .in(BackfillBatch::getStatus, Status.RUNNING.name(), Status.PAUSED.name())
+                .last("limit 1"));
+        if (open != null) {
+            throw new ConsoleException(ErrorCodes.CONFLICT, "这个任务已有一个" + (Status.PAUSED.name().equals(open.getStatus()) ? "暂停中" : "进行中")
+                    + "的补数（" + open.getStartTime().toLocalDate() + " ～ " + open.getEndTime().toLocalDate() + "），请先停止它或等它结束");
+        }
+    }
+
+    /** A backfill only runs times that have come: the end date is today at the latest, and today's later times are left out. */
+    private static List<LocalDateTime> times(String cron, LocalDate start, LocalDate end) {
+        LocalDateTime now = LocalDateTime.now();
+        if (end.isAfter(now.toLocalDate())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "结束日期不能晚于今天，补数只补已经到点的运行");
+        }
+        return ScheduleService.backfillTimes(cron, start, end, MAX_RUNS, now);
+    }
+
     /** Stops the batch; its active run, if any, is stopped too. */
     public BatchView cancel(String batchId) {
         BackfillBatch batch = require(batchId);
@@ -169,7 +192,7 @@ public class BackfillService {
                         .eq(BackfillBatch::getId, batchId)
                         .in(BackfillBatch::getStatus, Status.RUNNING.name(), Status.PAUSED.name()));
         if (updated == 0) {
-            throw new ConsoleException(ErrorCodes.CONFLICT, "backfill already " + batch.getStatus());
+            throw new ConsoleException(ErrorCodes.CONFLICT, "补数已经" + ("FINISHED".equals(batch.getStatus()) ? "结束" : "停止"));
         }
         for (JobInstance active : instanceMapper.selectList(new LambdaQueryWrapper<JobInstance>()
                 .eq(JobInstance::getBackfillBatchId, batchId)
@@ -194,7 +217,7 @@ public class BackfillService {
                         .eq(BackfillBatch::getId, batchId)
                         .eq(BackfillBatch::getStatus, Status.PAUSED.name()));
         if (updated == 0) {
-            throw new ConsoleException(ErrorCodes.CONFLICT, "only a PAUSED backfill can be resumed, this one is " + batch.getStatus());
+            throw new ConsoleException(ErrorCodes.CONFLICT, "只有暂停中的补数才能继续");
         }
         return get(batchId);
     }
@@ -230,8 +253,9 @@ public class BackfillService {
         List<LocalDateTime> times;
         try {
             job = jobService.require(batch.getJobDefinitionId());
-            times = ScheduleService.backfillTimes(
-                    batch.getCron(), batch.getStartTime().toLocalDate(), batch.getEndTime().toLocalDate(), MAX_RUNS);
+            // the times as they were when the batch was created, so the indexes keep their meaning
+            times = ScheduleService.backfillTimes(batch.getCron(), batch.getStartTime().toLocalDate(),
+                    batch.getEndTime().toLocalDate(), MAX_RUNS, batch.getCreatedAt());
         } catch (ConsoleException e) {
             transition(batch, Status.PAUSED, e.getMessage());
             return;
@@ -318,7 +342,7 @@ public class BackfillService {
     private BackfillBatch require(String batchId) {
         BackfillBatch batch = batchMapper.selectById(batchId);
         if (batch == null) {
-            throw new ConsoleException(ErrorCodes.NOT_FOUND, "backfill not found: " + batchId);
+            throw new ConsoleException(ErrorCodes.NOT_FOUND, "补数不存在：" + batchId);
         }
         return batch;
     }
