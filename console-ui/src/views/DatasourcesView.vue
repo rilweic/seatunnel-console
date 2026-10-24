@@ -7,6 +7,7 @@ import { datasourceApi, type DatasourceType, type DatasourceView } from '@/api/c
 import { useUserStore } from '@/stores/user'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import { useQueryState } from '@/composables/useQueryState'
 
 interface FieldDef {
   key: string
@@ -50,7 +51,7 @@ const typeLabels: Record<DatasourceType, string> = {
 const rows = ref<DatasourceView[]>([])
 const total = ref(0)
 const store = useUserStore()
-const query = reactive({ keyword: '', type: '', mine: true, page: 1, size: 20 })
+const { state: query, apply } = useQueryState({ keyword: '', type: '', mine: true, page: 1, size: 20 }, () => load())
 const loading = ref(false)
 
 async function load() {
@@ -168,12 +169,12 @@ onMounted(load)
     </PageHeader>
     <div class="toolbar">
       <div class="filters">
-        <el-radio-group v-model="query.mine" class="scope" @change="load">
+        <el-radio-group v-model="query.mine" class="scope" @change="apply()">
         <el-radio-button :value="true">我的</el-radio-button>
         <el-radio-button :value="false">全部</el-radio-button>
       </el-radio-group>
-        <el-input v-model="query.keyword" placeholder="搜索名称" clearable class="search" @change="load" />
-        <el-select v-model="query.type" placeholder="全部类型" clearable class="type" @change="load">
+        <el-input v-model="query.keyword" placeholder="搜索名称" clearable class="search" @change="apply()" />
+        <el-select v-model="query.type" placeholder="全部类型" clearable class="type" @change="apply()">
           <el-option v-for="(label, value) in typeLabels" :key="value" :label="label" :value="value" />
         </el-select>
       </div>
@@ -206,7 +207,7 @@ onMounted(load)
       :total="total"
       layout="total, prev, pager, next"
       class="pager"
-      @current-change="load"
+      @current-change="apply(false)"
     />
   </el-card>
 

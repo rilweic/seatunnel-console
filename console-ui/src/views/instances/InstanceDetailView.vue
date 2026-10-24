@@ -12,7 +12,8 @@ const router = useRouter()
 const id = route.params.id as string
 
 const detail = ref<InstanceDetail | null>(null)
-const activeAttempt = ref<number>(1)
+/** The attempt whose log is shown; kept in the URL (?attempt=) so a refresh stays on it. */
+const activeAttempt = ref<number>(Number(route.query.attempt) || 1)
 const log = ref<LogView | null>(null)
 const logLoading = ref(false)
 const followTail = ref(true)
@@ -111,7 +112,10 @@ const startupParams = computed(() => {
   }
 })
 
-watch(activeAttempt, () => loadLog())
+watch(activeAttempt, (attempt) => {
+  router.replace({ query: attempt === detail.value?.attempts.at(-1)?.attemptNo ? {} : { attempt: String(attempt) } })
+  loadLog()
+})
 
 const logSourceText = computed(() => {
   switch (log.value?.source) {
@@ -137,7 +141,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
           <router-link :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
           <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
-          <router-link v-if="instance.backfillBatchId" :to="`/jobs/${instance.jobDefinitionId}?tab=backfills`" class="muted">属于一次补数</router-link>
+          <router-link v-if="instance.backfillBatchId" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">属于一次补数</router-link>
         </div>
         <div>
           <el-button v-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>

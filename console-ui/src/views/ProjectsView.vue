@@ -7,16 +7,18 @@ import { useRouter } from 'vue-router'
 import { projectApi, type ParamItem, type ProjectView } from '@/api/console'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import { useQueryState } from '@/composables/useQueryState'
 
 const router = useRouter()
 
 function openJobs(row: ProjectView) {
-  router.push({ path: '/jobs', query: { projectId: row.id } })
+  // Opened from a project (possibly someone else's), show all of its jobs, not only mine.
+  router.push({ path: '/jobs', query: { projectId: row.id, mine: 'false' } })
 }
 
 const rows = ref<ProjectView[]>([])
 const total = ref(0)
-const query = reactive({ keyword: '', mine: true, page: 1, size: 20 })
+const { state: query, apply } = useQueryState({ keyword: '', mine: true, page: 1, size: 20 }, () => load())
 const loading = ref(false)
 
 async function load() {
@@ -95,11 +97,11 @@ onMounted(load)
       <el-button type="primary" :icon="Plus" @click="openCreate">新建项目</el-button>
     </PageHeader>
     <div class="toolbar">
-      <el-radio-group v-model="query.mine" size="default" class="scope" @change="load">
+      <el-radio-group v-model="query.mine" size="default" class="scope" @change="apply()">
         <el-radio-button :value="true">我的</el-radio-button>
         <el-radio-button :value="false">全部</el-radio-button>
       </el-radio-group>
-      <el-input v-model="query.keyword" placeholder="搜索项目名称" clearable class="search" @change="load" />
+      <el-input v-model="query.keyword" placeholder="搜索项目名称" clearable class="search" @change="apply()" />
     </div>
     <el-table v-loading="loading" :data="rows">
       <el-table-column label="名称" min-width="160">
@@ -134,7 +136,7 @@ onMounted(load)
       :total="total"
       layout="total, prev, pager, next"
       class="pager"
-      @current-change="load"
+      @current-change="apply(false)"
     />
   </el-card>
 

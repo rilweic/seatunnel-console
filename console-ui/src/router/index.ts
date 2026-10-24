@@ -16,7 +16,12 @@ const router = createRouter({
         { path: 'projects', component: () => import('@/views/ProjectsView.vue'), meta: { title: '项目' } },
         { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源' } },
         { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务' } },
-        { path: 'jobs/:id', component: () => import('@/views/jobs/JobDetailView.vue'), meta: { title: '任务详情', menu: '/jobs' } },
+        {
+          // The tab is part of the path (the config tab has none), so refresh and copied links keep it.
+          path: 'jobs/:id/:tab(schedule|backfills|versions|runs)?',
+          component: () => import('@/views/jobs/JobDetailView.vue'),
+          meta: { title: '任务详情', menu: '/jobs' },
+        },
         { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行实例' } },
         {
           path: 'instances/:id',

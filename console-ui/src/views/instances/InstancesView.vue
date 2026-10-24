@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { Refresh } from '@element-plus/icons-vue'
-import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { instanceApi, type InstanceView, type RunStatus } from '@/api/console'
 import { formatDuration, formatNumber, formatTime, isActive, statusTag, statusText, triggerText } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import { useQueryState } from '@/composables/useQueryState'
 import ValidationTag from '@/components/ValidationTag.vue'
 
 const router = useRouter()
 
 const rows = ref<InstanceView[]>([])
 const total = ref(0)
-const query = reactive({ status: '', mine: true, page: 1, size: 20 })
+const { state: query, apply } = useQueryState({ status: '', mine: true, page: 1, size: 20 }, () => load())
 const loading = ref(false)
 let timer: number | undefined
 
@@ -42,11 +43,11 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       <el-button :icon="Refresh" @click="load()">刷新</el-button>
     </PageHeader>
     <div class="toolbar">
-      <el-radio-group v-model="query.mine" class="scope" @change="load()">
+      <el-radio-group v-model="query.mine" class="scope" @change="apply()">
         <el-radio-button :value="true">我的</el-radio-button>
         <el-radio-button :value="false">全部</el-radio-button>
       </el-radio-group>
-      <el-select v-model="query.status" placeholder="全部状态" clearable class="status" @change="load()">
+      <el-select v-model="query.status" placeholder="全部状态" clearable class="status" @change="apply()">
         <el-option v-for="(label, value) in statusText" :key="value" :label="label" :value="value" />
       </el-select>
     </div>
@@ -85,7 +86,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       :total="total"
       layout="total, prev, pager, next"
       class="pager"
-      @current-change="load()"
+      @current-change="apply(false)"
     />
   </el-card>
 </template>

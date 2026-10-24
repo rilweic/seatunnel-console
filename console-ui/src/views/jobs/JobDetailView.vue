@@ -89,7 +89,16 @@ async function testValidation() {
 const remark = ref('')
 const saving = ref(false)
 const running = ref(false)
-const tab = ref((route.query.tab as string) || 'config')
+const tab = ref((route.params.tab as string) || 'config')
+/** The wizard step, 0-based; the URL shows it 1-based (?step=3). */
+const wizardStep = ref(Math.max(0, Math.min(4, Number(route.query.step) - 1 || 0)))
+
+// Tab and wizard step live in the URL, so a refresh or a copied link opens the same place.
+watch([tab, wizardStep], () => {
+  const path = tab.value === 'config' ? `/jobs/${jobId}` : `/jobs/${jobId}/${tab.value}`
+  const query = tab.value === 'config' && isWizard.value && wizardStep.value > 0 ? { step: String(wizardStep.value + 1) } : {}
+  router.replace({ path, query })
+})
 
 const datasources = ref<DatasourceView[]>([])
 const pickedDatasource = ref('')
@@ -517,6 +526,7 @@ onMounted(async () => {
         <JobWizard
           v-if="isWizard"
           :key="wizardKey"
+          v-model:step="wizardStep"
           v-model:params="jobParams"
           :job-id="jobId"
           :owner-id="job.ownerId"

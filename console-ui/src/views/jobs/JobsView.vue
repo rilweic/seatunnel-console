@@ -2,34 +2,22 @@
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 
 import { jobApi, projectApi, type JobView, type ProjectView } from '@/api/console'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import { useQueryState } from '@/composables/useQueryState'
 
-const route = useRoute()
 const router = useRouter()
 
 const rows = ref<JobView[]>([])
 const total = ref(0)
 const projects = ref<ProjectView[]>([])
-// The project filter lives in the URL (?projectId=), so links from the projects page, refresh and
-// back all keep it. The layout keys pages by full path, so changing it reloads this page.
-// Opened from a project (possibly someone else's), show all of its jobs, not only mine.
-const query = reactive({
-  projectId: (route.query.projectId as string) || '',
-  keyword: '',
-  mine: !route.query.projectId,
-  page: 1,
-  size: 20,
-})
+const { state: query, apply } = useQueryState({ projectId: '', keyword: '', mine: true, page: 1, size: 20 }, () => load())
 /** New jobs can only go into projects the user may change. */
 const ownProjects = computed(() => projects.value.filter((p) => p.editable))
 
-function filterProject() {
-  router.replace({ query: query.projectId ? { projectId: query.projectId } : {} })
-}
 const loading = ref(false)
 
 async function load() {
@@ -105,14 +93,14 @@ onMounted(() => {
     </PageHeader>
     <div class="toolbar">
       <div class="filters">
-        <el-radio-group v-model="query.mine" class="scope" @change="load">
+        <el-radio-group v-model="query.mine" class="scope" @change="apply()">
         <el-radio-button :value="true">我的</el-radio-button>
         <el-radio-button :value="false">全部</el-radio-button>
       </el-radio-group>
-        <el-select v-model="query.projectId" placeholder="全部项目" clearable class="project" @change="filterProject">
+        <el-select v-model="query.projectId" placeholder="全部项目" clearable class="project" @change="apply()">
           <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
         </el-select>
-        <el-input v-model="query.keyword" placeholder="搜索任务名称" clearable class="search" @change="load" />
+        <el-input v-model="query.keyword" placeholder="搜索任务名称" clearable class="search" @change="apply()" />
       </div>
     </div>
     <el-table v-loading="loading" :data="rows" @row-click="(row: JobView) => router.push(`/jobs/${row.id}`)">
@@ -142,7 +130,7 @@ onMounted(() => {
       :total="total"
       layout="total, prev, pager, next"
       class="pager"
-      @current-change="load"
+      @current-change="apply(false)"
     />
   </el-card>
 

@@ -24,7 +24,8 @@ const props = defineProps<{ jobId: string; ownerId: string | null; readonly: boo
 const params = defineModel<ParamRow[]>('params', { required: true })
 const emit = defineEmits<{ saved: [versionNo: number] }>()
 
-const step = ref(0)
+/** Bound by the job page, which keeps it in the URL. */
+const step = defineModel<number>('step', { default: 0 })
 const steps = ['来源', '目标', '字段与同步方式', '并行度与校验', '预检查与预览']
 
 const datasources = ref<DatasourceView[]>([])
@@ -329,12 +330,17 @@ function stepError(i: number): string | null {
   return null
 }
 
-async function go(target: number) {
+/** @param restoring opening on a step from the URL: stop quietly at the first incomplete step */
+async function go(target: number, restoring = false) {
   for (let i = step.value; i < target; i++) {
     const error = stepError(i)
     if (error) {
-      ElMessage.warning(error)
-      return
+      if (!restoring) {
+        ElMessage.warning(error)
+        return
+      }
+      target = i
+      break
     }
   }
   step.value = target
@@ -347,6 +353,8 @@ async function go(target: number) {
 }
 
 onMounted(async () => {
+  const initialStep = step.value
+  step.value = 0
   // A job may only use its creator's datasources.
   datasources.value = (await datasourceApi.list({ size: 200, ownerId: props.ownerId })).items
   if (form.source.datasourceId) {
@@ -355,6 +363,9 @@ onMounted(async () => {
   }
   if (form.target.datasourceId && !targetIsEs.value) {
     targetNamespaces.value = await datasourceApi.namespaces(form.target.datasourceId)
+  }
+  if (initialStep > 0) {
+    go(initialStep, true)
   }
 })
 </script>

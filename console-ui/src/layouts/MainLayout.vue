@@ -11,6 +11,11 @@ const userStore = useUserStore()
 
 const title = computed(() => (route.meta.title as string | undefined) ?? '')
 const activeMenu = computed(() => (route.meta.menu as string | undefined) ?? route.path)
+/**
+ * Remounts a page only when it shows something else: another route or another record. Tabs, steps,
+ * filters and the page number live in the URL too, and a page reacts to those itself.
+ */
+const viewKey = computed(() => `${route.matched[route.matched.length - 1]?.path}|${route.params.id ?? ''}`)
 
 function readCollapsed(): boolean {
   try {
@@ -93,7 +98,7 @@ async function logout() {
         </el-menu>
       </aside>
       <main class="content">
-        <router-view :key="route.fullPath" />
+        <router-view :key="viewKey" />
       </main>
     </div>
   </div>

@@ -56,5 +56,6 @@ Ownership (`auth/Access`): everyone can read everything; only the creator or an 
 - Jackson is v3 (`tools.jackson.*`); records without defaults reject missing primitive fields, so use wrapper types for optional request fields.
 - Lookup helpers must not return `Map.of()` when callers may `get(null)` (it throws); use `HashMap`.
 - Verified SeaTunnel 3.0 behaviour worth knowing: `/submit-job` returns the job id as a string; a job rejected at submission gives HTTP 500 without the cause (`ScriptChecker` reproduces the source queries to find it); per-job logs need `routingAppender` in every node's `log4j2.properties`; `/option-rules?type=&plugin=` returns connector option definitions (used for the wizard's advanced options).
+- UI state that should survive a refresh lives in the URL: list filters and page via `composables/useQueryState`, the job tab as a path segment (`/jobs/:id/backfills`), the wizard step and run attempt as `?step=` / `?attempt=`. `MainLayout` keys the page by route record + `:id`, so query and tab changes do not remount it.
 - `@WebMvcTest` slices (e.g. `ClusterControllerTest`) need `@MockitoBean` for every bean the security filter chain and controller pull in.
 - Commits end with the `Co-Authored-By` line given by the environment.
