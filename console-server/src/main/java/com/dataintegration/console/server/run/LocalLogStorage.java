@@ -67,6 +67,19 @@ public class LocalLogStorage implements LogStorage {
         }
     }
 
+    @Override
+    public void delete(String key) {
+        if (key == null || !KEY.matcher(key).matches()) {
+            return;
+        }
+        Path file = dataDir.resolve(key);
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot delete log archive " + file, e);
+        }
+    }
+
     /** Daily at 03:30, drop whole day directories past retention. */
     @Scheduled(cron = "0 30 3 * * *")
     public void purgeExpired() {

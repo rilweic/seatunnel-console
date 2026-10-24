@@ -27,6 +27,7 @@ import com.dataintegration.console.server.persistence.mapper.JobVersionDatasourc
 import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
 import com.dataintegration.console.server.persistence.mapper.ProjectMapper;
 import com.dataintegration.console.server.project.ProjectService;
+import com.dataintegration.console.server.run.RunCleanupService;
 import com.dataintegration.console.server.scheduler.XxlJobAdminClient;
 import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
@@ -129,6 +130,7 @@ public class JobService {
     private final JobInstanceMapper instanceMapper;
     private final BackfillBatchMapper backfillMapper;
     private final EncryptKeyService encryptKeys;
+    private final RunCleanupService runCleanup;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -147,7 +149,8 @@ public class JobService {
             ScriptChecker scriptChecker,
             JobInstanceMapper instanceMapper,
             BackfillBatchMapper backfillMapper,
-            EncryptKeyService encryptKeys) {
+            EncryptKeyService encryptKeys,
+            RunCleanupService runCleanup) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -165,6 +168,7 @@ public class JobService {
         this.instanceMapper = instanceMapper;
         this.backfillMapper = backfillMapper;
         this.encryptKeys = encryptKeys;
+        this.runCleanup = runCleanup;
     }
 
     /** @param mine only the current user's jobs */
@@ -284,9 +288,9 @@ public class JobService {
         return view(saved, currentVersionNo(saved));
     }
 
-    /** Soft delete. The schedule goes with it; the mirrored XXL-JOB job is removed on a best-effort basis. */
+    /** Soft delete the job; optionally remove its run history and archived logs in the same operation. */
     @Transactional
-    public void delete(String id) {
+    public void delete(String id, boolean deleteRuns) {
         // Locked before anything else is read in this transaction, so a run being created right now
         // (RunRecorder.insert takes the same lock) is either seen below or finds the job deleted.
         lockJob(id);
@@ -303,6 +307,9 @@ public class JobService {
                 .in(BackfillBatch::getStatus, "RUNNING", "PAUSED"));
         if (backfills > 0) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "任务还有进行中或暂停的补数，请先在「补数」里取消再删除");
+        }
+        if (deleteRuns) {
+            runCleanup.deleteHistory(id);
         }
         jobMapper.deleteById(id);
         scheduleMapper.deleteById(id);

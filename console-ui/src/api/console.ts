@@ -329,7 +329,7 @@ export const jobApi = {
   copy: (id: string, body: { name: string; projectId: string }) =>
     post<{ job: JobView; scheduleCopied: boolean }>(`/jobs/${id}/copy`, body),
   overview: (id: string) => get<JobOverview>(`/jobs/${id}/overview`),
-  remove: (id: string) => del<void>(`/jobs/${id}`),
+  remove: (id: string, deleteRuns = true) => del<void>(`/jobs/${id}?deleteRuns=${deleteRuns}`),
   saveVersion: (
     id: string,
     body: {
@@ -396,6 +396,7 @@ export interface InstanceView {
   projectName: string | null
   jobDefinitionId: string
   jobName: string | null
+  jobDeleted: boolean
   versionNo: number | null
   triggerType: 'SCHEDULE' | 'MANUAL' | 'RERUN' | 'BACKFILL'
   status: RunStatus

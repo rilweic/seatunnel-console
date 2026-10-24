@@ -9,6 +9,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
@@ -96,5 +97,30 @@ class InstanceServiceTest {
         assertThat(result.hasMore()).isFalse();
         assertThat(result.nextCursorTime()).isNull();
         assertThat(result.nextCursorId()).isNull();
+    }
+
+    @Test
+    void viewsExposeJobDeletionStateAndKeepTheOriginalName() {
+        JobInstance liveRun = new JobInstance();
+        liveRun.setId("run-1");
+        liveRun.setJobDefinitionId("job-1");
+        JobInstance deletedRun = new JobInstance();
+        deletedRun.setId("run-2");
+        deletedRun.setJobDefinitionId("job-2");
+        JobDefinition liveJob = new JobDefinition();
+        liveJob.setId("job-1");
+        liveJob.setName("live-job");
+        JobDefinition deletedJob = new JobDefinition();
+        deletedJob.setId("job-2");
+        deletedJob.setName("deleted-job");
+        deletedJob.setDeletedAt(LocalDateTime.of(2026, 10, 25, 2, 0));
+        when(jobMapper.selectNamesIncludingDeleted(any())).thenReturn(java.util.List.of(liveJob, deletedJob));
+
+        var views = instanceService.views(java.util.List.of(liveRun, deletedRun));
+
+        assertThat(views).extracting(InstanceService.InstanceView::jobName)
+                .containsExactly("live-job", "deleted-job");
+        assertThat(views).extracting(InstanceService.InstanceView::jobDeleted)
+                .containsExactly(false, true);
     }
 }

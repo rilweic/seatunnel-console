@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { jobApi, projectApi, type JobView, type ProjectView, type RunStatus } from '@/api/console'
 import { formatTime, statusTag, statusText } from '@/utils/format'
 import CopyJobDialog from '@/components/CopyJobDialog.vue'
+import DeleteJobDialog from '@/components/DeleteJobDialog.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
@@ -14,6 +15,7 @@ const router = useRouter()
 /** The job the copy dialog is open for. */
 const copying = ref<JobView | null>(null)
 const copyOpen = computed({ get: () => copying.value !== null, set: (open) => { if (!open) copying.value = null } })
+const deleteDialog = reactive({ visible: false, job: null as JobView | null })
 
 const rows = ref<JobView[]>([])
 const total = ref(0)
@@ -77,13 +79,14 @@ async function create() {
   }
 }
 
-async function remove(row: JobView) {
-  try {
-    await ElMessageBox.confirm(`删除任务「${row.name}」？历史运行记录会保留。`, '删除任务', { type: 'warning' })
-  } catch {
-    return
-  }
-  await jobApi.remove(row.id)
+function remove(row: JobView) {
+  deleteDialog.job = row
+  deleteDialog.visible = true
+}
+
+async function confirmRemove(deleteRuns: boolean) {
+  if (!deleteDialog.job) return
+  await jobApi.remove(deleteDialog.job.id, deleteRuns)
   ElMessage.success('已删除')
   load()
 }
@@ -198,6 +201,7 @@ onMounted(() => {
     </template>
   </el-dialog>
   <CopyJobDialog v-model="copyOpen" :job="copying" />
+  <DeleteJobDialog v-model="deleteDialog.visible" :job-name="deleteDialog.job?.name ?? ''" @confirm="confirmRemove" />
 </template>
 
 <style scoped>

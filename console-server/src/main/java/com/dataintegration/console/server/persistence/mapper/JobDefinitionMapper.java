@@ -11,8 +11,8 @@ import java.util.List;
 
 public interface JobDefinitionMapper extends BaseMapper<JobDefinition> {
 
-    /** Names of jobs including soft-deleted ones, for labelling historical runs. */
-    @Select("<script>SELECT id, name, created_by FROM job_definition WHERE id IN "
+    /** Names and deletion state of jobs including soft-deleted ones, for labelling historical runs. */
+    @Select("<script>SELECT id, name, created_by, deleted_at FROM job_definition WHERE id IN "
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
     List<JobDefinition> selectNamesIncludingDeleted(@Param("ids") List<String> ids);
 

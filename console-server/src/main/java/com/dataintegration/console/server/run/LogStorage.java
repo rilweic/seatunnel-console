@@ -14,4 +14,7 @@ public interface LogStorage {
 
     /** Empty when the entry was removed by retention or never existed. */
     Optional<String> read(String key);
+
+    /** Deletes one archived log if its key is valid and the file still exists. */
+    void delete(String key);
 }

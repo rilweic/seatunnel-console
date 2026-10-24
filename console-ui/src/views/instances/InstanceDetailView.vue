@@ -76,7 +76,7 @@ async function loadDetail() {
     const i = detail.value.instance
     setBreadcrumb([
       { title: '运行实例', to: listUrl('/instances') },
-      { title: i.jobName ?? '已删除的任务', to: `/jobs/${i.jobDefinitionId}` },
+      { title: i.jobName ?? '已删除的任务', to: i.jobDeleted ? undefined : `/jobs/${i.jobDefinitionId}` },
       { title: `${triggerText[i.triggerType]}运行 · ${formatTime(i.scheduledTime).slice(5, 16)}` },
     ])
   }
@@ -220,12 +220,14 @@ onBeforeUnmount(() => {
     <el-card shadow="never">
       <div class="head">
         <div class="title">
-          <BackButton :fallback="`/jobs/${instance.jobDefinitionId}/runs`" />
+          <BackButton :fallback="instance.jobDeleted ? '/instances' : `/jobs/${instance.jobDefinitionId}/runs`" />
           <el-tag :type="statusTag[instance.status as RunStatus]" size="large">{{ statusText[instance.status as RunStatus] }}</el-tag>
-          <router-link :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
+          <router-link v-if="!instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
+          <span v-else class="job">{{ instance.jobName ?? '已删除的任务' }}</span>
+          <el-tag v-if="instance.jobDeleted" type="info">已删除</el-tag>
           <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
-          <router-link v-if="instance.backfillBatchId" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">属于一次补数</router-link>
+          <router-link v-if="instance.backfillBatchId && !instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">属于一次补数</router-link>
         </div>
         <div>
           <el-button v-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>

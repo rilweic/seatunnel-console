@@ -4,7 +4,7 @@
  * Nothing is edited here; "编辑" opens JobEditView.
  */
 import { ArrowDown, Edit } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -14,6 +14,7 @@ import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { formatTime, statusTag, statusText } from '@/utils/format'
 import { textTooltip } from '@/utils/tooltip'
 import CopyJobDialog from '@/components/CopyJobDialog.vue'
+import DeleteJobDialog from '@/components/DeleteJobDialog.vue'
 
 import BackfillDialog from './detail/BackfillDialog.vue'
 import JobBackfillsPane from './detail/JobBackfillsPane.vue'
@@ -25,6 +26,7 @@ import RunDialog from './detail/RunDialog.vue'
 const route = useRoute()
 const router = useRouter()
 const copyOpen = ref(false)
+const deleteOpen = ref(false)
 const jobId = route.params.id as string
 
 const job = ref<JobView | null>(null)
@@ -59,17 +61,12 @@ async function onRestored() {
   overviewPane.value?.load()
 }
 
-async function remove() {
-  try {
-    await ElMessageBox.confirm(`删除任务「${job.value!.name}」？调度会一起删除，历史运行记录会保留。`, '删除任务', {
-      type: 'warning',
-      confirmButtonText: '删除',
-      cancelButtonText: '取消',
-    })
-  } catch {
-    return
-  }
-  await jobApi.remove(jobId)
+function remove() {
+  deleteOpen.value = true
+}
+
+async function confirmRemove(deleteRuns: boolean) {
+  await jobApi.remove(jobId, deleteRuns)
   ElMessage.success('已删除')
   router.push('/jobs')
 }
@@ -139,6 +136,7 @@ onMounted(load)
   <RunDialog v-model="runDialog" :job-id="jobId" />
   <BackfillDialog v-model="backfillDialog" :job-id="jobId" :version-no="job?.currentVersionNo ?? null" @created="onBackfillCreated" />
   <CopyJobDialog v-model="copyOpen" :job="job" />
+  <DeleteJobDialog v-model="deleteOpen" :job-name="job?.name ?? ''" @confirm="confirmRemove" />
 </template>
 
 <style scoped>

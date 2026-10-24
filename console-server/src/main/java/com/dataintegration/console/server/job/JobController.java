@@ -104,8 +104,8 @@ public class JobController {
     }
 
     @DeleteMapping("/{id}")
-    public Result<Void> delete(@PathVariable String id) {
-        jobService.delete(id);
+    public Result<Void> delete(@PathVariable String id, @RequestParam(defaultValue = "true") boolean deleteRuns) {
+        jobService.delete(id, deleteRuns);
         return Result.ok();
     }
 

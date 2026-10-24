@@ -245,8 +245,15 @@ onBeforeUnmount(() => {
       <el-table-column prop="projectName" label="项目" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.projectName ?? '-' }}</template>
       </el-table-column>
-      <el-table-column label="任务" min-width="180">
-        <template #default="{ row }">{{ row.jobName }} <span class="muted">v{{ row.versionNo }}</span></template>
+      <el-table-column label="任务" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">
+          <router-link v-if="!row.jobDeleted" :to="`/jobs/${row.jobDefinitionId}`" @click.stop>{{ row.jobName }}</router-link>
+          <span v-else>{{ row.jobName ?? '已删除的任务' }}</span>
+          <el-tag v-if="row.jobDeleted" type="info" size="small" class="deleted-tag">已删除</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="版本" width="70">
+        <template #default="{ row }">{{ row.versionNo != null ? `v${row.versionNo}` : '-' }}</template>
       </el-table-column>
       <el-table-column label="触发" width="80">
         <template #default="{ row }">{{ triggerText[row.triggerType] }}</template>
@@ -335,6 +342,10 @@ onBeforeUnmount(() => {
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 12px;
+}
+
+.deleted-tag {
+  margin: 0 6px;
 }
 
 .scope {
