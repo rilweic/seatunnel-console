@@ -6,7 +6,7 @@ import { ref, watch } from 'vue'
 import { backfillApi, type BackfillPlan } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { formatTime } from '@/utils/format'
-import { errorMessage, toMap } from '@/utils/params'
+import { errorMessage, paramsProblem, toMap } from '@/utils/params'
 
 const props = defineProps<{ jobId: string; versionNo: number | null }>()
 const visible = defineModel<boolean>({ required: true })
@@ -37,6 +37,11 @@ watch(range, async (value) => {
 })
 
 async function create() {
+  const paramError = paramsProblem(params.value)
+  if (paramError) {
+    ElMessage.warning(paramError)
+    return
+  }
   if (!range.value) return
   creating.value = true
   try {

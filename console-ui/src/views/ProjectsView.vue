@@ -7,6 +7,8 @@ import { useRouter } from 'vue-router'
 import { projectApi, type ParamItem, type ProjectView } from '@/api/console'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import ParamsEditor from '@/components/ParamsEditor.vue'
+import { paramsProblem } from '@/utils/params'
 import { useQueryState } from '@/composables/useQueryState'
 
 const router = useRouter()
@@ -160,30 +162,24 @@ onMounted(load)
     </template>
   </el-dialog>
 
-  <el-dialog v-model="params.visible" :title="`项目参数 · ${params.projectName}`" width="640px">
-    <p class="hint">项目下所有任务都能用 <code>${名称}</code> 引用这些参数，优先级低于任务参数和启动参数。值里可以使用内置变量和时间表达式，如 <code>${system.biz.date}</code>、<code>$[yyyyMMdd-1]</code>。名称只能包含字母、数字、_ 和 .，不能以 system. 开头。</p>
-    <el-table :data="params.items">
-      <el-table-column label="参数名" min-width="160">
-        <template #default="{ row }"><el-input v-model="row.key" /></template>
-      </el-table-column>
-      <el-table-column label="值" min-width="200">
-        <template #default="{ row }"><el-input v-model="row.value" /></template>
-      </el-table-column>
-      <el-table-column width="70">
-        <template #default="{ $index }">
-          <el-button link type="danger" @click="params.items.splice($index, 1)">移除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <el-button class="add-param" @click="params.items.push({ key: '', value: '' })">添加参数</el-button>
+  <el-dialog v-model="params.visible" :title="`项目参数 · ${params.projectName}`" width="900px">
+    <p class="hint">项目下所有任务都能用 <code>${名称}</code> 引用这些参数；任务里有同名参数时，以任务的为准。</p>
+    <ParamsEditor v-model="params.items" />
     <template #footer>
+      <span v-if="paramsProblem(params.items)" class="param-error">{{ paramsProblem(params.items) }}</span>
       <el-button @click="params.visible = false">取消</el-button>
-      <el-button type="primary" :loading="params.saving" :disabled="!params.editable" @click="saveParams">保存</el-button>
+      <el-button type="primary" :loading="params.saving" :disabled="!params.editable || !!paramsProblem(params.items)" @click="saveParams">保存</el-button>
     </template>
   </el-dialog>
 </template>
 
 <style scoped>
+.param-error {
+  margin-right: 12px;
+  color: var(--el-color-danger);
+  font-size: 13px;
+}
+
 .toolbar {
   display: flex;
   gap: 12px;
@@ -201,9 +197,6 @@ onMounted(load)
   font-size: 13px;
 }
 
-.add-param {
-  margin-top: 12px;
-}
 .scope {
   flex: none;
 }

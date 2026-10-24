@@ -6,7 +6,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { datasourceApi, jobApi, type DatasourceView, type JobView, type ValidationResult, type ValidationSpec, type VersionDetail } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
-import { nowText, toMap, toRows } from '@/utils/params'
+import { nowText, paramsProblem, toMap, toRows } from '@/utils/params'
 
 const props = defineProps<{ job: JobView; version: VersionDetail | null }>()
 const emit = defineEmits<{ saved: []; dirty: [dirty: boolean] }>()
@@ -156,6 +156,11 @@ async function loadPreview() {
 }
 
 async function save() {
+  const paramError = paramsProblem(jobParams.value)
+  if (paramError) {
+    ElMessage.warning(paramError)
+    return
+  }
   saving.value = true
   try {
     const version = await jobApi.saveVersion(props.job.id, {

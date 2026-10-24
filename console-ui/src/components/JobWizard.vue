@@ -20,6 +20,7 @@ import {
   type WizardForm,
 } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
+import { paramsProblem } from '@/utils/params'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
 
 import AdvancedOptions from './wizard/AdvancedOptions.vue'
@@ -385,6 +386,8 @@ function stepError(i: number): string | null {
   if (i === 2) {
     const fields = fieldNamesProblem(form, columns.value)
     if (fields) return fields
+    const paramError = paramsProblem(params.value)
+    if (paramError) return paramError
   }
   if (i === 2 && form.sync.mode === 'INCREMENTAL') {
     if (form.sync.window === 'CUSTOM' && !form.sync.customCondition?.trim()) return '请填写自定义增量条件'

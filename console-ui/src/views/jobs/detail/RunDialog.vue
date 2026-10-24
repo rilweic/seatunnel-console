@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 
 import { jobApi } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
-import { nowText, toMap } from '@/utils/params'
+import { nowText, paramsProblem, toMap } from '@/utils/params'
 
 const props = defineProps<{ jobId: string }>()
 const visible = defineModel<boolean>({ required: true })
@@ -24,6 +24,11 @@ watch(visible, (open) => {
 })
 
 async function run() {
+  const paramError = paramsProblem(params.value)
+  if (paramError) {
+    ElMessage.warning(paramError)
+    return
+  }
   running.value = true
   try {
     const { instanceId } = await jobApi.run(props.jobId, { scheduledTime: scheduledTime.value || undefined, params: toMap(params.value) })
