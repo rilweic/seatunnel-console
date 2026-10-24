@@ -180,4 +180,38 @@ class HoconTemplateTest {
         assertThat(masked).doesNotContain("ks1").doesNotContain("enc2")
                 .contains("useSSL=true").contains("where a=1 and token_count > 0");
     }
+
+    @Test
+    void encryptionKeysGoInAtSubmitAndNeverIntoArchivesOrSavedScripts() {
+        HoconTemplate template = HoconTemplate.parse("""
+                source { FakeSource { plugin_output = "s" } }
+                transform {
+                  FieldEncrypt {
+                    plugin_input = ["s"]
+                    table_match_regex = "(?!)"
+                    fields = ["phone"], encrypt_key_id = "k1"
+                    table_transform = [{ table_path = "db.users", fields = ["phone"], encrypt_key_id = "k1" }]
+                  }
+                }
+                sink { Console { plugin_input = ["s"] } }
+                """);
+        assertThat(template.encryptKeyRefs()).containsExactly("k1", "k1");
+        assertThat(template.explicitSecrets()).isEmpty();
+
+        String real = template.render((connector, id) -> Map.of(), id -> id.equals("k1") ? "AAAAAAAAAAAAAAAAAAAAAA==" : null);
+        assertThat(real).doesNotContain("encrypt_key_id").contains("\"key\":\"AAAAAAAAAAAAAAAAAAAAAA==\"");
+        assertThat(real.split("AAAAAAAAAAAAAAAAAAAAAA==", -1)).hasSize(3);
+
+        String masked = template.renderMasked((connector, id) -> Map.of());
+        assertThat(masked).doesNotContain("encrypt_key_id").doesNotContain("AAAA").contains("\"key\":\"******\"");
+
+        // a key written into a script is a plain-text secret, refused on save and masked in old archives
+        HoconTemplate script = HoconTemplate.parse("""
+                source { FakeSource { plugin_output = "s" } }
+                transform { FieldEncrypt { fields = ["phone"], key = "c2VjcmV0c2VjcmV0c2VjcmV0" } }
+                sink { Console { plugin_input = ["s"] } }
+                """);
+        assertThat(script.explicitSecrets()).containsExactly("transform.FieldEncrypt.key");
+        assertThat(script.renderMasked((connector, id) -> Map.of())).doesNotContain("c2VjcmV0").contains("******");
+    }
 }

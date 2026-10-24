@@ -3,6 +3,7 @@ package com.dataintegration.console.server.job;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.server.datasource.DatasourceService;
+import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.project.ProjectService;
 import com.dataintegration.console.server.project.ProjectService.ParamItem;
@@ -35,10 +36,12 @@ public class JobConfigRenderer {
 
     private final ProjectService projectService;
     private final DatasourceService datasourceService;
+    private final EncryptKeyService encryptKeys;
 
-    public JobConfigRenderer(ProjectService projectService, DatasourceService datasourceService) {
+    public JobConfigRenderer(ProjectService projectService, DatasourceService datasourceService, EncryptKeyService encryptKeys) {
         this.projectService = projectService;
         this.datasourceService = datasourceService;
+        this.encryptKeys = encryptKeys;
     }
 
     public Rendered render(
@@ -55,7 +58,7 @@ public class JobConfigRenderer {
         requireCreatorsDatasources(job, template);
         String masked = template.renderMasked((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, true));
         String config = withSecrets
-                ? template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, false))
+                ? template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, false), encryptKeys::reveal)
                 : null;
         return new Rendered(variables, config, masked, Variables.unresolved(text), template);
     }

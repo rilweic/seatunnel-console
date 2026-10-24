@@ -55,6 +55,7 @@ project ─┬─< project_param
 | `job_instance_attempt` | 每**提交一次**到引擎就记一条，重试时会产生新的一条。每次尝试都有自己的 `engine_job_id` 和 **SeaTunnel 作业日志**归档 |
 | `job_instance_event` | 运行实例详情页的时间线 |
 | `job_metric_sample` | 运行中每次轮询记一行引擎累计计数（读写行数、字节数），用来画吞吐量曲线（design.md §10.4）。最新的完整指标快照在 `job_instance_attempt.metrics_json` |
+| `encrypt_key` | 字段加密的密钥（design.md §7.11）。`key_cipher` 是用 `CONSOLE_SECRET_KEY` 加密后的 Base64 密钥，接口从不返回密钥本身；任务配置里只写 `encrypt_key_id`，提交运行时才在内存里换成密钥。只停用，不删除 |
 
 ## 4. 运行实例
 

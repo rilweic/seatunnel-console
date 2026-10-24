@@ -15,6 +15,7 @@ public class SpaForwardController {
         "/dashboard",
         "/change-password",
         "/users",
+        "/encrypt-keys",
         "/projects/**",
         "/datasources/**",
         "/jobs/**",

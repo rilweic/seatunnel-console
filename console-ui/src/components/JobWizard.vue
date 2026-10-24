@@ -392,6 +392,8 @@ function stepError(i: number): string | null {
     if (fields) return fields
     const paramError = paramsProblem(params.value)
     if (paramError) return paramError
+    const noKey = form.source.tables.find((t) => Object.values(t.processes ?? {}).some((p) => p.encrypt) && !t.encryptKeyId)
+    if (noKey) return `${noKey.name} 有字段要加密，请在字段映射里选择加密密钥`
   }
   if (i === 2 && form.sync.mode === 'INCREMENTAL') {
     if (form.sync.window === 'CUSTOM' && !form.sync.customCondition?.trim()) return '请填写自定义增量条件'

@@ -110,6 +110,11 @@ public final class FieldProcessing {
             expr = cast(expr, c.type(), c.precision(), c.scale());
             changed = true;
         }
+        if (process.encrypted()) {
+            // FieldEncrypt takes text, and the ciphertext outgrows the column's declared length
+            expr = cast(expr, FieldType.STRING, null, null);
+            changed = true;
+        }
         return changed ? expr : null;
     }
 
@@ -212,6 +217,17 @@ public final class FieldProcessing {
 
     static String lit(String value) {
         return "'" + value.replace("'", "''") + "'";
+    }
+
+    /** Synced fields to encrypt (before renames), in column order. */
+    public static List<String> encryptedFields(TableSpec table, List<String> synced) {
+        if (table.processes() == null) {
+            return List.of();
+        }
+        Set<String> dropped = droppedSources(table);
+        return synced.stream()
+                .filter(c -> !dropped.contains(c) && table.processes().get(c) != null && table.processes().get(c).encrypted())
+                .toList();
     }
 
     // ---- extraction transforms: one HOCON object of options per table entry ----

@@ -9,6 +9,7 @@ import com.dataintegration.console.common.PageResult;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.datasource.DatasourceService;
+import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.job.HoconTemplate.DatasourceRef;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardService;
@@ -127,6 +128,7 @@ public class JobService {
     private final ScriptChecker scriptChecker;
     private final JobInstanceMapper instanceMapper;
     private final BackfillBatchMapper backfillMapper;
+    private final EncryptKeyService encryptKeys;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -144,7 +146,8 @@ public class JobService {
             UserDirectory users,
             ScriptChecker scriptChecker,
             JobInstanceMapper instanceMapper,
-            BackfillBatchMapper backfillMapper) {
+            BackfillBatchMapper backfillMapper,
+            EncryptKeyService encryptKeys) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -161,6 +164,7 @@ public class JobService {
         this.scriptChecker = scriptChecker;
         this.instanceMapper = instanceMapper;
         this.backfillMapper = backfillMapper;
+        this.encryptKeys = encryptKeys;
     }
 
     /** @param mine only the current user's jobs */
@@ -354,8 +358,10 @@ public class JobService {
         if (!secrets.isEmpty()) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
                     "配置里不能直接写密码或密钥（" + String.join("、", secrets)
-                            + "）：请建一个数据源，用 datasource_id 引用，连接信息会在运行时注入");
+                            + "）：连接信息请建数据源，用 datasource_id 引用；字段加密的密钥请在「加密密钥」里建，用 encrypt_key_id 引用。都会在运行时注入");
         }
+        // encryption keys are referenced by id and put in at submit time; each must be usable now
+        template.encryptKeyRefs().forEach(encryptKeys::requireUsable);
         String mode = template.jobMode();
         if (TYPE_BATCH.equals(job.getJobType()) && mode != null && !TYPE_BATCH.equalsIgnoreCase(mode)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "env.job.mode must be BATCH for a batch job, got " + mode);

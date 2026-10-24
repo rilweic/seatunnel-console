@@ -136,6 +136,7 @@ public final class WizardGenerator {
         Map<String, List<String>> regex = new LinkedHashMap<>();
         Map<String, List<String>> split = new LinkedHashMap<>();
         Map<String, List<String>> sql = new LinkedHashMap<>();
+        Map<String, List<String>> encrypt = new LinkedHashMap<>();
         Map<String, Map<String, String>> fieldRenames = new LinkedHashMap<>();
         Map<String, String> tableRenames = new LinkedHashMap<>();
         for (TableSpec table : form.source().tables()) {
@@ -152,6 +153,15 @@ public final class WizardGenerator {
                 putIfAny(regex, path, FieldProcessing.extractOptions(table, WizardForm.ExtractKind.REGEX));
                 putIfAny(split, path, FieldProcessing.extractOptions(table, WizardForm.ExtractKind.SPLIT));
                 sql.put(path, List.of("query = " + str(FieldProcessing.sqlQuery(table, synced))));
+                List<String> encrypted = FieldProcessing.encryptedFields(table, synced);
+                if (!encrypted.isEmpty()) {
+                    if (!notBlank(table.encryptKeyId())) {
+                        throw invalid(table.name() + "：有字段要加密，请选择加密密钥");
+                    }
+                    // the key itself is put in at submit time (HoconTemplate.ENCRYPT_KEY_ID)
+                    encrypt.put(path, List.of("fields = [" + String.join(", ", encrypted.stream().map(WizardGenerator::str).toList())
+                            + "], encrypt_key_id = " + str(table.encryptKeyId())));
+                }
             }
             Set<String> dropped = FieldProcessing.droppedSources(table);
             Map<String, String> fields = new LinkedHashMap<>();
@@ -170,6 +180,7 @@ public final class WizardGenerator {
         input = appendStage(t, "RegexExtract", input, "regex_extracted", regex);
         input = appendStage(t, "Split", input, "split_extracted", split);
         input = appendStage(t, "Sql", input, "processed", sql);
+        input = appendStage(t, "FieldEncrypt", input, "encrypted", encrypt);
         if (!fieldRenames.isEmpty()) {
             t.append("  FieldRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"fields_renamed\"\n");
             t.append("    table_transform = [\n");

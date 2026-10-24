@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -62,7 +62,12 @@ const menuGroups = computed(() => [
     title: '运维管理',
     items: [
       { path: '/cluster', title: '集群健康', icon: Monitor },
-      ...(userStore.isAdmin ? [{ path: '/users', title: '用户管理', icon: User }] : []),
+      ...(userStore.isAdmin
+        ? [
+            { path: '/users', title: '用户管理', icon: User },
+            { path: '/encrypt-keys', title: '加密密钥', icon: Lock },
+          ]
+        : []),
     ],
   },
 ])

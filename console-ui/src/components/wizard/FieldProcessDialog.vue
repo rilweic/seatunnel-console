@@ -12,7 +12,7 @@ const props = defineProps<{ column: ColumnMeta | null; process: FieldProcess | n
 const visible = defineModel<boolean>({ required: true })
 const emit = defineEmits<{ apply: [process: FieldProcess | null] }>()
 
-const on = reactive({ replace: false, mask: false, cast: false })
+const on = reactive({ replace: false, mask: false, cast: false, encrypt: false })
 const replace = reactive({ find: '', replacement: '', regex: false })
 const mask = reactive({ preset: 'PHONE' as MaskPreset, keepFirst: 2, keepLast: 2, maskChar: '*' })
 const cast = reactive({ type: 'STRING' as FieldType, precision: 18, scale: 2 })
@@ -24,6 +24,7 @@ watch(visible, (open) => {
   on.replace = !!p.replace?.find
   on.mask = !!p.mask?.preset
   on.cast = !!p.cast?.type
+  on.encrypt = !!p.encrypt
   Object.assign(replace, { find: p.replace?.find ?? '', replacement: p.replace?.replacement ?? '', regex: !!p.replace?.regex })
   Object.assign(mask, {
     preset: p.mask?.preset ?? 'PHONE',
@@ -58,7 +59,7 @@ function apply() {
     replace: on.replace && replace.find ? { ...replace } : null,
     mask: on.mask ? { preset: mask.preset, keepFirst: mask.keepFirst, keepLast: mask.keepLast, maskChar: mask.maskChar || '*' } : null,
     cast: on.cast ? { type: cast.type, precision: cast.type === 'DECIMAL' ? cast.precision : null, scale: cast.type === 'DECIMAL' ? cast.scale : null } : null,
-    encrypt: props.process?.encrypt ?? null,
+    encrypt: on.encrypt || null,
   }
   emit('apply', process.replace || process.mask || process.cast || process.encrypt ? process : null)
   visible.value = false
@@ -70,7 +71,7 @@ function apply() {
     <el-alert v-if="locked" type="warning" :closable="false" show-icon class="locked"
       title="这是主键字段：目标表按主键写入，主键的值和类型要保持不变，不能处理" />
     <template v-else>
-      <div class="hint">按 值替换 → 脱敏 → 类型转换 的顺序执行。源字段类型：{{ column?.type }}</div>
+      <div class="hint">按 值替换 → 脱敏 → 类型转换 → 加密 的顺序执行。源字段类型：{{ column?.type }}</div>
 
       <section class="block">
         <el-checkbox v-model="on.replace" class="title">值替换</el-checkbox>
@@ -115,6 +116,13 @@ function apply() {
             </template>
           </div>
           <div class="tip warn">转换失败的值会变成空（null），不会让任务失败。</div>
+        </div>
+      </section>
+
+      <section class="block">
+        <el-checkbox v-model="on.encrypt" class="title">加密</el-checkbox>
+        <div v-if="on.encrypt" class="body">
+          <div class="tip">在上面的处理之后，用这张表选择的「加密密钥」加密（AES），写入的是 Base64 密文。密钥在字段映射上方选择，由管理员在「加密密钥」里管理。</div>
         </div>
       </section>
 

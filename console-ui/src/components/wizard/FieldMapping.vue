@@ -8,7 +8,7 @@ import { CirclePlus, EditPen, Key, Right, Scissor, Search } from '@element-plus/
 import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 
-import type { AddedField, ColumnMeta, Extract, FieldProcess, NameRule, WizardForm, WizardTable } from '@/api/console'
+import { encryptKeyApi, type AddedField, type ColumnMeta, type EncryptKeyView, type Extract, type FieldProcess, type NameRule, type WizardForm, type WizardTable } from '@/api/console'
 import { describeAdded, describeExtract, hasProcess, newFieldNames, processTags, readableFields, typeLabel } from '@/utils/fieldProcessing'
 import { clashes, isEmptyRule, nameProblem, ruleFieldName, syncedFields, targetFieldName, targetTableName } from '@/utils/naming'
 
@@ -197,6 +197,13 @@ function applyRule(rule: NameRule, clearByHand: boolean, scope: RuleScope) {
 // ---- processing, new and extracted fields ----
 
 const processing = ref<ColumnMeta | null>(null)
+
+/** Enabled encryption keys, loaded when a table first encrypts a field. */
+const keys = ref<EncryptKeyView[] | null>(null)
+const encrypts = computed(() => Object.values(table.value?.processes ?? {}).some((p) => p.encrypt))
+watch(encrypts, async (on) => {
+  if (on && keys.value === null) keys.value = (await encryptKeyApi.list()).filter((k) => k.enabled || k.id === table.value?.encryptKeyId)
+}, { immediate: true })
 const processOpen = computed({ get: () => processing.value !== null, set: (o) => { if (!o) processing.value = null } })
 
 function applyProcess(p: FieldProcess | null) {
@@ -320,6 +327,12 @@ function timeFields(t: WizardTable) {
       <div class="table-settings">
         <label>过滤条件
           <el-input v-model="table.filter" placeholder="可选，不含 where，如 status = 1；可以使用变量" class="code" clearable />
+        </label>
+        <label v-if="encrypts">加密密钥
+          <el-select v-model="table.encryptKeyId" placeholder="选择这张表加密用的密钥" :class="{ invalid: !table.encryptKeyId }">
+            <el-option v-for="k in keys ?? []" :key="k.id" :label="`${k.name}（${k.algorithm} · ${k.keyBits} 位）${k.enabled ? '' : '（已停用）'}`" :value="k.id" />
+          </el-select>
+          <span v-if="keys && !keys.length" class="error">还没有可用的密钥，请管理员在「运维管理 → 加密密钥」里新建</span>
         </label>
         <label v-if="incremental">增量字段
           <el-select

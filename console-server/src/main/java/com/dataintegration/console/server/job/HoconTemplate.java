@@ -35,6 +35,11 @@ public final class HoconTemplate {
 
     public static final String DATASOURCE_KEY = "datasource_id";
 
+    /** A FieldEncrypt option naming a console key; replaced by the key itself at submit time (§7.11). */
+    public static final String ENCRYPT_KEY_ID = "encrypt_key_id";
+
+    private static final String FIELD_ENCRYPT = "FieldEncrypt";
+
     /** Option names that hold credentials; they belong in a datasource, never in a saved config. */
     private static final Pattern SECRET_KEY =
             Pattern.compile("(?i).*(password|passwd|secret|token|credential|api_?key|access_?key).*");
@@ -57,6 +62,12 @@ public final class HoconTemplate {
     @FunctionalInterface
     public interface OptionsResolver {
         Map<String, Object> resolve(String connector, String datasourceId);
+    }
+
+    /** Supplies the Base64 key of a console encryption key. */
+    @FunctionalInterface
+    public interface KeyResolver {
+        String resolve(String keyId);
     }
 
     private final Config config;
@@ -174,7 +185,67 @@ public final class HoconTemplate {
     public List<String> explicitSecrets() {
         List<String> found = new ArrayList<>();
         collectSecrets("", config.root(), found);
+        // FieldEncrypt's option is plain "key", which the name rule cannot tell from other keys
+        forEachFieldEncrypt((path, block) -> collectEncryptKeys(path, block, found));
         return found;
+    }
+
+    private static void collectEncryptKeys(String path, ConfigValue value, List<String> found) {
+        if (value instanceof ConfigObject object) {
+            object.forEach((key, child) -> {
+                if (key.equals("key") && hasValue(child)) {
+                    found.add(path + ".key");
+                } else {
+                    collectEncryptKeys(path + "." + key, child, found);
+                }
+            });
+        } else if (value instanceof ConfigList list) {
+            for (int i = 0; i < list.size(); i++) {
+                collectEncryptKeys(path + "[" + i + "]", list.get(i), found);
+            }
+        }
+    }
+
+    /** Console encryption keys the config refers to (FieldEncrypt {@code encrypt_key_id}, nested entries included). */
+    public List<String> encryptKeyRefs() {
+        List<String> ids = new ArrayList<>();
+        if (config.root().get("transform") != null) {
+            collectKeyRefs(config.root().get("transform"), ids);
+        }
+        return ids;
+    }
+
+    private static void collectKeyRefs(ConfigValue value, List<String> ids) {
+        if (value instanceof ConfigObject object) {
+            object.forEach((key, child) -> {
+                if (key.equals(ENCRYPT_KEY_ID) && text(child) != null) {
+                    ids.add(text(child));
+                } else {
+                    collectKeyRefs(child, ids);
+                }
+            });
+        } else if (value instanceof ConfigList list) {
+            list.forEach(item -> collectKeyRefs(item, ids));
+        }
+    }
+
+    /** Visits each FieldEncrypt block of the transform section with its path. */
+    private void forEachFieldEncrypt(java.util.function.BiConsumer<String, ConfigObject> visitor) {
+        ConfigValue transform = config.root().get("transform");
+        if (transform instanceof ConfigObject keyed) {
+            keyed.forEach((name, block) -> {
+                if (name.equals(FIELD_ENCRYPT) && block instanceof ConfigObject object) {
+                    visitor.accept("transform." + name, object);
+                }
+            });
+        } else if (transform instanceof ConfigList list) {
+            for (int i = 0; i < list.size(); i++) {
+                if (list.get(i) instanceof ConfigObject block && block.get("plugin_name") != null
+                        && FIELD_ENCRYPT.equals(String.valueOf(block.get("plugin_name").unwrapped()))) {
+                    visitor.accept("transform[" + i + "]", block);
+                }
+            }
+        }
     }
 
     private static void collectSecrets(String path, ConfigValue value, List<String> found) {
@@ -251,7 +322,12 @@ public final class HoconTemplate {
      * over the datasource's options.
      */
     public String render(OptionsResolver resolver) {
-        return render(resolver, false);
+        return render(resolver, null, false);
+    }
+
+    /** Also puts the console encryption keys in, where FieldEncrypt names them by id. */
+    public String render(OptionsResolver resolver, KeyResolver keys) {
+        return render(resolver, keys, false);
     }
 
     /**
@@ -259,11 +335,14 @@ public final class HoconTemplate {
      * {@code ******}, including ones written into the config itself (older versions may have them).
      */
     public String renderMasked(OptionsResolver resolver) {
-        return render(resolver, true);
+        return render(resolver, null, true);
     }
 
-    private String render(OptionsResolver resolver, boolean mask) {
+    private String render(OptionsResolver resolver, KeyResolver keys, boolean mask) {
         ConfigObject root = config.root();
+        if (root.get("transform") != null && (keys != null || mask)) {
+            root = root.withValue("transform", injectKeys(root.get("transform"), keys, mask, false));
+        }
         for (String section : SECTIONS) {
             ConfigValue value = root.get(section);
             ConfigValue rewritten =
@@ -275,6 +354,37 @@ public final class HoconTemplate {
             root = root.withValue(section, rewritten);
         }
         return (mask ? maskSecrets(root) : root).render(ConfigRenderOptions.concise());
+    }
+
+    /**
+     * Replaces each {@code encrypt_key_id} with the key ({@code ******} when masking), and masks a
+     * key written into a FieldEncrypt block when masking.
+     */
+    private static ConfigValue injectKeys(ConfigValue value, KeyResolver keys, boolean mask, boolean inEncrypt) {
+        if (value instanceof ConfigObject object) {
+            boolean encrypt = inEncrypt || (object.get("plugin_name") != null
+                    && FIELD_ENCRYPT.equals(String.valueOf(object.get("plugin_name").unwrapped())));
+            ConfigObject result = object;
+            for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
+                String key = entry.getKey();
+                if (key.equals(ENCRYPT_KEY_ID)) {
+                    result = result.withoutKey(key);
+                    String id = text(entry.getValue());
+                    result = result.withValue("key", ConfigValueFactory.fromAnyRef(mask ? MASK : keys.resolve(id)));
+                } else if (mask && encrypt && key.equals("key")) {
+                    result = result.withValue(key, ConfigValueFactory.fromAnyRef(MASK));
+                } else {
+                    result = result.withValue(key, injectKeys(entry.getValue(), keys, mask, encrypt || key.equals(FIELD_ENCRYPT)));
+                }
+            }
+            return result;
+        }
+        if (value instanceof ConfigList list) {
+            List<ConfigValue> items = new ArrayList<>();
+            list.forEach(item -> items.add(injectKeys(item, keys, mask, inEncrypt)));
+            return ConfigValueFactory.fromIterable(items);
+        }
+        return value;
     }
 
     private static ConfigObject maskSecrets(ConfigObject object) {

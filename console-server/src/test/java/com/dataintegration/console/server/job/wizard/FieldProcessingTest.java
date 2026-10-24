@@ -116,4 +116,21 @@ class FieldProcessingTest {
                 .contains("plugin_input = [\"fields_renamed\"]");
         HoconTemplate.parse(Variables.render(hocon, Map.of(), LocalDateTime.of(2026, 10, 25, 2, 0)));
     }
+
+    @Test
+    void encryptedFieldsBecomeTextAndUseTheTablesKey() {
+        TableSpec table = new TableSpec("users", List.of("id", "phone", "email"), null, null, null, null, null,
+                Map.of("phone", new FieldProcess(null, null, null, true), "email", new FieldProcess(null, null, null, true)),
+                null, null, "key-1");
+        WizardForm form = new WizardForm(new WizardForm.Source("src", "shop", List.of(table)),
+                new Target("dst", "ods", null, null, null, SchemaMode.CREATE, DataMode.CLEAR, WriteMode.UPSERT, null),
+                new Sync(SyncMode.FULL, null, null, null), 1, false, null, null, null);
+        String hocon = WizardGenerator.generate(form, new Endpoints("MYSQL", null, "MYSQL", null)).hocon();
+        assertThat(hocon)
+                .contains("select id, TRY_CAST(phone AS STRING) as phone, TRY_CAST(email AS STRING) as email from dual")
+                .contains("FieldEncrypt {\n    plugin_input = [\"processed\"]\n    plugin_output = \"encrypted\"")
+                .contains("{ table_path = \"shop.users\", fields = [\"phone\", \"email\"], encrypt_key_id = \"key-1\" }")
+                .doesNotContain(" key = ");
+        assertThat(HoconTemplate.parse(hocon).encryptKeyRefs()).contains("key-1");
+    }
 }

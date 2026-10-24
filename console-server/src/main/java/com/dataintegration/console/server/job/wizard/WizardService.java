@@ -5,6 +5,7 @@ import com.dataintegration.console.datasource.CountRequest;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.server.datasource.DatasourceService;
+import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
@@ -66,8 +67,11 @@ public class WizardService {
 
     private final DatasourceService datasourceService;
 
-    public WizardService(DatasourceService datasourceService) {
+    private final EncryptKeyService encryptKeys;
+
+    public WizardService(DatasourceService datasourceService, EncryptKeyService encryptKeys) {
         this.datasourceService = datasourceService;
+        this.encryptKeys = encryptKeys;
     }
 
     public Endpoints endpoints(WizardForm form) {
@@ -190,6 +194,14 @@ public class WizardService {
             checkQuery(form, endpoints, table, variables, checks);
             List<ColumnMeta> synced = table.allColumns() ? columns : table.columns().stream().map(byName::get).toList();
             checkProcessing(table, synced, meta.primaryKeys(), checks);
+            if (!FieldProcessing.encryptedFields(table, synced.stream().map(ColumnMeta::name).toList()).isEmpty()
+                    && table.encryptKeyId() != null && !table.encryptKeyId().isBlank()) {
+                try {
+                    encryptKeys.requireUsable(table.encryptKeyId());
+                } catch (ConsoleException e) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：" + e.getMessage()));
+                }
+            }
             selected.put(table.name(), synced);
         }
         return selected;
