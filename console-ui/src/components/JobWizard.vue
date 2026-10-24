@@ -22,6 +22,7 @@ import {
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
 
+import AdvancedOptions from './wizard/AdvancedOptions.vue'
 import FieldMapping from './wizard/FieldMapping.vue'
 import TableMapping from './wizard/TableMapping.vue'
 
@@ -606,22 +607,20 @@ onMounted(async () => {
       <el-collapse class="advanced">
         <el-collapse-item name="advanced">
           <template #title>
-            高级参数<span class="tip">（{{ advancedCount ? `已设置 ${advancedCount} 项` : '一般不需要修改' }}，定义来自 SeaTunnel 集群）</span>
+            高级参数<span class="tip">（{{ advancedCount ? `已设置 ${advancedCount} 项` : '一般不需要修改' }}）</span>
           </template>
           <el-alert v-if="optionsError" :title="optionsError" type="warning" :closable="false" />
           <template v-else>
-            <div class="opt-group">来源（Jdbc source）</div>
-            <div v-for="o in sourceOptionDefs" :key="'s' + o.key" class="opt">
-              <div class="opt-key">{{ o.key }}</div>
-              <el-input v-model="form.sourceOptions![o.key]" :placeholder="o.defaultValue != null ? `默认 ${o.defaultValue}` : ''" size="small" class="opt-input" />
-              <div class="opt-desc">{{ o.description }}</div>
-            </div>
-            <div class="opt-group">目标（{{ targetIsEs ? 'Elasticsearch' : 'Jdbc' }} sink）</div>
-            <div v-for="o in sinkOptionDefs" :key="'t' + o.key" class="opt">
-              <div class="opt-key">{{ o.key }}</div>
-              <el-input v-model="form.sinkOptions![o.key]" :placeholder="o.defaultValue != null ? `默认 ${o.defaultValue}` : ''" size="small" class="opt-input" />
-              <div class="opt-desc">{{ o.description }}</div>
-            </div>
+            <div class="tip adv-intro">不填就用默认值，大多数情况不需要改。改过的参数会高亮显示。</div>
+            <AdvancedOptions v-model="form.sourceOptions!" title="读取（来源）" :defs="sourceOptionDefs" type="source" plugin="Jdbc" />
+            <AdvancedOptions
+              v-model="form.sinkOptions!"
+              title="写入（目标）"
+              :defs="sinkOptionDefs"
+              type="sink"
+              :plugin="targetIsEs ? 'Elasticsearch' : 'Jdbc'"
+              :target-type="typeOf(form.target.datasourceId)"
+            />
           </template>
         </el-collapse-item>
       </el-collapse>
@@ -923,29 +922,13 @@ onMounted(async () => {
   margin-top: 8px;
 }
 
-.opt-group {
-  margin: 12px 0 6px;
-  font-weight: 500;
+.adv-intro {
+  margin-bottom: 12px;
 }
 
-.opt {
-  display: grid;
-  grid-template-columns: 240px 220px 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--el-border-color-lighter);
-}
 
-.opt-key {
-  font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
-  font-size: 12px;
-}
 
-.opt-desc {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
+
 
 .check-bar {
   display: flex;
@@ -1031,10 +1014,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 900px) {
-  .opt {
-    grid-template-columns: 1fr;
-  }
-
   .form-card,
   .narrow {
     max-width: 100%;
