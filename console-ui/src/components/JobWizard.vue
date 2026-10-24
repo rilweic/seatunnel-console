@@ -652,6 +652,7 @@ onMounted(async () => {
 }
 
 .t-name {
+  margin-right: 12px;
   font-weight: 500;
 }
 

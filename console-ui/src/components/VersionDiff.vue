@@ -37,11 +37,15 @@ watch(
   { immediate: true },
 )
 
-/** What is compared: the config, then the job parameters sorted by name. */
+/** What is compared: the config, the job parameters sorted by name, row-count validation and the wizard form. */
 function text(v: VersionDetail | undefined): string {
   if (!v) return ''
   const params = Object.entries(v.params ?? {}).sort(([a], [b]) => a.localeCompare(b))
-  return v.hocon.trimEnd() + (params.length ? '\n\n# 任务参数\n' + params.map(([k, val]) => `${k} = ${val}`).join('\n') : '')
+  let out = v.hocon.trimEnd()
+  if (params.length) out += '\n\n# 任务参数\n' + params.map(([k, val]) => `${k} = ${val}`).join('\n')
+  if (v.validation) out += '\n\n# 行数校验\n' + JSON.stringify(v.validation, null, 2)
+  if (v.form) out += '\n\n# 向导表单\n' + JSON.stringify(v.form, null, 2)
+  return out
 }
 
 const lines = computed(() => diffLines(text(details.value[left.value]), text(details.value[right.value])))
@@ -66,7 +70,7 @@ const label = (v: VersionSummary) => `v${v.versionNo}${v.remark ? ' · ' + v.rem
       <span class="stats"><span class="plus">+{{ stats.add }}</span> <span class="minus">-{{ stats.del }}</span></span>
     </div>
     <div v-loading="loading" class="diff">
-      <div v-if="!loading && stats.add + stats.del === 0" class="empty">两个版本的配置和任务参数完全相同</div>
+      <div v-if="!loading && stats.add + stats.del === 0" class="empty">两个版本的配置、任务参数和行数校验完全相同</div>
       <template v-else>
         <div v-for="(l, i) in shown" :key="i" class="line" :class="l.kind">
           <template v-if="l.kind === 'fold'">
