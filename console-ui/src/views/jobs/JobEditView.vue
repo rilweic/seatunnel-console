@@ -3,6 +3,7 @@
  * Editing a job: sync config (wizard or script, saved as a new version), schedule and basic info.
  * Each section saves on its own; leaving with unsaved changes asks first.
  */
+import { Document } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -121,7 +122,7 @@ onMounted(load)
 </script>
 
 <template>
-  <el-card v-if="job" shadow="never">
+  <el-card v-if="job" shadow="never" class="edit-card">
     <div class="head">
       <div>
         <div class="name"><BackButton :fallback="`/jobs/${jobId}`" />编辑任务：{{ job.name }}</div>
@@ -131,7 +132,7 @@ onMounted(load)
         </div>
       </div>
       <div class="actions">
-        <el-button v-if="isWizard" link type="primary" @click="switchToScript">转为脚本模式</el-button>
+        <el-button v-if="isWizard" :icon="Document" @click="switchToScript">转为脚本模式</el-button>
       </div>
     </div>
 
@@ -172,6 +173,13 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* nothing between the page and the wizard clips, so its bottom bar can stick to the page bottom */
+.edit-card,
+.edit-card :deep(.el-card__body),
+.edit-card :deep(.el-tabs__content) {
+  overflow: visible;
+}
+
 .head {
   display: flex;
   justify-content: space-between;

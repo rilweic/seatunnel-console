@@ -138,11 +138,28 @@ export interface JobActivity {
   cron: string | null
 }
 
+export type NameCase = 'KEEP' | 'UPPER' | 'LOWER'
+
+/** Derives a target name: replace (plain text), change case, then add prefix and suffix. */
+export interface NameRule {
+  find?: string | null
+  replace?: string | null
+  nameCase?: NameCase | null
+  prefix?: string | null
+  suffix?: string | null
+}
+
 export interface WizardTable {
   name: string
   columns?: string[] | null
   filter?: string | null
   incrementalField?: string | null
+  /** target table or index name set by hand; overrides the table rule */
+  targetName?: string | null
+  /** target field names set by hand, by source field */
+  fieldNames?: Record<string, string> | null
+  /** this table's field rule; null uses the form's */
+  fieldRule?: NameRule | null
 }
 
 export interface WizardForm {
@@ -156,12 +173,14 @@ export interface WizardForm {
     schemaMode: 'CREATE' | 'ERROR'
     dataMode: 'KEEP' | 'CLEAR'
     writeMode: 'UPSERT' | 'APPEND'
+    tableRule?: NameRule | null
   }
   sync: { mode: 'FULL' | 'INCREMENTAL'; window?: 'DAY' | 'HOUR' | 'CUSTOM' | null; field?: string | null; customCondition?: string | null }
   parallelism: number
   validation: boolean
   sourceOptions?: Record<string, string>
   sinkOptions?: Record<string, string>
+  fieldRule?: NameRule | null
 }
 
 export interface PrecheckResult {
@@ -302,6 +321,7 @@ export type RunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELED
 export interface InstanceView {
   id: string
   projectId: string
+  projectName: string | null
   jobDefinitionId: string
   jobName: string | null
   versionNo: number | null

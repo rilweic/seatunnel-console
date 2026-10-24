@@ -9,6 +9,7 @@ import com.dataintegration.console.server.job.JobService.VersionDetail;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.ScheduleService.ScheduleView;
 import com.dataintegration.console.server.job.wizard.WizardForm;
+import com.dataintegration.console.server.job.wizard.WizardGenerator;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.run.InstanceService.InstanceView;
@@ -20,7 +21,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * The job detail page's overview (docs/design.md §10.4): how the job has been running, what it
@@ -211,12 +211,9 @@ public class JobOverviewService {
         Endpoint source = endpoint(null, form.source().datasourceId(), form.source().namespace());
         WizardForm.Target t = form.target();
         String targetType = typeOf(t.datasourceId());
-        String naming;
-        if (tables.size() == 1 && t.tableName() != null && !t.tableName().isBlank()) {
-            naming = t.tableName();
-        } else {
-            naming = Objects.toString(t.prefix(), "") + "{表名}" + Objects.toString(t.suffix(), "");
-        }
+        boolean es = "ELASTICSEARCH".equals(targetType);
+        List<String> targets = form.source().tables().stream().map(table -> WizardGenerator.targetName(form, table, es)).toList();
+        String naming = targets.isEmpty() ? "-" : targets.size() == 1 ? targets.get(0) : targets.get(0) + " 等 " + targets.size() + " 张";
         String location = "ELASTICSEARCH".equals(targetType) ? naming : t.namespace() + " · " + naming;
         Endpoint sink = endpoint(null, t.datasourceId(), location);
         String detail = (t.writeMode() == null ? "" : t.writeMode().name()) + " · "

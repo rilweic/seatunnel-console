@@ -7,6 +7,8 @@ import com.dataintegration.console.server.job.HoconTemplate;
 import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.NameCase;
+import com.dataintegration.console.server.job.wizard.WizardForm.NameRule;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.Sync;
 import com.dataintegration.console.server.job.wizard.WizardForm.SyncMode;
@@ -54,7 +56,11 @@ class WizardGeneratorTest {
                 .contains("{ table_path = \"shop.orders\" }")
                 .contains("{ table_path = \"shop.users\" }")
                 .contains("database = \"ods\"")
-                .contains("table = \"ods_${table_name}\"")
+                .contains("{ table_path = \"shop.orders\", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = \"ods_orders\" }] }")
+                .contains("{ table_path = \"shop.users\", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = \"ods_users\" }] }")
+                .contains("table = \"${table_name}\"")
+                .contains("plugin_input = [\"tables_renamed\"]")
+                .doesNotContain("FieldRename")
                 .contains("enable_upsert = true")
                 .contains("schema_save_mode = \"CREATE_SCHEMA_WHEN_NOT_EXIST\"")
                 .contains("data_save_mode = \"APPEND_DATA\"");
@@ -77,7 +83,8 @@ class WizardGeneratorTest {
                 .contains("query = \"select `id`, `amount`, `updated_at` from `shop`.`orders` where (status = 1) and "
                         + "(`updated_at` >= '$[yyyy-MM-dd-1] 00:00:00' and `updated_at` < '$[yyyy-MM-dd] 00:00:00')\"")
                 .contains("database = \"dw\"")
-                .contains("table = \"public.orders_copy\"")
+                .contains("replace_to = \"orders_copy\"")
+                .contains("table = \"public.${table_name}\"")
                 .contains("schema_save_mode = \"ERROR_WHEN_SCHEMA_NOT_EXIST\"");
         String rendered = Variables.render(g.hocon(), Map.of(), LocalDateTime.of(2026, 10, 24, 2, 0));
         assertThat(rendered).contains("'2026-10-23 00:00:00'").contains("'2026-10-24 00:00:00'");
@@ -115,7 +122,8 @@ class WizardGeneratorTest {
 
         assertThat(g.hocon())
                 .contains("{ table_path = \"app.shop.orders\" }")
-                .contains("index = \"app_${table_name}\"")
+                .contains("{ table_path = \"app.shop.orders\", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = \"app_orders\" }] }")
+                .contains("index = \"${table_name}\"")
                 .contains("primary_keys = [\"${primary_key}\"]")
                 .contains("data_save_mode = \"DROP_DATA\"")
                 .doesNotContain("enable_upsert");
@@ -163,6 +171,78 @@ class WizardGeneratorTest {
                         form(List.of(new TableSpec("t", null, null, null)), target("ods", DataMode.KEEP, WriteMode.UPSERT), FULL, false),
                         new Endpoints("ELASTICSEARCH", null, "MYSQL", null)))
                 .hasMessageContaining("源端只支持");
+    }
+
+    @Test
+    void tableNamesFollowTheRuleUnlessSetByHand() {
+        Target t = new Target("dst-ds", "ods", null, null, null, SchemaMode.CREATE, DataMode.KEEP, WriteMode.UPSERT,
+                new NameRule("tb_", "", NameCase.UPPER, "ods_", "_d"));
+        WizardForm f = form(List.of(new TableSpec("tb_orders", null, null, null),
+                        new TableSpec("tb_users", null, null, null, "dim_user", null, null),
+                        new TableSpec("ODS_X_D", null, null, null)),
+                t, FULL, false);
+        assertThat(f.source().tables()).extracting(table -> WizardGenerator.targetName(f, table, false))
+                .containsExactly("ods_ORDERS_d", "dim_user", "ods_ODS_X_D_d");
+        // Elasticsearch index names are lower case whatever the rule says
+        assertThat(WizardGenerator.targetName(f, f.source().tables().get(0), true)).isEqualTo("ods_orders_d");
+    }
+
+    @Test
+    void tableThatKeepsItsNameNeedsNoRename() {
+        Target t = new Target("dst-ds", "ods", null, null, null, SchemaMode.CREATE, DataMode.KEEP, WriteMode.UPSERT, null);
+        String hocon = WizardGenerator.generate(form(List.of(new TableSpec("orders", null, null, null)), t, FULL, false), MYSQL_TO_MYSQL).hocon();
+        assertThat(hocon).doesNotContain("transform").contains("table = \"${table_name}\"").contains("plugin_input = [\"source\"]");
+        parse(hocon);
+    }
+
+    @Test
+    void fieldsAreRenamedPerTableByHandAndByRule() {
+        Target t = new Target("dst-ds", "ods", null, null, null, SchemaMode.CREATE, DataMode.CLEAR, WriteMode.UPSERT, null);
+        WizardForm f = new WizardForm(
+                new WizardForm.Source("src-ds", "shop", List.of(
+                        new TableSpec("orders", List.of("id", "amount", "updated_at"), null, null, null, Map.of("amount", "total"), null),
+                        new TableSpec("users", null, null, null, null, null, new NameRule(null, null, NameCase.UPPER, null, null)),
+                        new TableSpec("logs", null, null, null))),
+                t, new Sync(SyncMode.INCREMENTAL, Window.DAY, "updated_at", null), 1, true, null, null, null);
+        Endpoints endpoints = new Endpoints("MYSQL", null, "MYSQL", null, Map.of("users", List.of("id", "name", "updated_at")));
+        WizardGenerator.Generated g = WizardGenerator.generate(f, endpoints);
+
+        assertThat(g.hocon())
+                .contains("FieldRename {\n    plugin_input = [\"source\"]\n    plugin_output = \"fields_renamed\"")
+                .contains("{ table_path = \"shop.orders\", specific = [\n          { field_name = \"amount\", target_name = \"total\" }\n        ] }")
+                .contains("{ field_name = \"id\", target_name = \"ID\" }")
+                .contains("{ field_name = \"name\", target_name = \"NAME\" }")
+                .doesNotContain("shop.logs\", specific")
+                .doesNotContain("TableRename")
+                .contains("plugin_input = [\"fields_renamed\"]")
+                // source queries keep the source names
+                .contains("select `id`, `amount`, `updated_at` from `shop`.`orders`");
+        parse(g.hocon());
+        // the target side of an incremental check counts on the renamed field
+        assertThat(g.validation().tables()).filteredOn(c -> c.name().equals("users")).singleElement()
+                .satisfies(c -> assertThat(c.target().sql()).contains("`UPDATED_AT` >= "));
+    }
+
+    @Test
+    void formsSavedBeforeNameRulesKeepTheirNames() {
+        tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
+        WizardForm old = mapper.readValue("""
+                {"source":{"datasourceId":"s","namespace":"shop","tables":[{"name":"orders","columns":null,"filter":null,"incrementalField":null}]},
+                 "target":{"datasourceId":"d","namespace":"ods","tableName":"orders_copy","prefix":null,"suffix":null,
+                           "schemaMode":"CREATE","dataMode":"KEEP","writeMode":"UPSERT"},
+                 "sync":{"mode":"FULL"},"parallelism":1,"validation":false}
+                """, WizardForm.class);
+        assertThat(WizardGenerator.targetName(old, old.source().tables().get(0), false)).isEqualTo("orders_copy");
+        assertThat(WizardGenerator.targetField(old, old.source().tables().get(0), "id")).isEqualTo("id");
+
+        WizardForm multi = form(List.of(new TableSpec("a", null, null, null), new TableSpec("b", null, null, null)),
+                new Target("d", "ods", null, "ods_", "_h", SchemaMode.CREATE, DataMode.KEEP, WriteMode.UPSERT), FULL, false);
+        assertThat(multi.source().tables()).extracting(table -> WizardGenerator.targetName(multi, table, false))
+                .containsExactly("ods_a_h", "ods_b_h");
+
+        WizardForm roundTrip = mapper.readValue(mapper.writeValueAsString(new WizardForm(old.source(), old.target(), old.sync(), 1, false,
+                null, null, new NameRule("x", "y", NameCase.LOWER, "p_", null))), WizardForm.class);
+        assertThat(roundTrip.fieldRule().apply("AxB")).isEqualTo("p_ayb");
     }
 
     @Test

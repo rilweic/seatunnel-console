@@ -6,6 +6,7 @@ import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.ValidationSpec.Mode;
 import com.dataintegration.console.server.job.ValidationSpec.Side;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.NameRule;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.SyncMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
@@ -13,7 +14,9 @@ import com.dataintegration.console.server.job.wizard.WizardForm.Window;
 import com.dataintegration.console.server.job.wizard.WizardForm.WriteMode;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 
@@ -24,7 +27,12 @@ import java.util.regex.Pattern;
  *
  * <p>Every table gets a {@code table_path}; a table with column pruning, a filter or an incremental
  * condition also gets its own {@code query} (Jdbc's {@code where_condition} would apply to every
- * table). The sink addresses tables with SeaTunnel's {@code ${table_name}} placeholder.
+ * table). Target names are worked out here, table by table (§7.8): renamed fields go through a
+ * {@code FieldRename} transform and renamed tables through a {@code TableRename} transform, each
+ * configured per source table, and the sink addresses tables with SeaTunnel's
+ * {@code ${table_name}} placeholder. Fields are not renamed with SQL aliases: the Jdbc source
+ * matches query columns to the table's own by name, and a renamed key column would lose its
+ * primary key.
  */
 public final class WizardGenerator {
 
@@ -37,8 +45,20 @@ public final class WizardGenerator {
     /**
      * @param sourceDatabase PostgreSQL database of the source datasource (part of table_path); null for MySQL
      * @param targetDatabase PostgreSQL database of the target datasource; null otherwise
+     * @param sourceColumns column names of source tables that sync all columns under a field rule,
+     *     by table; the rule renames these columns as they are now
      */
-    public record Endpoints(String sourceType, String sourceDatabase, String targetType, String targetDatabase) {}
+    public record Endpoints(
+            String sourceType,
+            String sourceDatabase,
+            String targetType,
+            String targetDatabase,
+            Map<String, List<String>> sourceColumns) {
+
+        public Endpoints(String sourceType, String sourceDatabase, String targetType, String targetDatabase) {
+            this(sourceType, sourceDatabase, targetType, targetDatabase, Map.of());
+        }
+    }
 
     /**
      * @param validation per-table checks, or null when none can be accurate or validation is off
@@ -50,7 +70,7 @@ public final class WizardGenerator {
 
     public static Generated generate(WizardForm form, Endpoints endpoints) {
         requireShape(form, endpoints);
-        boolean single = form.source().tables().size() == 1;
+        boolean es = ELASTICSEARCH.equals(endpoints.targetType());
         StringBuilder hocon = new StringBuilder();
         hocon.append("# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑\n");
         hocon.append("env {\n  job.mode = \"BATCH\"\n  parallelism = ").append(Math.max(1, form.parallelism())).append("\n}\n\n");
@@ -69,19 +89,20 @@ public final class WizardGenerator {
         hocon.append("    ]\n");
         appendOptions(hocon, form.sourceOptions());
         hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
+        String sinkInput = appendRenames(hocon, form, endpoints, es);
 
         hocon.append("sink {\n");
-        if (ELASTICSEARCH.equals(endpoints.targetType())) {
+        if (es) {
             hocon.append("  Elasticsearch {\n");
             hocon.append("    datasource_id = ").append(str(form.target().datasourceId())).append('\n');
-            hocon.append("    index = ").append(str(single ? targetName(form, form.source().tables().get(0).name()) : placeholderName(form))).append('\n');
+            hocon.append("    index = \"${table_name}\"\n");
             if (form.target().writeMode() == WriteMode.UPSERT) {
                 hocon.append("    primary_keys = [\"${primary_key}\"]\n");
             }
         } else {
             hocon.append("  Jdbc {\n");
             hocon.append("    datasource_id = ").append(str(form.target().datasourceId())).append('\n');
-            String name = single ? targetName(form, form.source().tables().get(0).name()) : placeholderName(form);
+            String name = "${table_name}";
             if (POSTGRESQL.equals(endpoints.targetType())) {
                 hocon.append("    database = ").append(str(endpoints.targetDatabase())).append('\n');
                 hocon.append("    table = ").append(str(form.target().namespace() + "." + name)).append('\n');
@@ -96,19 +117,118 @@ public final class WizardGenerator {
                 ? "ERROR_WHEN_SCHEMA_NOT_EXIST" : "CREATE_SCHEMA_WHEN_NOT_EXIST")).append('\n');
         hocon.append("    data_save_mode = ").append(str(form.target().dataMode() == DataMode.CLEAR ? "DROP_DATA" : "APPEND_DATA")).append('\n');
         appendOptions(hocon, form.sinkOptions());
-        hocon.append("    plugin_input = [\"source\"]\n  }\n}\n");
+        hocon.append("    plugin_input = [").append(str(sinkInput)).append("]\n  }\n}\n");
 
         List<String> notes = new ArrayList<>();
         ValidationSpec validation = form.validation() ? validation(form, endpoints, notes) : null;
         return new Generated(hocon.toString(), validation, notes);
     }
 
-    /** Target table or index name of one source table. */
-    public static String targetName(WizardForm form, String sourceTable) {
-        if (form.source().tables().size() == 1 && notBlank(form.target().tableName())) {
-            return form.target().tableName().trim();
+    /**
+     * Renamed fields, then renamed tables, each configured only for the source tables it changes
+     * (the others pass through unchanged). Returns the stream the sink reads.
+     */
+    private static String appendRenames(StringBuilder hocon, WizardForm form, Endpoints endpoints, boolean es) {
+        Map<String, Map<String, String>> fieldRenames = new LinkedHashMap<>();
+        Map<String, String> tableRenames = new LinkedHashMap<>();
+        for (TableSpec table : form.source().tables()) {
+            String path = tablePath(form, endpoints, table.name());
+            Map<String, String> fields = new LinkedHashMap<>();
+            syncedColumns(form, endpoints, table).forEach(c -> putIfRenamed(fields, c, targetField(form, table, c)));
+            if (!fields.isEmpty()) {
+                fieldRenames.put(path, fields);
+            }
+            String target = targetName(form, table, es);
+            if (!target.equals(table.name())) {
+                tableRenames.put(path, target);
+            }
         }
-        return nullToEmpty(form.target().prefix()) + sourceTable + nullToEmpty(form.target().suffix());
+        if (fieldRenames.isEmpty() && tableRenames.isEmpty()) {
+            return "source";
+        }
+        String input = "source";
+        hocon.append("transform {\n");
+        if (!fieldRenames.isEmpty()) {
+            hocon.append("  FieldRename {\n    plugin_input = [\"source\"]\n    plugin_output = \"fields_renamed\"\n");
+            hocon.append("    table_transform = [\n");
+            fieldRenames.forEach((path, fields) -> {
+                hocon.append("      { table_path = ").append(str(path)).append(", specific = [\n");
+                fields.forEach((from, to) -> hocon.append("          { field_name = ").append(str(from))
+                        .append(", target_name = ").append(str(to)).append(" }\n"));
+                hocon.append("        ] }\n");
+            });
+            hocon.append("    ]\n  }\n");
+            input = "fields_renamed";
+        }
+        if (!tableRenames.isEmpty()) {
+            hocon.append("  TableRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"tables_renamed\"\n");
+            hocon.append("    table_transform = [\n");
+            tableRenames.forEach((path, name) -> hocon.append("      { table_path = ").append(str(path))
+                    .append(", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = ").append(str(name)).append(" }] }\n"));
+            hocon.append("    ]\n  }\n");
+            input = "tables_renamed";
+        }
+        hocon.append("}\n\n");
+        return input;
+    }
+
+    /**
+     * The table's synced columns as far as they are known: its column list, or for an all-columns
+     * table the columns passed in {@link Endpoints#sourceColumns()}, else the fields named by hand.
+     */
+    static List<String> syncedColumns(WizardForm form, Endpoints endpoints, TableSpec table) {
+        if (!table.allColumns()) {
+            return table.columns();
+        }
+        List<String> known = endpoints.sourceColumns() == null ? null : endpoints.sourceColumns().get(table.name());
+        if (known != null) {
+            return known;
+        }
+        return table.fieldNames() == null ? List.of() : List.copyOf(table.fieldNames().keySet());
+    }
+
+    /** True when the table's field names follow a rule, so its full column list is needed. */
+    public static boolean needsColumns(WizardForm form, TableSpec table) {
+        return table.allColumns() && (table.fieldRule() != null || form.fieldRule() != null);
+    }
+
+    private static void putIfRenamed(Map<String, String> renames, String from, String to) {
+        if (!from.equals(to)) {
+            renames.put(from, to);
+        }
+    }
+
+    /**
+     * Target table or index name of one source table: set by hand, or derived by the table rule
+     * (§7.8). Elasticsearch index names are always lower case.
+     */
+    public static String targetName(WizardForm form, TableSpec table, boolean es) {
+        String name;
+        if (notBlank(table.targetName())) {
+            name = table.targetName().trim();
+        } else if (form.target().tableRule() == null && form.source().tables().size() == 1 && notBlank(form.target().tableName())) {
+            name = form.target().tableName().trim(); // forms saved before table rules
+        } else {
+            name = tableRule(form).apply(table.name());
+        }
+        return es ? name.toLowerCase(Locale.ROOT) : name;
+    }
+
+    /** Target name of one source field: set by hand, or derived by the table's or the job's field rule. */
+    public static String targetField(WizardForm form, TableSpec table, String column) {
+        String byHand = table.fieldNames() == null ? null : table.fieldNames().get(column);
+        if (notBlank(byHand)) {
+            return byHand.trim();
+        }
+        NameRule rule = table.fieldRule() != null ? table.fieldRule() : form.fieldRule();
+        return rule == null ? column : rule.apply(column);
+    }
+
+    private static NameRule tableRule(WizardForm form) {
+        WizardForm.Target t = form.target();
+        return t.tableRule() != null
+                ? t.tableRule()
+                : new NameRule(null, null, WizardForm.NameCase.KEEP, t.prefix(), t.suffix());
     }
 
     /** Incremental field of a table: its own, or the job-wide one. Null for full sync or a custom window. */
@@ -181,7 +301,7 @@ public final class WizardGenerator {
         List<ValidationSpec.TableCheck> checks = new ArrayList<>();
         for (TableSpec table : form.source().tables()) {
             Side source = new Side(Mode.SQL, form.source().datasourceId(), sourceQuery(form, endpoints, table, true), null, null);
-            String targetName = targetName(form, table.name());
+            String targetName = targetName(form, table, es);
             Side target;
             if (es) {
                 target = new Side(Mode.ES, form.target().datasourceId(), null, targetName, null);
@@ -194,7 +314,7 @@ public final class WizardGenerator {
                     notes.add(table.name() + "：增量字段 " + field + " 没有同步到目标表，这张表不做行数校验");
                     continue;
                 }
-                TableSpec onTarget = new TableSpec(targetName, null, null, table.incrementalField());
+                TableSpec onTarget = new TableSpec(targetName, null, null, targetField(form, table, field));
                 target = new Side(Mode.SQL, form.target().datasourceId(),
                         "select count(*) from " + qualified(endpoints.targetType(), form.target().namespace(), targetName)
                                 + " where " + incrementalCondition(form, endpoints.targetType(), onTarget),
@@ -224,6 +344,11 @@ public final class WizardGenerator {
         if (!ELASTICSEARCH.equals(endpoints.targetType()) && !notBlank(form.target().namespace())) {
             throw invalid("请选择目标端的库或 schema");
         }
+        for (TableSpec table : form.source().tables()) {
+            if (targetName(form, table, false).isBlank()) {
+                throw invalid(table.name() + "：目标表名为空");
+            }
+        }
         if (form.target().schemaMode() == null || form.target().dataMode() == null || form.target().writeMode() == null) {
             throw invalid("请完成目标端选项");
         }
@@ -251,10 +376,6 @@ public final class WizardGenerator {
         return POSTGRESQL.equals(endpoints.sourceType())
                 ? endpoints.sourceDatabase() + "." + form.source().namespace() + "." + table
                 : form.source().namespace() + "." + table;
-    }
-
-    private static String placeholderName(WizardForm form) {
-        return nullToEmpty(form.target().prefix()) + "${table_name}" + nullToEmpty(form.target().suffix());
     }
 
     static String qualified(String dbType, String namespace, String table) {
