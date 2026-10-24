@@ -181,7 +181,17 @@ public class RunService {
         }
         TriggerParam param = new TriggerParam(job.getId(), instance.getId(), instance.getScheduledTime(), run.startupParams());
         try {
-            client.triggerJob(scheduleService.ensureXxlJob(job, client), param.toJson(objectMapper));
+            try {
+                client.triggerJob(scheduleService.ensureXxlJob(job, client), param.toJson(objectMapper));
+            } catch (ConsoleException e) {
+                if (e.getCode() != ErrorCodes.SCHEDULER_JOB_MISSING) {
+                    throw e;
+                }
+                // Deleted in xxl-job-admin since: recreate it (with its schedule) and trigger once more.
+                recorder.event(instance.getId(), null, RunEventType.CREATED, Level.WARN,
+                        "XXL-JOB job " + job.getXxlJobId() + " no longer exists in xxl-job-admin, recreated it");
+                client.triggerJob(scheduleService.recreateXxlJob(job, client), param.toJson(objectMapper));
+            }
         } catch (ConsoleException e) {
             instance.setStatus(RunStatus.FAILED.name());
             instance.setFinishedAt(LocalDateTime.now());

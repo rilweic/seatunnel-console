@@ -20,6 +20,8 @@ public final class ErrorCodes {
     public static final int SCHEDULER_UNAVAILABLE = 4000;
     public static final int SCHEDULER_REQUEST_FAILED = 4001;
     public static final int SCHEDULER_DISABLED = 4002;
+    /** The XXL-JOB job a console job points at no longer exists, e.g. deleted in the admin UI. */
+    public static final int SCHEDULER_JOB_MISSING = 4003;
 
     private ErrorCodes() {}
 }

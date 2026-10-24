@@ -30,6 +30,13 @@ public class XxlJobAdminClient {
     static final String HEADER_ACCESS_TOKEN = "XXL-JOB-ACCESS-TOKEN";
     static final String HEADER_APPNAME = "XXL-JOB-APPNAME";
 
+    /**
+     * How xxl-job-admin 3.5.0 says a job id does not exist, in each of its languages: update answers
+     * "jobinfo_field_id + system_not_found", start/stop/remove answer "jobinfo_glue_jobid_invalid".
+     */
+    private static final List<String> JOB_MISSING_MESSAGES = List.of(
+            "任务ID不存在", "任務ID不存在", "Job IDnot exist", "任务ID非法", "任務ID非法", "Job ID is illegal");
+
     private static final ParameterizedTypeReference<Response<String>> RESPONSE_TYPE =
             new ParameterizedTypeReference<>() {};
 
@@ -160,6 +167,10 @@ public class XxlJobAdminClient {
                 log.warn("xxl-job-admin {} unreachable: {}", properties.adminAddresses().get(i), e.toString());
                 lastFailure = e;
                 continue;
+            }
+            if (response != null && !response.isSuccess() && response.getMsg() != null
+                    && JOB_MISSING_MESSAGES.stream().anyMatch(response.getMsg()::contains)) {
+                throw new ConsoleException(ErrorCodes.SCHEDULER_JOB_MISSING, "xxl-job " + uri + ": job no longer exists in xxl-job-admin");
             }
             if (response == null || !response.isSuccess()) {
                 throw new ConsoleException(

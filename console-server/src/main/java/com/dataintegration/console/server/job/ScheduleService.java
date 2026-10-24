@@ -196,9 +196,70 @@ public class ScheduleService {
                         .isNull(JobDefinition::getXxlJobId));
         if (updated == 0) {
             client.removeJob(created);
-            return jobService.require(job.getId()).getXxlJobId();
+            int existing = jobService.require(job.getId()).getXxlJobId();
+            job.setXxlJobId(existing);
+            return existing;
         }
+        job.setXxlJobId(created);
         return created;
+    }
+
+    /** What one reconciliation of a job did. */
+    public enum Reconciled {
+        UNCHANGED,
+        RECREATED,
+        FORGOTTEN,
+        FAILED
+    }
+
+    /**
+     * Makes XXL-JOB match the console for one job (docs/design.md §5.2): a scheduled job gets its
+     * schedule pushed again (recreating its XXL-JOB job if it was deleted there); an unscheduled
+     * job is only checked for existence, and a missing one is forgotten and recreated on its next
+     * run. XXL-JOB offers no read API, so pushing the console's state is the comparison.
+     */
+    public Reconciled reconcile(JobDefinition job, XxlJobAdminClient client) {
+        JobSchedule schedule = scheduleMapper.selectById(job.getId());
+        if (schedule != null) {
+            Integer before = job.getXxlJobId();
+            sync(job, schedule, client);
+            scheduleMapper.updateById(schedule);
+            if (!"SYNCED".equals(schedule.getSyncStatus())) {
+                return Reconciled.FAILED;
+            }
+            return before != null && !before.equals(job.getXxlJobId()) ? Reconciled.RECREATED : Reconciled.UNCHANGED;
+        }
+        if (job.getXxlJobId() == null) {
+            return Reconciled.UNCHANGED;
+        }
+        try {
+            // Unscheduled jobs are stopped anyway; stopping again is a harmless existence check.
+            client.stopJob(job.getXxlJobId());
+            return Reconciled.UNCHANGED;
+        } catch (ConsoleException e) {
+            if (e.getCode() != ErrorCodes.SCHEDULER_JOB_MISSING) {
+                throw e;
+            }
+            jobMapper.clearXxlJobId(job.getId(), job.getXxlJobId());
+            return Reconciled.FORGOTTEN;
+        }
+    }
+
+    /**
+     * Replaces a job's XXL-JOB job that was deleted in xxl-job-admin, restoring its schedule if it
+     * has one. Returns the new XXL-JOB job id.
+     */
+    public int recreateXxlJob(JobDefinition job, XxlJobAdminClient client) {
+        if (job.getXxlJobId() != null) {
+            jobMapper.clearXxlJobId(job.getId(), job.getXxlJobId());
+            job.setXxlJobId(null);
+        }
+        JobSchedule schedule = scheduleMapper.selectById(job.getId());
+        if (schedule != null) {
+            sync(job, schedule, client);
+            scheduleMapper.updateById(schedule);
+        }
+        return ensureXxlJob(job, client);
     }
 
     private void sync(JobDefinition job, JobSchedule schedule, XxlJobAdminClient client) {
@@ -210,7 +271,18 @@ public class ScheduleService {
                     schedule.getTimeoutSeconds(),
                     ScheduleSpec.BlockStrategy.valueOf(schedule.getBlockStrategy()),
                     ScheduleSpec.MisfireStrategy.valueOf(schedule.getMisfireStrategy()));
-            client.updateJob(xxlJobId, xxlJobName(job), spec, executorParam(job));
+            try {
+                client.updateJob(xxlJobId, xxlJobName(job), spec, executorParam(job));
+            } catch (ConsoleException e) {
+                if (e.getCode() != ErrorCodes.SCHEDULER_JOB_MISSING) {
+                    throw e;
+                }
+                // Deleted in xxl-job-admin: create a new one and push the schedule onto it.
+                jobMapper.clearXxlJobId(job.getId(), xxlJobId);
+                job.setXxlJobId(null);
+                xxlJobId = ensureXxlJob(job, client);
+                client.updateJob(xxlJobId, xxlJobName(job), spec, executorParam(job));
+            }
             if (Boolean.TRUE.equals(schedule.getEnabled())) {
                 client.startJob(xxlJobId);
             } else {

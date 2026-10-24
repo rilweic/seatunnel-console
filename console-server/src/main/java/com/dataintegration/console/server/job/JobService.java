@@ -198,8 +198,14 @@ public class JobService {
         if (job.getXxlJobId() != null && client != null) {
             try {
                 client.removeJob(job.getXxlJobId());
+                jobMapper.clearXxlJobId(id, job.getXxlJobId());
             } catch (ConsoleException e) {
-                log.warn("Job {} deleted but XXL-JOB job {} could not be removed: {}", id, job.getXxlJobId(), e.getMessage());
+                if (e.getCode() == ErrorCodes.SCHEDULER_JOB_MISSING) {
+                    jobMapper.clearXxlJobId(id, job.getXxlJobId());
+                } else {
+                    // Left for XxlJobReconciler, which retries the removal.
+                    log.warn("Job {} deleted but XXL-JOB job {} could not be removed: {}", id, job.getXxlJobId(), e.getMessage());
+                }
             }
         }
     }

@@ -6,6 +6,8 @@ import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineWorker;
 import com.dataintegration.console.engine.MasterStatus;
 import com.dataintegration.console.server.job.HoconTemplate;
+import com.dataintegration.console.server.job.ScheduleService;
+import com.dataintegration.console.server.job.XxlJobReconciler;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
@@ -59,6 +61,7 @@ public class ClusterHealthService {
     private final JobVersionMapper versionMapper;
     private final ObjectProvider<XxlJobProperties> xxlJobProperties;
     private final Path dataDir;
+    private final XxlJobReconciler reconciler;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).proxy(HttpClient.Builder.NO_PROXY).build();
 
     public ClusterHealthService(
@@ -66,12 +69,14 @@ public class ClusterHealthService {
             JobDefinitionMapper jobMapper,
             JobVersionMapper versionMapper,
             ObjectProvider<XxlJobProperties> xxlJobProperties,
-            @Value("${console.data-dir:./data}") String dataDir) {
+            @Value("${console.data-dir:./data}") String dataDir,
+            XxlJobReconciler reconciler) {
         this.engineClient = engineClient;
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.xxlJobProperties = xxlJobProperties;
         this.dataDir = Path.of(dataDir).toAbsolutePath().normalize();
+        this.reconciler = reconciler;
     }
 
     public Health check() {
@@ -178,6 +183,7 @@ public class ClusterHealthService {
                         ? new Check("Console", "XXL-JOB " + address, Status.OK, "admin 可访问")
                         : new Check("Console", "XXL-JOB " + address, Status.ERROR, "admin 连不上，定时调度、手动运行和补数都会失败"));
             }
+            checks.add(reconciliationCheck());
         }
         boolean writable;
         try {
@@ -189,6 +195,27 @@ public class ClusterHealthService {
         checks.add(writable
                 ? new Check("Console", "数据目录", Status.OK, dataDir + " 可写（作业日志归档在这里）")
                 : new Check("Console", "数据目录", Status.ERROR, dataDir + " 不可写，作业日志无法归档（console.data-dir）"));
+    }
+
+    private Check reconciliationCheck() {
+        XxlJobReconciler.Round round = reconciler.lastRound();
+        if (round == null) {
+            return new Check("Console", "XXL-JOB 对账", Status.OK, "console 启动后约 2 分钟执行第一次，之后每 10 分钟一次");
+        }
+        String when = round.finishedAt().toString().replace('T', ' ').substring(0, 19);
+        if (round.error() != null) {
+            return new Check("Console", "XXL-JOB 对账", Status.WARN, when + " 中断：" + round.error());
+        }
+        if (!round.failures().isEmpty()) {
+            return new Check("Console", "XXL-JOB 对账", Status.WARN,
+                    when + " 有任务同步失败（到任务的调度页查看原因）：" + String.join("、", round.failures()));
+        }
+        int recreated = round.counts().getOrDefault(ScheduleService.Reconciled.RECREATED, 0);
+        int forgotten = round.counts().getOrDefault(ScheduleService.Reconciled.FORGOTTEN, 0);
+        return new Check("Console", "XXL-JOB 对账", Status.OK, when + " 完成"
+                + (recreated + forgotten + round.removedOrphans() == 0
+                        ? "，两边一致"
+                        : "，修正：重建 " + recreated + " 个、清除失效引用 " + forgotten + " 个、删除残留 " + round.removedOrphans() + " 个"));
     }
 
     private boolean reachable(String address) {
