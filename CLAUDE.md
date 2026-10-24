@@ -15,7 +15,7 @@ mvn -q test -pl console-server -Dtest=WizardGeneratorTest          # one test cl
 mvn -q test -pl console-server -Dtest='WizardGeneratorTest#hourlyWindowAndPerTableIncrementalField'
 ```
 
-Run locally (config comes from `dev.env`, gitignored; it may contain non-`KEY=VALUE` lines, so load only the assignments):
+Run locally (config comes from `dev.env`, gitignored, copied from `dev.env.example`; a local copy may contain non-`KEY=VALUE` lines, so load only the assignments). Setting up MySQL, xxl-job-admin and the SeaTunnel cluster is described in README's quick start:
 
 ```bash
 set -a; eval "$(grep -E '^[A-Z_][A-Z0-9_]*=' dev.env)"; set +a
@@ -25,7 +25,7 @@ cd console-ui && npm run dev                               # http://localhost:51
 
 Frontend has no test or lint script; `npm run build` (`vue-tsc -b && vite build`) is the type check. Full stack in Docker: `docker/docker-compose.yml` with `docker/.env` (template `docker/.env.example`); the SeaTunnel cluster is never part of it.
 
-Local `curl` needs `--noproxy '*'` (the shell has an HTTP proxy set).
+When the shell has an HTTP proxy set, local `curl` needs `--noproxy '*'`.
 
 ## Architecture
 

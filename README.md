@@ -18,23 +18,98 @@ seatunnel-console/
 
 **约束**：console 只通过 REST API 访问 SeaTunnel，不能依赖 SeaTunnel 的 jar（见 docs/design.md §1.2）。
 
-## 版本
+## 依赖与版本
 
-| 组件 | 版本 | JDK |
-|---|---|---|
-| console-server | Spring Boot 4.1.2、MyBatis-Plus 3.5.17 | 17 |
-| xxl-job-admin | 3.5.0 | 17 |
-| SeaTunnel 集群 | 3.0.0 | 8 或 11 |
+| 软件 | 版本 | 用途 | 获取方式 |
+|---|---|---|---|
+| JDK | **17** | 编译和运行 console | 任意发行版（Temurin、Oracle 等） |
+| Maven | 3.9+ | 编译后端 | 官网下载 |
+| Node.js | **20.19+ 或 22.12+**（Vite 8 的要求） | 编译前端 | 官网下载 |
+| MySQL | 8.x（Docker 部署用的是 8.4） | console 自己的库 `seatunnel_console`、XXL-JOB 的库 `xxl_job` | 自行安装，或用 Docker 部署里的 MySQL |
+| xxl-job-admin | **3.5.0**（JDK 17） | 调度 | Docker 镜像 `xuxueli/xxl-job-admin:3.5.0`，或从 [xxl-job](https://github.com/xuxueli/xxl-job) 3.5.0 源码打包 |
+| SeaTunnel | **3.0.0**，Zeta 集群模式（JDK 8 或 11，不要用 17） | 执行同步作业 | [官网下载页](https://seatunnel.apache.org/download) 的二进制包 |
+| JDBC 驱动 | MySQL Connector/J 8.x、PostgreSQL 42.x | 放进 SeaTunnel 的 `lib/` | Maven 中央仓库 |
+| Docker / Docker Compose | 较新版本即可 | 只在 Docker 部署时需要 | — |
 
-## 本地开发
+console 只通过 REST API 访问 SeaTunnel，不依赖 SeaTunnel 的 jar，所以 console 和 SeaTunnel 可以用不同的 JDK。
 
-### 1. 准备依赖（自行安装）
+**SeaTunnel 集群不在本仓库里，也不在 docker-compose 里**，两种部署方式都要先按下面「准备 SeaTunnel 集群」装好。
+
+## 快速开始
+
+有两条路线：
+
+- **A. 用 Docker 部署**：MySQL、xxl-job-admin、console 一起起来，建库、建 XXL-JOB 执行器都是自动的。适合试用和交付
+- **B. 本地开发**：自己装 MySQL 和 xxl-job-admin，后端用 jar 或 IDE 启动，前端用 Vite 开发服务器
+
+两条路线都先做第 0 步。
+
+### 0. 准备 SeaTunnel 集群（两条路线都需要）
+
+1. 下载并解压 SeaTunnel 3.0.0 二进制包，用 JDK 8 或 11
+2. 安装连接器插件：确认 `config/plugin_config` 里包含 `connector-jdbc`、`connector-elasticsearch`、`connector-fake`、`connector-console`（后两个用于"集群健康"页的运行诊断），执行 `bin/install-plugin.sh`，完成后 `connectors/` 下应有这几个 jar
+3. 把 MySQL / PostgreSQL 的 JDBC 驱动放进 `lib/`（集群里**每个节点**都要放）
+4. 修改 `config/seatunnel.yaml`，打开 REST API v2 和 Basic 认证（console 默认用 `admin` / `admin123`，可以通过 `CONSOLE_ZETA_USERNAME`、`CONSOLE_ZETA_PASSWORD` 修改）：
+
+   ```yaml
+   seatunnel:
+     engine:
+       http:
+         enable-http: true
+         port: 8080
+         enable-basic-auth: true
+         basic-auth-username: admin
+         basic-auth-password: admin123
+   ```
+
+5. 修改 `config/log4j2.properties`：把 `rootLogger.appenderRef.file.ref` 改为 `routingAppender`（**每个节点**都要改），**否则 console 看不到 SeaTunnel 作业日志**
+6. 以集群模式启动（`-m local` 模式没有 REST 服务）：
+
+   ```bash
+   ./bin/seatunnel-cluster.sh -d
+   curl -u admin:admin123 http://localhost:8080/overview     # 返回集群信息即可
+   ```
+
+> **Apple Silicon + Oracle JDK 8**：G1 在这个组合下是实验特性，SeaTunnel 默认的 `config/jvm_options` 会报错
+> `VM option 'UseG1GC' is experimental`。在 `-XX:+UseG1GC` 之前加一行 `-XX:+UnlockExperimentalVMOptions`，或者改用 JDK 11。
+
+完整的集群要求（多 master、checkpoint 存储、作业过期时间等）见 [docs/design.md](docs/design.md) §4.3。
+
+### A. 用 Docker 部署
+
+`docker/docker-compose.yml` 一次启动 MySQL、xxl-job-admin 和 console（前端已打包进 console 的 jar，镜像在本机构建）。SeaTunnel 集群要先按第 0 步准备好。
+
+```bash
+cd docker
+cp .env.example .env      # 填写密码、CONSOLE_SECRET_KEY、XXL_JOB_ACCESS_TOKEN、SeaTunnel 地址
+docker compose up -d --build
+```
+
+- 打开 `http://<主机>:8088`，用 `admin` 和 `.env` 里的 `CONSOLE_ADMIN_PASSWORD` 登录
+- `CONSOLE_SECRET_KEY` 要另外备份，丢了已保存的数据源密码就解不开
+- MySQL 首次初始化时会自动创建 console 的库和账号，以及 XXL-JOB 的执行器分组 `seatunnel-console`（id 10，带上 `XXL_JOB_ACCESS_TOKEN`），不需要再到 xxl-job-admin 里手动建
+- xxl-job-admin 的界面在 8081 端口，默认账号 `admin/123456`，登录后立刻改密码
+- **网络**：console 容器要能访问 SeaTunnel 的 REST 端口和各个数据源；SeaTunnel 的 worker 也要能访问数据源。数据源地址要从这两边都能连通，不要写 `127.0.0.1`
+- console 的作业日志归档和 XXL-JOB 执行器日志在数据卷 `console-data`、`console-logs` 里
+- 部署后打开"集群健康"页检查一遍，再点"运行诊断"
+
+### B. 本地开发
+
+#### 1. 准备 MySQL 和 xxl-job-admin
 
 | 依赖 | 要求 |
 |---|---|
-| MySQL 8.x | 库 `seatunnel_console`，以及一个对这个库有全部权限的账号，表结构由 Flyway 自动创建；库 `xxl_job`，导入 `docker/mysql/init/02-xxl-job.sql`（XXL-JOB 3.5.0 官方脚本，脚本里自带建库语句） |
+| MySQL 8.x | 建库 `seatunnel_console`（`utf8mb4`）和一个对这个库有全部权限的账号，表由 console 启动时通过 Flyway 自动创建，不用手工建表；库 `xxl_job`，导入 `docker/mysql/init/02-xxl-job.sql`（XXL-JOB 3.5.0 官方脚本，脚本里自带建库语句） |
 | xxl-job-admin 3.5.0（JDK 17） | 连接上面的 `xxl_job` 库。默认账号 `admin/123456`，登录后要立刻修改密码 |
 | xxl-job-admin 中的执行器 | 新建执行器，AppName 填 `seatunnel-console`，注册方式选"自动注册"，再设置一个 AccessToken，并记下这个执行器的 id |
+
+不想从源码打包 xxl-job-admin 的话，可以直接用官方镜像（把数据库地址和密码换成自己的）：
+
+```bash
+docker run -d --name xxl-job-admin -p 8081:8080 \
+  -e PARAMS="--spring.datasource.url=jdbc:mysql://<MySQL 地址>:3306/xxl_job?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai --spring.datasource.username=root --spring.datasource.password=<密码>" \
+  xuxueli/xxl-job-admin:3.5.0
+```
 
 xxl-job-admin 要能访问到 console 所在机器的 9999 端口（执行器端口）。如果它通过自动识别的 IP 访问不到，就设置 `CONSOLE_XXL_JOB_EXECUTOR_ADDRESS`。
 
@@ -42,21 +117,9 @@ xxl-job-admin 要能访问到 console 所在机器的 9999 端口（执行器端
 
 > `docker/docker-compose.yml` 用来部署和交付整套环境，本地开发用不到它。
 
-### 2. 启动 SeaTunnel 集群
+#### 2. 编译并启动后端
 
-按 SeaTunnel 文档以单节点集群启动，然后做三处修改（详见 docs/design.md §4.3）：
-
-1. `config/seatunnel.yaml`：开启 Basic 认证（默认账号 `admin`，密码 `admin123`，和 `application.yml` 的默认值一致）
-2. `config/log4j2.properties`：把 `rootLogger.appenderRef.file.ref` 改为 `routingAppender`，**否则 console 看不到 SeaTunnel 作业日志**
-3. `lib/`：放入 MySQL 或 PostgreSQL 的 JDBC 驱动
-
-> **Apple Silicon + Oracle JDK 8**：G1 在这个组合下是实验特性，SeaTunnel 默认的 `config/jvm_options` 会报错
-> `VM option 'UseG1GC' is experimental`。解决办法是在 `-XX:+UseG1GC` 之前加一行 `-XX:+UnlockExperimentalVMOptions`，
-> 或者改用 JDK 11。
-
-### 3. 启动后端
-
-本地配置统一放在 `dev.env`（已加入 .gitignore，里面有数据库密码和 `CONSOLE_SECRET_KEY`）。**`CONSOLE_SECRET_KEY` 丢失后，已保存的数据源密码就无法解密了。**
+本地配置放在 `dev.env`：复制模板 `cp dev.env.example dev.env` 再填写（`dev.env` 已加入 .gitignore，里面有数据库密码和 `CONSOLE_SECRET_KEY`）。**`CONSOLE_SECRET_KEY` 丢失后，已保存的数据源密码就无法解密了。**
 
 ```bash
 mvn -DskipTests install
@@ -84,7 +147,7 @@ java -jar console-server/target/seatunnel-console.jar     # http://localhost:808
 | `CONSOLE_XXL_JOB_APPNAME` / `CONSOLE_XXL_JOB_ACCESS_TOKEN` / `CONSOLE_XXL_JOB_GROUP_ID` | `seatunnel-console` / 空 / `0` |
 | `CONSOLE_XXL_JOB_EXECUTOR_PORT` / `CONSOLE_XXL_JOB_EXECUTOR_ADDRESS` | `9999` / 空（自动识别） |
 
-### 4. 启动前端
+#### 3. 启动前端
 
 ```bash
 cd console-ui
@@ -92,11 +155,12 @@ npm install
 npm run dev        # http://localhost:5173，/api 请求代理到 8088
 ```
 
-### 5. 验证
+#### 4. 验证
+
+浏览器打开 http://localhost:5173 ，用管理员账号登录，再打开"集群健康"页检查 SeaTunnel、XXL-JOB 和数据目录，点"运行诊断"确认作业日志和 JDBC 驱动都正常。也可以用命令检查：
 
 ```bash
-curl localhost:8088/actuator/health
-curl localhost:8088/api/cluster/overview     # 连不上集群时返回 HTTP 503
+curl localhost:8088/actuator/health          # {"status":"UP"}；其他接口都要先登录
 ```
 
 ## 账号与权限
@@ -143,21 +207,3 @@ mvn test
 - `/submit-job` 返回的 `jobId` 是**字符串**（文档示例写的是数字）。jobId 会超出 JavaScript 能精确表示的整数范围，所以前端必须一律按字符串处理。
 - 用 `/job-info/{id}` 查询不存在或已过期的任务时，只返回 `{"jobId": "..."}`，没有 `jobStatus` 字段。
 - 开启 Basic 认证后，不带认证信息的请求返回 401。
-
-## Docker 部署
-
-`docker/docker-compose.yml` 一次启动 MySQL、xxl-job-admin 和 console（前端已打包进 console 的 jar）。**SeaTunnel 集群不在里面**，要事先按"启动 SeaTunnel 集群"一节准备好。
-
-```bash
-cd docker
-cp .env.example .env      # 填写密码、CONSOLE_SECRET_KEY、XXL_JOB_ACCESS_TOKEN、SeaTunnel 地址
-docker compose up -d --build
-```
-
-- 打开 `http://<主机>:8088`，用 `admin` 和 `.env` 里的 `CONSOLE_ADMIN_PASSWORD` 登录
-- `CONSOLE_SECRET_KEY` 要另外备份，丢了已保存的数据源密码就解不开
-- MySQL 首次初始化时会自动创建 console 的库和账号，以及 XXL-JOB 的执行器分组 `seatunnel-console`（id 10，带上 `XXL_JOB_ACCESS_TOKEN`），不需要再到 xxl-job-admin 里手动建
-- xxl-job-admin 的界面在 8081 端口，默认账号 `admin/123456`，登录后立刻改密码
-- **网络**：console 容器要能访问 SeaTunnel 的 REST 端口和各个数据源；SeaTunnel 的 worker 也要能访问数据源。数据源地址要从这两边都能连通，不要写 `127.0.0.1`
-- console 的作业日志归档和 XXL-JOB 执行器日志在数据卷 `console-data`、`console-logs` 里
-- 部署后打开"集群健康"页检查一遍，再点"运行诊断"
