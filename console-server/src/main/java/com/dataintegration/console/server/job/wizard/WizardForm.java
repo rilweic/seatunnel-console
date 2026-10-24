@@ -48,6 +48,10 @@ public record WizardForm(
      * @param targetName target table or index name set by hand; overrides {@link Target#tableRule()}
      * @param fieldNames target field names set by hand, by source field; override the field rule
      * @param fieldRule this table's field rule; null uses {@link WizardForm#fieldRule()}
+     * @param processes value processing of synced fields, by source field (§7.10)
+     * @param extracts new fields taken out of a synced field: JSON path, regex groups or split parts
+     * @param addedFields new fields: constants, variables or values computed from other fields
+     * @param encryptKeyId the console key {@link FieldProcess#encrypt()} fields are encrypted with
      */
     public record TableSpec(
             String name,
@@ -56,15 +60,149 @@ public record WizardForm(
             String incrementalField,
             String targetName,
             Map<String, String> fieldNames,
-            NameRule fieldRule) {
+            NameRule fieldRule,
+            Map<String, FieldProcess> processes,
+            List<Extract> extracts,
+            List<AddedField> addedFields,
+            String encryptKeyId) {
 
         public TableSpec(String name, List<String> columns, String filter, String incrementalField) {
             this(name, columns, filter, incrementalField, null, null, null);
         }
 
+        public TableSpec(
+                String name,
+                List<String> columns,
+                String filter,
+                String incrementalField,
+                String targetName,
+                Map<String, String> fieldNames,
+                NameRule fieldRule) {
+            this(name, columns, filter, incrementalField, targetName, fieldNames, fieldRule, null, null, null, null);
+        }
+
         public boolean allColumns() {
             return columns == null || columns.isEmpty();
         }
+
+        /** Whether the table's values are processed at all, i.e. it needs transforms besides renames. */
+        public boolean processed() {
+            return (processes != null && !processes.isEmpty())
+                    || (extracts != null && !extracts.isEmpty())
+                    || (addedFields != null && !addedFields.isEmpty());
+        }
+    }
+
+    /** Types a processed or new field can be given. */
+    public enum FieldType {
+        STRING,
+        BIGINT,
+        DECIMAL,
+        DATE,
+        TIMESTAMP,
+        BOOLEAN
+    }
+
+    /**
+     * What happens to one synced field's values, in this order: replace, mask, convert type; then
+     * encrypt (after the other processing, with the table's key).
+     */
+    public record FieldProcess(Replace replace, Mask mask, Cast cast, Boolean encrypt) {
+
+        public boolean encrypted() {
+            return Boolean.TRUE.equals(encrypt);
+        }
+    }
+
+    /** @param regex find is a Java regex and replacement may use $1 */
+    public record Replace(String find, String replacement, boolean regex) {}
+
+    /**
+     * Keeps the first and last characters and masks the rest; a value too short to mask is kept.
+     *
+     * @param keepFirst for CUSTOM; the presets fix their own
+     */
+    public record Mask(MaskPreset preset, Integer keepFirst, Integer keepLast, String maskChar) {}
+
+    public enum MaskPreset {
+        PHONE(3, 4),
+        ID_CARD(6, 4),
+        EMAIL(1, 0),
+        NAME(1, 0),
+        BANK_CARD(0, 4),
+        CUSTOM(0, 0);
+
+        public final int keepFirst;
+        public final int keepLast;
+
+        MaskPreset(int keepFirst, int keepLast) {
+            this.keepFirst = keepFirst;
+            this.keepLast = keepLast;
+        }
+    }
+
+    /** A value that does not convert becomes null (TRY_CAST). Precision and scale are for DECIMAL. */
+    public record Cast(FieldType type, Integer precision, Integer scale) {}
+
+    /**
+     * New fields taken out of a synced field; a value that cannot be extracted becomes null.
+     *
+     * @param pattern the regex (REGEX: one capturing group per output) or the separator (SPLIT)
+     * @param dropSource leave the source field out of the target
+     */
+    public record Extract(String source, ExtractKind kind, String pattern, List<ExtractOutput> outputs, boolean dropSource) {}
+
+    public enum ExtractKind {
+        JSON,
+        REGEX,
+        SPLIT
+    }
+
+    /** @param path the JSON path, e.g. {@code $.address.city}; JSON only */
+    public record ExtractOutput(String name, String path, FieldType type, Integer precision, Integer scale) {}
+
+    /**
+     * A new field (§7.10). What it reads depends on {@code kind}:
+     *
+     * <ul>
+     *   <li>CONSTANT: {@code value}, which may hold variables; {@code format} parses it for DATE/TIMESTAMP
+     *   <li>CONCAT: {@code fields}, joined with {@code value} as separator (null fields are skipped)
+     *   <li>SUBSTRING: {@code fields[0]}; {@code op} LEFT / RIGHT take {@code length} characters, MID
+     *       takes {@code length} from {@code start} (1-based)
+     *   <li>CASE: {@code fields[0]} through {@code op} UPPER / LOWER / TRIM
+     *   <li>DATE_FORMAT: {@code fields[0]} formatted with {@code format}
+     *   <li>ARITHMETIC: {@code fields[0]} {@code op} (+ - * /) {@code fields[1]}, or the number in {@code value}
+     *   <li>DEFAULT: {@code fields[0]}, or {@code value} where it is null
+     *   <li>UUID, NOW: nothing
+     *   <li>EXPRESSION: {@code value} as a SeaTunnel SQL expression, checked only when the job runs
+     * </ul>
+     *
+     * @param type the field's type; for computed kinds optional (the expression's own type)
+     */
+    public record AddedField(
+            String name,
+            AddKind kind,
+            List<String> fields,
+            String value,
+            String op,
+            Integer start,
+            Integer length,
+            String format,
+            FieldType type,
+            Integer precision,
+            Integer scale) {}
+
+    public enum AddKind {
+        CONSTANT,
+        CONCAT,
+        SUBSTRING,
+        CASE,
+        DATE_FORMAT,
+        ARITHMETIC,
+        DEFAULT,
+        UUID,
+        NOW,
+        EXPRESSION
     }
 
     /**

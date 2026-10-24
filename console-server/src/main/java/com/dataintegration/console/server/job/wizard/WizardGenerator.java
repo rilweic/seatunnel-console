@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -89,7 +90,7 @@ public final class WizardGenerator {
         hocon.append("    ]\n");
         appendOptions(hocon, form.sourceOptions());
         hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
-        String sinkInput = appendRenames(hocon, form, endpoints, es);
+        String sinkInput = appendTransforms(hocon, form, endpoints, es);
 
         hocon.append("sink {\n");
         if (es) {
@@ -125,16 +126,36 @@ public final class WizardGenerator {
     }
 
     /**
-     * Renamed fields, then renamed tables, each configured only for the source tables it changes
-     * (the others pass through unchanged). Returns the stream the sink reads.
+     * The transforms between source and sink (§7.8, §7.10), each configured per source table and
+     * generated only for the tables it changes: extraction (JsonPath, RegexExtract, Split), value
+     * processing (one Sql query per table), renamed fields, renamed tables. Returns the stream the
+     * sink reads.
      */
-    private static String appendRenames(StringBuilder hocon, WizardForm form, Endpoints endpoints, boolean es) {
+    private static String appendTransforms(StringBuilder hocon, WizardForm form, Endpoints endpoints, boolean es) {
+        Map<String, List<String>> json = new LinkedHashMap<>();
+        Map<String, List<String>> regex = new LinkedHashMap<>();
+        Map<String, List<String>> split = new LinkedHashMap<>();
+        Map<String, List<String>> sql = new LinkedHashMap<>();
         Map<String, Map<String, String>> fieldRenames = new LinkedHashMap<>();
         Map<String, String> tableRenames = new LinkedHashMap<>();
         for (TableSpec table : form.source().tables()) {
             String path = tablePath(form, endpoints, table.name());
+            List<String> synced = syncedColumns(form, endpoints, table);
+            if (table.processed()) {
+                if (table.allColumns() && (endpoints.sourceColumns() == null || !endpoints.sourceColumns().containsKey(table.name()))) {
+                    throw invalid(table.name() + "：读不到源表的字段，无法生成字段处理");
+                }
+                String jsonOptions = FieldProcessing.jsonPathOptions(table);
+                if (jsonOptions != null) {
+                    json.put(path, List.of(jsonOptions));
+                }
+                putIfAny(regex, path, FieldProcessing.extractOptions(table, WizardForm.ExtractKind.REGEX));
+                putIfAny(split, path, FieldProcessing.extractOptions(table, WizardForm.ExtractKind.SPLIT));
+                sql.put(path, List.of("query = " + str(FieldProcessing.sqlQuery(table, synced))));
+            }
+            Set<String> dropped = FieldProcessing.droppedSources(table);
             Map<String, String> fields = new LinkedHashMap<>();
-            syncedColumns(form, endpoints, table).forEach(c -> putIfRenamed(fields, c, targetField(form, table, c)));
+            synced.stream().filter(c -> !dropped.contains(c)).forEach(c -> putIfRenamed(fields, c, targetField(form, table, c)));
             if (!fields.isEmpty()) {
                 fieldRenames.put(path, fields);
             }
@@ -143,33 +164,65 @@ public final class WizardGenerator {
                 tableRenames.put(path, target);
             }
         }
-        if (fieldRenames.isEmpty() && tableRenames.isEmpty()) {
-            return "source";
-        }
+        StringBuilder t = new StringBuilder();
         String input = "source";
-        hocon.append("transform {\n");
+        input = appendStage(t, "JsonPath", input, "json_extracted", json);
+        input = appendStage(t, "RegexExtract", input, "regex_extracted", regex);
+        input = appendStage(t, "Split", input, "split_extracted", split);
+        input = appendStage(t, "Sql", input, "processed", sql);
         if (!fieldRenames.isEmpty()) {
-            hocon.append("  FieldRename {\n    plugin_input = [\"source\"]\n    plugin_output = \"fields_renamed\"\n");
-            hocon.append("    table_transform = [\n");
-            fieldRenames.forEach((path, fields) -> {
-                hocon.append("      { table_path = ").append(str(path)).append(", specific = [\n");
-                fields.forEach((from, to) -> hocon.append("          { field_name = ").append(str(from))
+            t.append("  FieldRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"fields_renamed\"\n");
+            t.append("    table_transform = [\n");
+            fieldRenames.forEach((path, renames) -> {
+                t.append("      { table_path = ").append(str(path)).append(", specific = [\n");
+                renames.forEach((from, to) -> t.append("          { field_name = ").append(str(from))
                         .append(", target_name = ").append(str(to)).append(" }\n"));
-                hocon.append("        ] }\n");
+                t.append("        ] }\n");
             });
-            hocon.append("    ]\n  }\n");
+            t.append("    ]\n  }\n");
             input = "fields_renamed";
         }
         if (!tableRenames.isEmpty()) {
-            hocon.append("  TableRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"tables_renamed\"\n");
-            hocon.append("    table_transform = [\n");
-            tableRenames.forEach((path, name) -> hocon.append("      { table_path = ").append(str(path))
+            t.append("  TableRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"tables_renamed\"\n");
+            t.append("    table_transform = [\n");
+            tableRenames.forEach((path, name) -> t.append("      { table_path = ").append(str(path))
                     .append(", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = ").append(str(name)).append(" }] }\n"));
-            hocon.append("    ]\n  }\n");
+            t.append("    ]\n  }\n");
             input = "tables_renamed";
         }
-        hocon.append("}\n\n");
+        if (!t.isEmpty()) {
+            hocon.append("transform {\n").append(t).append("}\n\n");
+        }
         return input;
+    }
+
+    /**
+     * One transform configured per table through {@code table_transform}; a table may have several
+     * entries (ALL_MATCH runs them in order). The top level repeats the first entry's options only
+     * to satisfy the plugin's required options, and matches no table itself, so tables without an
+     * entry pass through unchanged.
+     */
+    private static String appendStage(StringBuilder t, String plugin, String input, String output, Map<String, List<String>> entries) {
+        if (entries.isEmpty()) {
+            return input;
+        }
+        boolean several = entries.values().stream().anyMatch(e -> e.size() > 1);
+        t.append("  ").append(plugin).append(" {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = ")
+                .append(str(output)).append("\n    table_match_regex = \"(?!)\"\n");
+        if (several) {
+            t.append("    rule_match_mode = \"ALL_MATCH\"\n");
+        }
+        t.append("    ").append(entries.values().iterator().next().get(0)).append("\n    table_transform = [\n");
+        entries.forEach((path, options) -> options.forEach(o ->
+                t.append("      { table_path = ").append(str(path)).append(", ").append(o).append(" }\n")));
+        t.append("    ]\n  }\n");
+        return output;
+    }
+
+    private static void putIfAny(Map<String, List<String>> map, String path, List<String> options) {
+        if (!options.isEmpty()) {
+            map.put(path, options);
+        }
     }
 
     /**
@@ -187,9 +240,9 @@ public final class WizardGenerator {
         return table.fieldNames() == null ? List.of() : List.copyOf(table.fieldNames().keySet());
     }
 
-    /** True when the table's field names follow a rule, so its full column list is needed. */
+    /** True when the table's field names follow a rule or its values are processed, so its full column list is needed. */
     public static boolean needsColumns(WizardForm form, TableSpec table) {
-        return table.allColumns() && (table.fieldRule() != null || form.fieldRule() != null);
+        return table.allColumns() && (table.fieldRule() != null || form.fieldRule() != null || table.processed());
     }
 
     private static void putIfRenamed(Map<String, String> renames, String from, String to) {

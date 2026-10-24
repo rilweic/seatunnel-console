@@ -188,9 +188,9 @@ public class WizardService {
                 checks.add(new Check(Level.WARN, table.name() + "：追加写入又保留已有数据，每次全量运行都会重复写入，建议改为 upsert"));
             }
             checkQuery(form, endpoints, table, variables, checks);
-            selected.put(table.name(), table.allColumns()
-                    ? columns
-                    : table.columns().stream().map(byName::get).toList());
+            List<ColumnMeta> synced = table.allColumns() ? columns : table.columns().stream().map(byName::get).toList();
+            checkProcessing(table, synced, meta.primaryKeys(), checks);
+            selected.put(table.name(), synced);
         }
         return selected;
     }
@@ -243,10 +243,11 @@ public class WizardService {
                 continue;
             }
             Map<String, String> fieldsByName = new HashMap<>();
-            for (ColumnMeta column : columns) {
-                String field = WizardGenerator.targetField(form, table, column.name());
+            for (Map.Entry<String, String> entry : targetFields(form, table, columns).entrySet()) {
+                String from = entry.getKey();
+                String field = entry.getValue();
                 if (field.isBlank()) {
-                    checks.add(new Check(Level.ERROR, table.name() + "：字段 " + column.name() + " 的目标字段名为空"));
+                    checks.add(new Check(Level.ERROR, table.name() + "：字段 " + from + " 的目标字段名为空"));
                     ok = false;
                     continue;
                 }
@@ -254,14 +255,132 @@ public class WizardService {
                     checks.add(new Check(Level.ERROR, table.name() + "：目标字段名 " + field + " 不能包含空格、点、引号、$ 或反斜杠"));
                     ok = false;
                 }
-                String clash = fieldsByName.putIfAbsent(field.toLowerCase(Locale.ROOT), column.name());
+                String clash = fieldsByName.putIfAbsent(field.toLowerCase(Locale.ROOT), from);
                 if (clash != null) {
-                    checks.add(new Check(Level.ERROR, table.name() + "：字段 " + clash + " 和 " + column.name() + " 映射到同一个目标字段 " + field));
+                    checks.add(new Check(Level.ERROR, table.name() + "：" + clash + " 和 " + from + " 映射到同一个目标字段 " + field));
                     ok = false;
                 }
             }
         }
         return ok;
+    }
+
+    /**
+     * Every field the target table gets, keyed by where it comes from: synced fields under their
+     * mapped names (less sources dropped after extraction), then extracted and added fields.
+     */
+    private static Map<String, String> targetFields(WizardForm form, TableSpec table, List<ColumnMeta> synced) {
+        Set<String> dropped = FieldProcessing.droppedSources(table);
+        Map<String, String> fields = new LinkedHashMap<>();
+        synced.stream().map(ColumnMeta::name).filter(c -> !dropped.contains(c))
+                .forEach(c -> fields.put("字段 " + c, WizardGenerator.targetField(form, table, c)));
+        if (table.extracts() != null) {
+            table.extracts().forEach(e -> e.outputs().forEach(o -> fields.put("提取字段 " + o.name(), o.name() == null ? "" : o.name().trim())));
+        }
+        if (table.addedFields() != null) {
+            table.addedFields().forEach(a -> fields.put("新字段 " + a.name(), a.name() == null ? "" : a.name().trim()));
+        }
+        return fields;
+    }
+
+    /**
+     * Field processing (§7.10): what it refers to exists and is synced, primary keys stay as they
+     * are, and the patterns and types are usable. A hand-written expression is only checked when
+     * the job runs, so it is pointed out.
+     */
+    private static void checkProcessing(TableSpec table, List<ColumnMeta> synced, List<String> primaryKeys, List<Check> checks) {
+        String t = table.name() + "：";
+        Set<String> available = synced.stream().map(ColumnMeta::name).collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+        Set<String> sourceFields = Set.copyOf(available);
+        if (table.processes() != null) {
+            table.processes().forEach((field, process) -> {
+                if (!sourceFields.contains(field)) {
+                    checks.add(new Check(Level.ERROR, t + "处理的字段 " + field + " 没有同步或不存在"));
+                } else if (primaryKeys.contains(field) && (process.replace() != null || process.mask() != null
+                        || process.cast() != null || process.encrypted())) {
+                    checks.add(new Check(Level.ERROR, t + "主键字段 " + field + " 不能做替换、脱敏、类型转换或加密：目标表按主键写入，主键的值和类型要保持不变"));
+                }
+                if (process.cast() != null) {
+                    checkDecimal(t + "字段 " + field, process.cast().type(), process.cast().precision(), process.cast().scale(), checks);
+                }
+                if (process.replace() != null && process.replace().regex() && process.replace().find() != null) {
+                    checkRegex(t + "字段 " + field + " 的替换规则", process.replace().find(), -1, checks);
+                }
+            });
+        }
+        if (table.extracts() != null) {
+            for (WizardForm.Extract e : table.extracts()) {
+                if (!sourceFields.contains(e.source())) {
+                    checks.add(new Check(Level.ERROR, t + "提取的来源字段 " + e.source() + " 没有同步或不存在"));
+                    continue;
+                }
+                if (e.dropSource() && primaryKeys.contains(e.source())) {
+                    checks.add(new Check(Level.ERROR, t + "主键字段 " + e.source() + " 不能在提取后去掉"));
+                }
+                if (e.outputs() == null || e.outputs().isEmpty()) {
+                    checks.add(new Check(Level.ERROR, t + "从 " + e.source() + " 提取时至少要有一个新字段"));
+                    continue;
+                }
+                switch (e.kind()) {
+                    case JSON -> e.outputs().stream().filter(o -> o.path() == null || !o.path().trim().startsWith("$"))
+                            .forEach(o -> checks.add(new Check(Level.ERROR, t + "新字段 " + o.name() + " 的 JSON 路径要以 $ 开头，如 $.address.city")));
+                    case REGEX -> checkRegex(t + "从 " + e.source() + " 提取的正则", e.pattern(), e.outputs().size(), checks);
+                    case SPLIT -> {
+                        if (e.pattern() == null || e.pattern().isEmpty()) {
+                            checks.add(new Check(Level.ERROR, t + "拆分 " + e.source() + " 需要填写分隔符"));
+                        }
+                    }
+                }
+                e.outputs().forEach(o -> {
+                    checkDecimal(t + "新字段 " + o.name(), o.type(), o.precision(), o.scale(), checks);
+                    available.add(o.name());
+                });
+            }
+        }
+        if (table.addedFields() != null) {
+            for (WizardForm.AddedField a : table.addedFields()) {
+                if (a.kind() == null) {
+                    checks.add(new Check(Level.ERROR, t + "新字段 " + a.name() + " 没有选择计算方式"));
+                    continue;
+                }
+                if (a.fields() != null) {
+                    a.fields().stream().filter(f -> f != null && !f.isEmpty() && !available.contains(f))
+                            .forEach(f -> checks.add(new Check(Level.ERROR, t + "新字段 " + a.name() + " 用到的字段 " + f + " 没有同步或不存在")));
+                }
+                if (a.kind() == WizardForm.AddKind.EXPRESSION) {
+                    checks.add(new Check(Level.WARN, t + "新字段 " + a.name() + " 用了手写表达式，写法只有运行时才会检查，请在第一次运行后确认结果"));
+                }
+                checkDecimal(t + "新字段 " + a.name(), a.type(), a.precision(), a.scale(), checks);
+                try {
+                    FieldProcessing.added(a);
+                } catch (ConsoleException ex) {
+                    checks.add(new Check(Level.ERROR, ex.getMessage()));
+                }
+            }
+        }
+    }
+
+    private static void checkDecimal(String what, WizardForm.FieldType type, Integer precision, Integer scale, List<Check> checks) {
+        if (type != WizardForm.FieldType.DECIMAL) {
+            return;
+        }
+        int p = precision == null ? 18 : precision;
+        int s = scale == null ? 2 : scale;
+        if (p < 1 || p > 38 || s < 0 || s > p) {
+            checks.add(new Check(Level.ERROR, what + "：小数的总位数要在 1～38 之间，小数位不能超过总位数"));
+        }
+    }
+
+    /** @param groups the capturing groups the pattern must have, or -1 for any */
+    private static void checkRegex(String what, String pattern, int groups, List<Check> checks) {
+        try {
+            int count = java.util.regex.Pattern.compile(pattern == null ? "" : pattern).matcher("").groupCount();
+            if (groups >= 0 && count != groups) {
+                checks.add(new Check(Level.ERROR, what + "有 " + count + " 个分组（括号），但要提取 " + groups + " 个新字段，两者要一致"));
+            }
+        } catch (java.util.regex.PatternSyntaxException e) {
+            checks.add(new Check(Level.ERROR, what + "写法不对：" + e.getDescription()));
+        }
     }
 
     private void checkTarget(
@@ -299,9 +418,7 @@ public class WizardService {
             Set<String> targetColumns = datasourceService.columns(ds, form.target().namespace(), name).stream()
                     .map(c -> c.name().toLowerCase(Locale.ROOT))
                     .collect(Collectors.toSet());
-            List<String> mapped = sourceColumns.get(table.name()).stream()
-                    .map(c -> WizardGenerator.targetField(form, table, c.name()))
-                    .toList();
+            List<String> mapped = List.copyOf(targetFields(form, table, sourceColumns.get(table.name())).values());
             Set<String> mappedLower = mapped.stream().map(f -> f.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
             List<String> missing = mapped.stream().filter(f -> !targetColumns.contains(f.toLowerCase(Locale.ROOT))).toList();
             if (!missing.isEmpty()) {
