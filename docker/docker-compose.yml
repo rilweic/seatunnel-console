@@ -1,0 +1,59 @@
+# Local / single-node deployment of the console stack. The SeaTunnel Zeta cluster is NOT included;
+# point CONSOLE_ZETA_MASTER_URLS at your own cluster (docs/design.md §4.3).
+#
+#   docker compose up -d mysql xxl-job-admin   # dependencies only, run console-server from the IDE
+#   docker compose up -d --build               # everything
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 01-console.sql: console database and user; 02-xxl-job.sql: official XXL-JOB 3.5.0 schema
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  xxl-job-admin:
+    image: xuxueli/xxl-job-admin:3.5.0
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      PARAMS: >-
+        --spring.datasource.url=jdbc:mysql://mysql:3306/xxl_job?useUnicode=true&characterEncoding=UTF-8&autoReconnect=true&serverTimezone=Asia/Shanghai
+        --spring.datasource.username=root
+        --spring.datasource.password=root
+    ports:
+      # 8080 is left free for the local SeaTunnel REST API
+      - "8081:8080"
+
+  console:
+    build:
+      context: ..
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      CONSOLE_DB_URL: jdbc:mysql://mysql:3306/seatunnel_console?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+      CONSOLE_DB_USERNAME: console
+      CONSOLE_DB_PASSWORD: console
+      # SeaTunnel running on the Docker host
+      CONSOLE_ZETA_MASTER_URLS: http://host.docker.internal:8080
+      CONSOLE_ZETA_USERNAME: admin
+      CONSOLE_ZETA_PASSWORD: admin123
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8088:8088"
+
+volumes:
+  mysql-data:

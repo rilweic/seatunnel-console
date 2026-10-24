@@ -1,0 +1,234 @@
+/*
+ * Ant Design look on Element Plus: Element's design tokens are set to Ant Design 5 values
+ * (palette, text, borders, radius, font), plus a few component touches that tokens cannot reach.
+ * Element derives hover/active/light shades at build time, so every shade is listed explicitly.
+ */
+:root {
+  /* blue: Ant Design blue-1 … blue-7 */
+  --el-color-primary: #1677ff;
+  --el-color-primary-light-3: #4096ff;
+  --el-color-primary-light-5: #91caff;
+  --el-color-primary-light-7: #bae0ff;
+  --el-color-primary-light-8: #d6e8ff;
+  --el-color-primary-light-9: #e6f4ff;
+  --el-color-primary-dark-2: #0958d9;
+
+  --el-color-success: #52c41a;
+  --el-color-success-light-3: #73d13d;
+  --el-color-success-light-5: #95de64;
+  --el-color-success-light-7: #b7eb8f;
+  --el-color-success-light-8: #d9f7be;
+  --el-color-success-light-9: #f6ffed;
+  --el-color-success-dark-2: #389e0d;
+
+  --el-color-warning: #faad14;
+  --el-color-warning-light-3: #ffc53d;
+  --el-color-warning-light-5: #ffd666;
+  --el-color-warning-light-7: #ffe58f;
+  --el-color-warning-light-8: #fff1b8;
+  --el-color-warning-light-9: #fffbe6;
+  --el-color-warning-dark-2: #d48806;
+
+  --el-color-danger: #ff4d4f;
+  --el-color-danger-light-3: #ff7875;
+  --el-color-danger-light-5: #ffa39e;
+  --el-color-danger-light-7: #ffccc7;
+  --el-color-danger-light-8: #ffe1de;
+  --el-color-danger-light-9: #fff2f0;
+  --el-color-danger-dark-2: #d9363e;
+  --el-color-error: var(--el-color-danger);
+
+  --el-color-info: #8c8c8c;
+  --el-color-info-light-3: #bfbfbf;
+  --el-color-info-light-5: #d9d9d9;
+  --el-color-info-light-7: #e8e8e8;
+  --el-color-info-light-8: #f0f0f0;
+  --el-color-info-light-9: #fafafa;
+  --el-color-info-dark-2: #595959;
+
+  /* text: rgba(0,0,0,.88 / .65 / .45 / .25) on white */
+  --el-text-color-primary: #1f1f1f;
+  --el-text-color-regular: #595959;
+  --el-text-color-secondary: #8c8c8c;
+  --el-text-color-placeholder: #bfbfbf;
+  --el-text-color-disabled: #bfbfbf;
+
+  --el-border-color: #d9d9d9;
+  --el-border-color-light: #f0f0f0;
+  --el-border-color-lighter: #f0f0f0;
+  --el-border-color-extra-light: #fafafa;
+  --el-border-color-hover: #4096ff;
+
+  --el-fill-color: #f5f5f5;
+  --el-fill-color-light: #fafafa;
+  --el-fill-color-lighter: #fafafa;
+  --el-fill-color-blank: #ffffff;
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f0f3f8;
+
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 20px;
+
+  --el-font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  --el-font-size-base: 14px;
+
+  --el-box-shadow-light: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12),
+    0 9px 28px 8px rgba(0, 0, 0, 0.05);
+
+  /* layout */
+  --app-header-height: 56px;
+  --app-sider-bg: #3b6ef5;
+  --app-sider-active-bg: #2c5be0;
+  --app-sider-hover-bg: rgba(255, 255, 255, 0.1);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--el-font-family);
+  font-size: 14px;
+  line-height: 1.5715;
+  background: var(--el-bg-color-page);
+  color: var(--el-text-color-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+code {
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+}
+
+/* cards: white, 8px radius, hairline border, no shadow */
+.el-card {
+  --el-card-border-radius: 8px;
+  --el-card-border-color: #edf0f5;
+  --el-card-padding: 20px;
+}
+
+.el-card__header {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+/* buttons: Ant Design's soft drop shadow */
+.el-button {
+  font-weight: 400;
+}
+
+.el-button:not(.is-link):not(.is-text) {
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.02);
+}
+
+.el-button--primary:not(.is-link):not(.is-text):not(.is-plain) {
+  box-shadow: 0 2px 0 rgba(5, 145, 255, 0.1);
+}
+
+.el-button--danger:not(.is-link):not(.is-text):not(.is-plain) {
+  box-shadow: 0 2px 0 rgba(255, 38, 5, 0.06);
+}
+
+/*
+ * tables: light and airy - white header with muted text, hairline row separators, 13px text,
+ * compact rows; action links small and close together.
+ */
+.el-table {
+  --el-table-header-bg-color: #fff;
+  --el-table-header-text-color: var(--el-text-color-secondary);
+  --el-table-text-color: var(--el-text-color-primary);
+  --el-table-row-hover-bg-color: #f7f9fc;
+  --el-table-border-color: #f0f0f0;
+  --el-table-border: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  font-weight: 400;
+  padding: 10px 0;
+  border-top: 1px solid #f0f0f0;
+}
+
+.el-table td.el-table__cell {
+  padding: 10px 0;
+}
+
+.el-table .cell {
+  padding: 0 12px;
+  line-height: 22px;
+}
+
+/* no extra line under the last row; the row separators are enough */
+.el-table__inner-wrapper::before {
+  display: none;
+}
+
+.el-table .el-button.is-link {
+  font-size: 13px;
+  padding: 0;
+}
+
+.el-table .el-button.is-link + .el-button.is-link {
+  margin-left: 10px;
+}
+
+.el-table .el-tag {
+  height: 22px;
+  padding: 0 7px;
+}
+
+.el-table__empty-text {
+  color: var(--el-text-color-secondary);
+}
+
+.el-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+
+/* tags: Ant Design tag metrics */
+.el-tag {
+  --el-tag-border-radius: 4px;
+  font-size: 12px;
+}
+
+/* tabs */
+.el-tabs__item {
+  font-size: 14px;
+}
+
+.el-tabs__item.is-active {
+  font-weight: 500;
+}
+
+/* dialogs: rounded, roomy */
+.el-dialog {
+  --el-dialog-border-radius: 8px;
+  --el-dialog-padding-primary: 24px;
+}
+
+.el-dialog__title {
+  font-weight: 600;
+  font-size: 16px;
+}
+
+/* descriptions: label column tinted like Ant Design */
+.el-descriptions__label.el-descriptions__cell.is-bordered-label {
+  background: #fafafa;
+  color: var(--el-text-color-regular);
+  font-weight: 400;
+}
+
+.el-message-box {
+  --el-messagebox-border-radius: 8px;
+}

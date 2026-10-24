@@ -1,0 +1,52 @@
+server:
+  port: ${CONSOLE_PORT:8088}
+
+spring:
+  application:
+    name: seatunnel-console
+  datasource:
+    url: ${CONSOLE_DB_URL:jdbc:mysql://localhost:3306/seatunnel_console?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}
+    username: ${CONSOLE_DB_USERNAME:console}
+    password: ${CONSOLE_DB_PASSWORD:console}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+console:
+  # Required. Base64 of 32 random bytes (openssl rand -base64 32); decrypts saved datasource passwords.
+  secret-key: ${CONSOLE_SECRET_KEY:}
+  # Initial administrator, created only when sys_user is empty. Without a password one is generated and logged.
+  admin:
+    username: ${CONSOLE_ADMIN_USERNAME:admin}
+    password: ${CONSOLE_ADMIN_PASSWORD:}
+  zeta:
+    # Comma separated in env: CONSOLE_ZETA_MASTER_URLS=http://st-1:8080,http://st-2:8080
+    master-urls: ${CONSOLE_ZETA_MASTER_URLS:http://localhost:8080}
+    username: ${CONSOLE_ZETA_USERNAME:admin}
+    password: ${CONSOLE_ZETA_PASSWORD:admin123}
+    connect-timeout: 5s
+    request-timeout: 30s
+  # Embedded XXL-JOB executor + admin OpenAPI (xxl-job-admin >= 3.5.0). Set enabled=false to run without it.
+  xxl-job:
+    enabled: ${CONSOLE_XXL_JOB_ENABLED:true}
+    admin-addresses: ${CONSOLE_XXL_JOB_ADMIN_ADDRESSES:http://localhost:8081}
+    # Must match an executor group in xxl-job-admin: AppName, its AccessToken and its id.
+    appname: ${CONSOLE_XXL_JOB_APPNAME:seatunnel-console}
+    access-token: ${CONSOLE_XXL_JOB_ACCESS_TOKEN:}
+    job-group-id: ${CONSOLE_XXL_JOB_GROUP_ID:0}
+    executor-port: ${CONSOLE_XXL_JOB_EXECUTOR_PORT:9999}
+    # Set when admin cannot reach this host by its auto-detected IP, e.g. http://10.0.0.5:9999/
+    executor-address: ${CONSOLE_XXL_JOB_EXECUTOR_ADDRESS:}
+    log-path: ${CONSOLE_XXL_JOB_LOG_PATH:./logs/xxl-job}
+    log-retention-days: 30

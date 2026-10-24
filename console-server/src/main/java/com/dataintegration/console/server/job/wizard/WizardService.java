@@ -1,0 +1,232 @@
+package com.dataintegration.console.server.job.wizard;
+
+import com.dataintegration.console.common.ConsoleException;
+import com.dataintegration.console.datasource.CountRequest;
+import com.dataintegration.console.datasource.meta.ColumnMeta;
+import com.dataintegration.console.datasource.meta.TableMeta;
+import com.dataintegration.console.server.datasource.DatasourceService;
+import com.dataintegration.console.server.job.Variables;
+import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.SyncMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
+import com.dataintegration.console.server.job.wizard.WizardForm.WriteMode;
+import com.dataintegration.console.server.job.wizard.WizardGenerator.Endpoints;
+import com.dataintegration.console.server.job.wizard.WizardGenerator.Generated;
+
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * Generates wizard jobs and checks them against the live datasources before they are saved
+ * (docs/design.md §7.2). ERROR blocks saving, WARN is shown but allowed, INFO explains.
+ */
+@Service
+public class WizardService {
+
+    public enum Level {
+        ERROR,
+        WARN,
+        INFO
+    }
+
+    public record Check(Level level, String message) {}
+
+    /** @param generated null when the form is too incomplete to generate */
+    public record PrecheckResult(List<Check> checks, Generated generated) {
+
+        public boolean passed() {
+            return checks.stream().noneMatch(c -> c.level() == Level.ERROR);
+        }
+
+        public List<String> errors() {
+            return checks.stream().filter(c -> c.level() == Level.ERROR).map(Check::message).toList();
+        }
+    }
+
+    private static final Duration CHECK_TIMEOUT = Duration.ofSeconds(30);
+
+    private final DatasourceService datasourceService;
+
+    public WizardService(DatasourceService datasourceService) {
+        this.datasourceService = datasourceService;
+    }
+
+    public Endpoints endpoints(WizardForm form) {
+        String sourceType = datasourceService.typeOf(form.source().datasourceId());
+        String targetType = datasourceService.typeOf(form.target().datasourceId());
+        return new Endpoints(
+                sourceType,
+                WizardGenerator.POSTGRESQL.equals(sourceType) ? datasourceService.property(form.source().datasourceId(), "database") : null,
+                targetType,
+                WizardGenerator.POSTGRESQL.equals(targetType) ? datasourceService.property(form.target().datasourceId(), "database") : null);
+    }
+
+    /**
+     * @param variables the job's variables as a run now would see them, for rendering filters
+     */
+    public PrecheckResult precheck(WizardForm form, Map<String, String> variables) {
+        List<Check> checks = new ArrayList<>();
+        Endpoints endpoints;
+        Generated generated;
+        try {
+            endpoints = endpoints(form);
+            generated = WizardGenerator.generate(form, endpoints);
+        } catch (ConsoleException e) {
+            checks.add(new Check(Level.ERROR, e.getMessage()));
+            return new PrecheckResult(checks, null);
+        }
+
+        boolean full = form.sync().mode() == SyncMode.FULL;
+        if (!full && form.target().dataMode() == DataMode.CLEAR) {
+            checks.add(new Check(Level.ERROR, "增量同步不能选择\"清空后写入\"，否则每次只会留下最近一个时间窗口的数据"));
+        }
+        if (form.target().dataMode() == DataMode.CLEAR) {
+            checks.add(new Check(Level.WARN, "每次运行都会先清空目标表（或索引）里的已有数据，再写入"));
+        }
+
+        Map<String, List<ColumnMeta>> sourceColumns = checkSource(form, endpoints, variables, checks);
+        if (sourceColumns != null) {
+            checkTarget(form, endpoints, sourceColumns, checks);
+        }
+        generated.notes().forEach(n -> checks.add(new Check(Level.INFO, n)));
+        return new PrecheckResult(checks, generated);
+    }
+
+    /** Returns the selected columns of every source table that exists, or null when the source is unusable. */
+    private Map<String, List<ColumnMeta>> checkSource(
+            WizardForm form, Endpoints endpoints, Map<String, String> variables, List<Check> checks) {
+        String ds = form.source().datasourceId();
+        Map<String, TableMeta> tables;
+        try {
+            if (!datasourceService.namespaces(ds).contains(form.source().namespace())) {
+                checks.add(new Check(Level.ERROR, "源端不存在库或 schema " + form.source().namespace()));
+                return null;
+            }
+            tables = datasourceService.tables(ds, form.source().namespace()).stream()
+                    .collect(Collectors.toMap(TableMeta::name, Function.identity()));
+        } catch (ConsoleException e) {
+            checks.add(new Check(Level.ERROR, "无法读取源端：" + e.getMessage()));
+            return null;
+        }
+
+        Map<String, List<ColumnMeta>> selected = new LinkedHashMap<>();
+        boolean full = form.sync().mode() == SyncMode.FULL;
+        for (TableSpec table : form.source().tables()) {
+            TableMeta meta = tables.get(table.name());
+            if (meta == null) {
+                checks.add(new Check(Level.ERROR, "源表不存在：" + table.name()));
+                continue;
+            }
+            List<ColumnMeta> columns = datasourceService.columns(ds, form.source().namespace(), table.name());
+            Map<String, ColumnMeta> byName = columns.stream().collect(Collectors.toMap(ColumnMeta::name, Function.identity()));
+            if (!table.allColumns()) {
+                List<String> missing = table.columns().stream().filter(c -> !byName.containsKey(c)).toList();
+                if (!missing.isEmpty()) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：字段不存在 " + String.join(", ", missing)));
+                    continue;
+                }
+            }
+            String field = WizardGenerator.incrementalField(form, table);
+            if (field != null) {
+                ColumnMeta column = byName.get(field);
+                if (column == null) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：增量字段 " + field + " 不存在"));
+                } else if (!column.temporal()) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：增量字段 " + field + " 是 " + column.type()
+                            + "，不是时间类型；数字型字段请用\"自定义条件\""));
+                }
+            }
+            if (meta.primaryKeys().isEmpty()) {
+                if (form.target().writeMode() == WriteMode.UPSERT) {
+                    checks.add(new Check(Level.WARN, table.name() + "：没有主键，只能按追加方式写入"));
+                }
+                if (full && form.target().dataMode() == DataMode.KEEP) {
+                    checks.add(new Check(Level.WARN, table.name() + "：没有主键又保留已有数据，每次全量运行都会再写入一遍，造成重复"));
+                }
+            } else if (full && form.target().dataMode() == DataMode.KEEP && form.target().writeMode() == WriteMode.APPEND) {
+                checks.add(new Check(Level.WARN, table.name() + "：追加写入又保留已有数据，每次全量运行都会重复写入，建议改为 upsert"));
+            }
+            checkQuery(form, endpoints, table, variables, checks);
+            selected.put(table.name(), table.allColumns()
+                    ? columns
+                    : table.columns().stream().map(byName::get).toList());
+        }
+        return selected;
+    }
+
+    /** Runs the table's generated select under {@code where 1 = 0}, so a bad filter fails here and not at run time. */
+    private void checkQuery(
+            WizardForm form, Endpoints endpoints, TableSpec table, Map<String, String> variables, List<Check> checks) {
+        String query = WizardGenerator.sourceQuery(form, endpoints, table, false);
+        if (query == null) {
+            return;
+        }
+        String rendered = Variables.render(query, variables, LocalDateTime.now());
+        try {
+            datasourceService.count(form.source().datasourceId(),
+                    CountRequest.sql("select count(*) from (" + rendered + ") t_check where 1 = 0", CHECK_TIMEOUT));
+        } catch (ConsoleException e) {
+            checks.add(new Check(Level.ERROR, table.name() + "：生成的查询执行失败（检查过滤条件）：" + e.getMessage()));
+        }
+    }
+
+    private void checkTarget(
+            WizardForm form, Endpoints endpoints, Map<String, List<ColumnMeta>> sourceColumns, List<Check> checks) {
+        String ds = form.target().datasourceId();
+        boolean es = WizardGenerator.ELASTICSEARCH.equals(endpoints.targetType());
+        Set<String> existing;
+        try {
+            if (!es && !datasourceService.namespaces(ds).contains(form.target().namespace())) {
+                checks.add(new Check(Level.ERROR, "目标端不存在库或 schema " + form.target().namespace() + "（不会自动建库）"));
+                return;
+            }
+            existing = datasourceService.tables(ds, es ? null : form.target().namespace()).stream()
+                    .map(TableMeta::name)
+                    .collect(Collectors.toSet());
+        } catch (ConsoleException e) {
+            checks.add(new Check(Level.ERROR, "无法读取目标端：" + e.getMessage()));
+            return;
+        }
+        String what = es ? "索引" : "目标表";
+        for (TableSpec table : form.source().tables()) {
+            if (!sourceColumns.containsKey(table.name())) {
+                continue;
+            }
+            String name = WizardGenerator.targetName(form, table.name());
+            if (es && !name.equals(name.toLowerCase(Locale.ROOT))) {
+                checks.add(new Check(Level.ERROR, "ES 索引名必须全部小写：" + name + "（多表时源表名本身也要是小写）"));
+                continue;
+            }
+            if (!existing.contains(name)) {
+                checks.add(form.target().schemaMode() == SchemaMode.ERROR
+                        ? new Check(Level.ERROR, what + " " + name + " 不存在，而选项是\"不存在时报错\"")
+                        : new Check(Level.INFO, what + " " + name + " 不存在，运行时自动创建"));
+                continue;
+            }
+            if (es) {
+                continue;
+            }
+            Set<String> targetColumns = datasourceService.columns(ds, form.target().namespace(), name).stream()
+                    .map(c -> c.name().toLowerCase(Locale.ROOT))
+                    .collect(Collectors.toSet());
+            List<String> missing = sourceColumns.get(table.name()).stream()
+                    .map(ColumnMeta::name)
+                    .filter(c -> !targetColumns.contains(c.toLowerCase(Locale.ROOT)))
+                    .toList();
+            if (!missing.isEmpty()) {
+                checks.add(new Check(Level.ERROR, "目标表 " + name + " 缺少字段：" + String.join(", ", missing)));
+            }
+        }
+    }
+}

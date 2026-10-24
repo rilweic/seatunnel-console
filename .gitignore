@@ -1,0 +1,22 @@
+# Maven
+target/
+.flattened-pom.xml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Frontend
+console-ui/node_modules/
+console-ui/dist/
+
+# Frontend build copied into the jar by the Dockerfile
+console-server/src/main/resources/static/
+
+# Local secrets and runtime data
+dev.env
+data/
+logs/
+*.tsbuildinfo
