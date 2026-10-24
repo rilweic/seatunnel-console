@@ -214,6 +214,7 @@ export const jobApi = {
   ) => post<{ result: ValidationResult; variables: Record<string, string> }>(`/jobs/${id}/validation/test`, body),
   versions: (id: string) => get<VersionSummary[]>(`/jobs/${id}/versions`),
   version: (id: string, versionId: string) => get<VersionDetail>(`/jobs/${id}/versions/${versionId}`),
+  restoreVersion: (id: string, versionId: string) => post<VersionDetail>(`/jobs/${id}/versions/${versionId}/restore`),
   run: (id: string, body: { scheduledTime?: string; params?: Record<string, string> } = {}) =>
     post<{ instanceId: string }>(`/jobs/${id}/run`, body),
   preview: (

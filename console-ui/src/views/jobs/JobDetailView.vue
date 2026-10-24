@@ -24,6 +24,7 @@ import {
 import JobWizard from '@/components/JobWizard.vue'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
+import VersionDiff from '@/components/VersionDiff.vue'
 import { formatDuration, formatNumber, formatTime, statusTag, statusText, triggerText } from '@/utils/format'
 
 const route = useRoute()
@@ -347,6 +348,33 @@ async function insertDatasource() {
   hocon.value = hocon.value.slice(0, at) + line + hocon.value.slice(at)
   await nextTick()
   textarea?.focus()
+}
+
+const diff = ref({ visible: false, leftId: '', rightId: '' })
+
+/** Compares a version with the current one (or the previous one, for the current version itself). */
+function compareVersion(v: VersionSummary) {
+  const current = versions.value[0]!
+  const other = v.id === current.id ? versions.value[1]! : current
+  const [older, newer] = other.versionNo < v.versionNo ? [other, v] : [v, other]
+  diff.value = { visible: true, leftId: older.id, rightId: newer.id }
+}
+
+async function rollbackVersion(v: VersionSummary) {
+  try {
+    await ElMessageBox.confirm(
+      `用 v${v.versionNo} 的配置${isWizard.value ? '（向导表单）' : ''}和任务参数生成一个新版本，并设为当前版本。历史版本都会保留。`,
+      `回滚到 v${v.versionNo}`,
+      { type: 'warning', confirmButtonText: '回滚', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  const version = await jobApi.restoreVersion(jobId, v.id)
+  ElMessage.success(`已回滚，生成 v${version.versionNo}`)
+  await load()
+  loadVersions()
+  wizardKey.value++
 }
 
 async function previewVersion(v: VersionSummary) {
@@ -679,9 +707,11 @@ onMounted(async () => {
           <el-table-column label="创建时间" width="170">
             <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="90">
+          <el-table-column label="操作" width="170">
             <template #default="{ row }">
               <el-button link type="primary" @click="previewVersion(row)">查看</el-button>
+              <el-button link type="primary" :disabled="versions.length < 2" @click="compareVersion(row)">对比</el-button>
+              <el-button link type="primary" :disabled="row.versionNo === job.currentVersionNo" @click="rollbackVersion(row)">回滚</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -779,12 +809,14 @@ onMounted(async () => {
     </template>
   </el-dialog>
 
+  <VersionDiff v-if="versions.length >= 2" v-model="diff.visible" :job-id="jobId" :versions="versions" :left-id="diff.leftId" :right-id="diff.rightId" />
+
   <el-dialog v-model="versionPreview.visible" :title="`版本 ${versionPreview.title}`" width="760px">
     <pre class="code-view">{{ versionPreview.hocon }}</pre>
     <p class="tip">配置中的数据源：{{ [...versionPreview.hocon.matchAll(/datasource_id\s*=\s*"([^"]+)"/g)].map((m) => datasourceName.get(m[1]!) ?? m[1]).join('，') || '无' }}</p>
     <template #footer>
       <el-button @click="versionPreview.visible = false">关闭</el-button>
-      <el-button type="primary" @click="restoreVersion">载入到编辑器</el-button>
+      <el-button v-if="!isWizard" type="primary" @click="restoreVersion">载入到编辑器</el-button>
     </template>
   </el-dialog>
 </template>

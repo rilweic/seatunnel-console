@@ -120,6 +120,11 @@ public class JobController {
         return Result.ok(jobService.versions(id));
     }
 
+    @PostMapping("/{id}/versions/{versionId}/restore")
+    public Result<VersionDetail> restoreVersion(@PathVariable String id, @PathVariable String versionId) {
+        return Result.ok(jobService.restoreVersion(id, versionId));
+    }
+
     @GetMapping("/{id}/versions/{versionId}")
     public Result<VersionDetail> version(@PathVariable String id, @PathVariable String versionId) {
         return Result.ok(jobService.version(id, versionId));

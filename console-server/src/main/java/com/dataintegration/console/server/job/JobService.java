@@ -278,6 +278,30 @@ public class JobService {
         return versionDetail(version);
     }
 
+    /**
+     * Rollback (docs/design.md §7.7): saves an old version's content as a new current version, so
+     * history stays append-only. A wizard version is re-generated and re-checked from its form.
+     */
+    @Transactional
+    public VersionDetail restoreVersion(String jobId, String versionId) {
+        JobVersion old = requireVersion(versionId);
+        if (!old.getJobDefinitionId().equals(jobId)) {
+            throw new ConsoleException(ErrorCodes.NOT_FOUND, "version not found: " + versionId);
+        }
+        JobDefinition job = require(jobId);
+        WizardForm form = old.getFormJson() == null ? null : objectMapper.readValue(old.getFormJson(), WizardForm.class);
+        if (MODE_FORM.equals(job.getEditMode()) && form == null) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "v" + old.getVersionNo() + " was written as a script and cannot be restored into the wizard");
+        }
+        return saveVersion(
+                jobId,
+                old.getHoconTemplate(),
+                params(old),
+                validation(old),
+                MODE_FORM.equals(job.getEditMode()) ? form : null,
+                "回滚到 v" + old.getVersionNo());
+    }
+
     /** Checks a wizard form against the live datasources and returns what saving it would generate. */
     public WizardService.PrecheckResult wizardPrecheck(String jobId, WizardForm form, Map<String, String> params) {
         JobDefinition job = require(jobId);
