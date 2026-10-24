@@ -54,8 +54,8 @@ const menuGroups = computed(() => [
   {
     title: '资源配置',
     items: [
-      { path: '/datasources', title: '数据源', icon: Coin },
       { path: '/projects', title: '项目', icon: Folder },
+      { path: '/datasources', title: '数据源', icon: Coin },
     ],
   },
   {
