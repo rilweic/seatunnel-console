@@ -5,6 +5,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.io.Serializable;
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
@@ -16,7 +17,8 @@ public record ConsoleUser(
         String role,
         String passwordHash,
         boolean enabled,
-        boolean mustChangePassword)
+        boolean mustChangePassword,
+        Instant authenticatedAt)
         implements UserDetails, Serializable {
 
     public static final String ROLE_ADMIN = "ADMIN";
@@ -43,7 +45,7 @@ public record ConsoleUser(
     }
 
     public ConsoleUser withoutPassword() {
-        return new ConsoleUser(id, username, displayName, role, null, enabled, mustChangePassword);
+        return new ConsoleUser(id, username, displayName, role, null, enabled, mustChangePassword, authenticatedAt);
     }
 
     public boolean admin() {

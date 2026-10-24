@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.auth;
 
 import com.dataintegration.console.common.ErrorCodes;
+import com.dataintegration.console.server.persistence.mapper.SysUserMapper;
 
 import jakarta.servlet.http.HttpServletResponse;
 
@@ -29,7 +30,8 @@ public class SecurityConfig {
     static final String LOGIN_PATH = "/api/auth/login";
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http, SysUserMapper userMapper, AccountChanges accountChanges)
+            throws Exception {
         http.csrf(csrf -> csrf.spa().ignoringRequestMatchers(LOGIN_PATH))
                 .authorizeHttpRequests(
                         auth ->
@@ -48,6 +50,8 @@ public class SecurityConfig {
                                         .accessDeniedHandler(
                                                 (request, response, e) ->
                                                         writeError(response, 403, ErrorCodes.FORBIDDEN, "access denied")))
+                // Refresh first, so authorization and the must-change check see the current account.
+                .addFilterBefore(new AccountRefreshFilter(userMapper, accountChanges, securityContextRepository()), AuthorizationFilter.class)
                 .addFilterAfter(new MustChangePasswordFilter(), AuthorizationFilter.class)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)

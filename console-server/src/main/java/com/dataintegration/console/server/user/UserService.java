@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
+import com.dataintegration.console.server.auth.AccountChanges;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.ConsoleUser;
 import com.dataintegration.console.server.auth.CurrentUser;
@@ -58,6 +59,7 @@ public class UserService {
     private final JobDefinitionMapper jobMapper;
     private final PasswordEncoder passwordEncoder;
     private final LoginAttempts loginAttempts;
+    private final AccountChanges accountChanges;
 
     public UserService(
             SysUserMapper userMapper,
@@ -65,13 +67,15 @@ public class UserService {
             DatasourceMapper datasourceMapper,
             JobDefinitionMapper jobMapper,
             PasswordEncoder passwordEncoder,
-            LoginAttempts loginAttempts) {
+            LoginAttempts loginAttempts,
+            AccountChanges accountChanges) {
         this.userMapper = userMapper;
         this.projectMapper = projectMapper;
         this.datasourceMapper = datasourceMapper;
         this.jobMapper = jobMapper;
         this.passwordEncoder = passwordEncoder;
         this.loginAttempts = loginAttempts;
+        this.accountChanges = accountChanges;
     }
 
     /** Everyone may list users (for owner filters); only administrators manage them. */
@@ -121,6 +125,7 @@ public class UserService {
                         .set(SysUser::getRole, role)
                         .set(SysUser::getEnabled, enabled)
                         .eq(SysUser::getId, id));
+        accountChanges.changed(id);
         return view(require(id));
     }
 
@@ -136,6 +141,7 @@ public class UserService {
         update.setPasswordChangedAt(LocalDateTime.now());
         userMapper.updateById(update);
         loginAttempts.clear(user.getUsername());
+        accountChanges.changed(id);
         return view(require(id));
     }
 

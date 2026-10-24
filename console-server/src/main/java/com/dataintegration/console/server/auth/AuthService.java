@@ -19,6 +19,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Service
@@ -84,7 +85,7 @@ public class AuthService {
         update.setPasswordChangedAt(LocalDateTime.now());
         userMapper.updateById(update);
         return authenticated(new ConsoleUser(
-                current.id(), current.username(), current.displayName(), current.role(), null, current.enabled(), false));
+                current.id(), current.username(), current.displayName(), current.role(), null, current.enabled(), false, Instant.now()));
     }
 
     private static Authentication authenticated(ConsoleUser user) {
@@ -105,7 +106,8 @@ public class AuthService {
                     user.getRole(),
                     user.getPasswordHash(),
                     Boolean.TRUE.equals(user.getEnabled()),
-                    Boolean.TRUE.equals(user.getMustChangePassword()));
+                    Boolean.TRUE.equals(user.getMustChangePassword()),
+                    Instant.now());
         };
     }
 }

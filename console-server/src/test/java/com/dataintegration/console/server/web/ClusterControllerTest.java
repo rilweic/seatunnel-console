@@ -12,7 +12,9 @@ import com.dataintegration.console.server.auth.SecurityConfig;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.dataintegration.console.server.auth.AccountChanges;
 import com.dataintegration.console.server.health.ClusterHealthService;
+import com.dataintegration.console.server.persistence.mapper.SysUserMapper;
 import com.dataintegration.console.server.health.DiagnosticService;
 
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -32,6 +34,8 @@ class ClusterControllerTest {
     @MockitoBean private EngineClient engineClient;
     @MockitoBean private ClusterHealthService healthService;
     @MockitoBean private DiagnosticService diagnosticService;
+    @MockitoBean private SysUserMapper userMapper;
+    @MockitoBean private AccountChanges accountChanges;
 
     @Test
     void anonymousRequestIsRejectedWithJson401() throws Exception {
