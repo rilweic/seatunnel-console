@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { instanceApi, type InstanceDetail, type LogView, type RunMetrics, type RunStatus } from '@/api/console'
 import BackButton from '@/components/BackButton.vue'
+import JsonViewer from '@/components/json/JsonViewer.vue'
 import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
 import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
@@ -25,7 +26,32 @@ const metrics = ref<RunMetrics | null>(null)
 const logLoading = ref(false)
 const followTail = ref(true)
 const logBox = ref<HTMLElement | null>(null)
+const logFullscreen = ref(false)
 let timer: number | undefined
+let pageBodyOverflow = ''
+
+async function setLogFullscreen(value: boolean) {
+  if (logFullscreen.value === value) return
+  if (value) {
+    pageBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+  } else {
+    document.body.style.overflow = pageBodyOverflow
+  }
+  logFullscreen.value = value
+  if (followTail.value) {
+    await nextTick()
+    logBox.value?.scrollTo({ top: logBox.value.scrollHeight })
+  }
+}
+
+function toggleLogFullscreen() {
+  setLogFullscreen(!logFullscreen.value)
+}
+
+function onLogKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') setLogFullscreen(false)
+}
 
 const instance = computed(() => detail.value?.instance)
 const active = computed(() => (instance.value ? isActive(instance.value.status) : false))
@@ -177,10 +203,15 @@ const logSourceText = computed(() => {
   }
 })
 
-onMounted(refresh)
+onMounted(() => {
+  refresh()
+  document.addEventListener('keydown', onLogKeydown)
+})
 onBeforeUnmount(() => {
   disposed = true
   window.clearTimeout(timer)
+  document.removeEventListener('keydown', onLogKeydown)
+  if (logFullscreen.value) document.body.style.overflow = pageBodyOverflow
 })
 </script>
 
@@ -243,7 +274,7 @@ onBeforeUnmount(() => {
         </el-timeline>
       </el-card>
 
-      <el-card shadow="never" class="log-card">
+      <el-card shadow="never" class="log-card" :class="{ 'page-fullscreen': logFullscreen }">
         <template #header>
           <div class="log-head">
             <span>SeaTunnel 作业日志</span>
@@ -253,6 +284,7 @@ onBeforeUnmount(() => {
               </el-radio-group>
               <el-checkbox v-model="followTail" size="small">跟随最新</el-checkbox>
               <el-button size="small" :loading="logLoading" @click="loadLog">刷新日志</el-button>
+              <el-button size="small" @click="toggleLogFullscreen">{{ logFullscreen ? '退出全屏' : '全屏查看' }}</el-button>
             </div>
           </div>
         </template>
@@ -279,7 +311,8 @@ onBeforeUnmount(() => {
           </el-table>
         </el-collapse-item>
         <el-collapse-item title="实际提交的配置（敏感信息已打码）" name="config">
-          <pre class="config">{{ detail.configMasked ?? '尚未生成' }}</pre>
+          <JsonViewer v-if="detail.configMasked" :text="detail.configMasked" />
+          <div v-else class="muted">尚未生成</div>
         </el-collapse-item>
       </el-collapse>
     </el-card>
@@ -342,11 +375,39 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(0, 2.4fr);
   gap: 16px;
+  height: clamp(520px, calc(100vh - 300px), 760px);
+}
+
+.timeline-card,
+.log-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.timeline-card :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.log-card :deep(.el-card__body) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 1100px) {
   .columns {
     grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .timeline-card,
+  .log-card {
+    height: min(560px, 70vh);
   }
 }
 
@@ -373,6 +434,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .log-meta {
@@ -388,8 +450,7 @@ onBeforeUnmount(() => {
   color: var(--el-color-warning);
 }
 
-.log,
-.config {
+.log {
   margin: 0;
   padding: 12px;
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
@@ -401,14 +462,19 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
-.log {
-  height: 520px;
-  background: #1e1e1e;
-  color: #d4d4d4;
+.log-card.page-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  height: auto;
+  border: 0;
+  border-radius: 0;
 }
 
-.config {
-  max-height: 400px;
-  background: var(--el-fill-color-light);
+.log {
+  flex: 1;
+  min-height: 0;
+  background: #1e1e1e;
+  color: #d4d4d4;
 }
 </style>
