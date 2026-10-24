@@ -17,8 +17,13 @@ const router = createRouter({
         { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源' } },
         { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务' } },
         {
-          // The tab is part of the path (the config tab has none), so refresh and copied links keep it.
-          path: 'jobs/:id/:tab(schedule|backfills|versions|runs)?',
+          // Tabs and sections are part of the path (the first one has none), so refresh and links keep them.
+          path: 'jobs/:id/edit/:section(schedule|basic)?',
+          component: () => import('@/views/jobs/JobEditView.vue'),
+          meta: { title: '编辑任务', menu: '/jobs' },
+        },
+        {
+          path: 'jobs/:id/:tab(runs|backfills|versions)?',
           component: () => import('@/views/jobs/JobDetailView.vue'),
           meta: { title: '任务详情', menu: '/jobs' },
         },

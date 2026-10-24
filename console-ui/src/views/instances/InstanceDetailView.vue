@@ -3,7 +3,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { instanceApi, type InstanceDetail, type LogView, type RunStatus } from '@/api/console'
+import { instanceApi, type InstanceDetail, type LogView, type RunMetrics, type RunStatus } from '@/api/console'
+import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
 import { formatDuration, formatNumber, formatTime, isActive, statusTag, statusText, triggerText } from '@/utils/format'
 
@@ -15,6 +16,7 @@ const detail = ref<InstanceDetail | null>(null)
 /** The attempt whose log is shown; kept in the URL (?attempt=) so a refresh stays on it. */
 const activeAttempt = ref<number>(Number(route.query.attempt) || 1)
 const log = ref<LogView | null>(null)
+const metrics = ref<RunMetrics | null>(null)
 const logLoading = ref(false)
 const followTail = ref(true)
 const logBox = ref<HTMLElement | null>(null)
@@ -58,11 +60,15 @@ async function loadLog() {
   }
 }
 
-/** While the run is active, refresh status and the live SeaTunnel log every few seconds. */
+async function loadMetrics() {
+  metrics.value = detail.value && detail.value.attempts.length > 0 ? await instanceApi.metrics(id, activeAttempt.value) : null
+}
+
+/** While the run is active, refresh status, metrics and the live SeaTunnel log every few seconds. */
 async function refresh() {
   window.clearTimeout(timer)
   await loadDetail()
-  await loadLog()
+  await Promise.all([loadLog(), loadMetrics()])
   if (active.value) {
     timer = window.setTimeout(refresh, 4000)
   }
@@ -115,6 +121,7 @@ const startupParams = computed(() => {
 watch(activeAttempt, (attempt) => {
   router.replace({ query: attempt === detail.value?.attempts.at(-1)?.attemptNo ? {} : { attempt: String(attempt) } })
   loadLog()
+  loadMetrics()
 })
 
 const logSourceText = computed(() => {
@@ -162,6 +169,14 @@ onBeforeUnmount(() => window.clearTimeout(timer))
         </el-descriptions-item>
       </el-descriptions>
       <el-alert v-if="instance.errorMessage" :title="instance.errorMessage" type="error" :closable="false" show-icon class="error" />
+    </el-card>
+
+    <el-card v-if="metrics" shadow="never">
+      <template #header>
+        运行指标<span v-if="detail.attempts.length > 1" class="muted"> · 第 {{ metrics.attemptNo }} 次尝试</span>
+        <span v-if="active" class="muted"> · 运行中，每 4 秒刷新</span>
+      </template>
+      <RunMetricsPanel :metrics="metrics.metrics" :samples="metrics.samples" />
     </el-card>
 
     <div class="columns">
@@ -212,7 +227,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       <el-collapse>
         <el-collapse-item :title="`变量（${variables.length}）`" name="variables">
           <div class="muted">计划时间 {{ formatTime(instance.scheduledTime) }}。运行开始后这里是所有变量的最终值，开始前只有启动参数。</div>
-          <el-table :data="variables" size="small">
+          <el-table :data="variables">
             <el-table-column prop="k" label="变量" width="280" />
             <el-table-column prop="v" label="值" />
           </el-table>

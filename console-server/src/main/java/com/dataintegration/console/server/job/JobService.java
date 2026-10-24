@@ -12,9 +12,12 @@ import com.dataintegration.console.server.job.HoconTemplate.DatasourceRef;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
+import com.dataintegration.console.server.persistence.entity.JobInstance;
+import com.dataintegration.console.server.persistence.entity.JobSchedule;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
 import com.dataintegration.console.server.persistence.entity.JobVersionDatasource;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
+import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobScheduleMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionDatasourceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
@@ -72,7 +75,16 @@ public class JobService {
             String ownerId,
             String ownerName,
             boolean editable,
-            String updatedAt) {}
+            String updatedAt,
+            Activity activity) {}
+
+    /**
+     * How the job is running, for lists and headers.
+     *
+     * @param lastRunAt start time of the newest run, or its creation time while it waits
+     * @param scheduleEnabled false also when the job has no schedule
+     */
+    public record Activity(String lastRunId, String lastRunStatus, String lastRunAt, boolean scheduleEnabled, String cron) {}
 
     public record VersionSummary(String id, int versionNo, String remark, String createdBy, String createdByName, String createdAt) {}
 
@@ -110,6 +122,7 @@ public class JobService {
     private final WizardService wizardService;
     private final UserDirectory users;
     private final ScriptChecker scriptChecker;
+    private final JobInstanceMapper instanceMapper;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -125,7 +138,8 @@ public class JobService {
             RowCountValidator validator,
             WizardService wizardService,
             UserDirectory users,
-            ScriptChecker scriptChecker) {
+            ScriptChecker scriptChecker,
+            JobInstanceMapper instanceMapper) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -140,6 +154,7 @@ public class JobService {
         this.wizardService = wizardService;
         this.users = users;
         this.scriptChecker = scriptChecker;
+        this.instanceMapper = instanceMapper;
     }
 
     /** @param mine only the current user's jobs */
@@ -156,8 +171,10 @@ public class JobService {
         Map<String, String> projectNames =
                 projectNames(result.getRecords().stream().map(JobDefinition::getProjectId).toList());
         Map<String, String> owners = users.names(result.getRecords().stream().map(JobDefinition::getCreatedBy).toList());
+        Map<String, Activity> activities = activities(result.getRecords().stream().map(JobDefinition::getId).toList());
         return Pages.result(result)
-                .map(job -> view(job, versionNos.get(job.getCurrentVersionId()), projectNames.get(job.getProjectId()), owners));
+                .map(job -> view(job, versionNos.get(job.getCurrentVersionId()), projectNames.get(job.getProjectId()), owners,
+                        activities.get(job.getId())));
     }
 
     public JobDetail get(String id) {
@@ -185,8 +202,18 @@ public class JobService {
         return view(job, null);
     }
 
-    public JobView update(String id, String name, String description) {
+    /**
+     * Name, description and project; none of them is part of a version. Moving a job needs edit
+     * rights on the target project, and from then on its runs resolve that project's parameters.
+     *
+     * @param projectId null to keep the current project
+     */
+    public JobView update(String id, String name, String description, String projectId) {
         JobDefinition job = requireEditable(id);
+        if (projectId != null && !projectId.equals(job.getProjectId())) {
+            projectService.requireEditable(projectId);
+            job.setProjectId(projectId);
+        }
         job.setName(name.trim());
         job.setDescription(description);
         jobMapper.updateById(job);
@@ -509,10 +536,34 @@ public class JobService {
 
     private JobView view(JobDefinition job, Integer currentVersionNo) {
         return view(job, currentVersionNo, projectNames(List.of(job.getProjectId())).get(job.getProjectId()),
-                users.names(Collections.singletonList(job.getCreatedBy())));
+                users.names(Collections.singletonList(job.getCreatedBy())), activities(List.of(job.getId())).get(job.getId()));
     }
 
-    private JobView view(JobDefinition job, Integer currentVersionNo, String projectName, Map<String, String> owners) {
+    private Map<String, Activity> activities(List<String> jobIds) {
+        Map<String, Activity> result = new HashMap<>();
+        if (jobIds.isEmpty()) {
+            return result;
+        }
+        Map<String, JobInstance> latest = instanceMapper.selectLatestPerJob(jobIds).stream()
+                .collect(Collectors.toMap(JobInstance::getJobDefinitionId, i -> i, (a, b) -> a));
+        Map<String, JobSchedule> schedules = scheduleMapper.selectByIds(jobIds).stream()
+                .collect(Collectors.toMap(JobSchedule::getJobDefinitionId, s -> s));
+        for (String id : jobIds) {
+            JobInstance run = latest.get(id);
+            JobSchedule schedule = schedules.get(id);
+            LocalDateTime at = run == null ? null : run.getStartedAt() != null ? run.getStartedAt() : run.getCreatedAt();
+            result.put(id, new Activity(
+                    run == null ? null : run.getId(),
+                    run == null ? null : run.getStatus(),
+                    at == null ? null : at.toString(),
+                    schedule != null && Boolean.TRUE.equals(schedule.getEnabled()),
+                    schedule == null ? null : schedule.getCron()));
+        }
+        return result;
+    }
+
+    private JobView view(
+            JobDefinition job, Integer currentVersionNo, String projectName, Map<String, String> owners, Activity activity) {
         return new JobView(
                 job.getId(),
                 job.getProjectId(),
@@ -525,7 +576,8 @@ public class JobService {
                 job.getCreatedBy(),
                 owners.get(job.getCreatedBy()),
                 Access.canEdit(job.getCreatedBy()),
-                job.getUpdatedAt() == null ? null : job.getUpdatedAt().toString());
+                job.getUpdatedAt() == null ? null : job.getUpdatedAt().toString(),
+                activity);
     }
 
     private Map<String, String> projectNames(List<String> projectIds) {

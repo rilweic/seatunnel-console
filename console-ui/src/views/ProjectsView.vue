@@ -64,7 +64,11 @@ async function save() {
 }
 
 async function remove(row: ProjectView) {
-  await ElMessageBox.confirm(`删除项目「${row.name}」？项目下还有任务时无法删除。`, '删除项目', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`删除项目「${row.name}」？项目下还有任务时无法删除。`, '删除项目', { type: 'warning' })
+  } catch {
+    return
+  }
   await projectApi.remove(row.id)
   ElMessage.success('已删除')
   load()
@@ -109,7 +113,9 @@ onMounted(load)
           <el-link type="primary" underline="never" @click="openJobs(row)">{{ row.name }}</el-link>
         </template>
       </el-table-column>
-      <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
+      <el-table-column label="描述" min-width="200" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.description || '-' }}</template>
+      </el-table-column>
       <el-table-column label="任务数" width="90">
         <template #default="{ row }">
           <el-link type="primary" underline="never" @click="openJobs(row)">{{ row.jobCount }}</el-link>
@@ -118,7 +124,7 @@ onMounted(load)
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
       </el-table-column>
-<el-table-column label="创建人" width="120">
+      <el-table-column label="创建人" width="120">
         <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
@@ -135,7 +141,6 @@ onMounted(load)
       :page-size="query.size"
       :total="total"
       layout="total, prev, pager, next"
-      class="pager"
       @current-change="apply(false)"
     />
   </el-card>
@@ -181,19 +186,14 @@ onMounted(load)
 <style scoped>
 .toolbar {
   display: flex;
-  justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
 }
 
 .search {
-  max-width: 280px;
+  width: 240px;
 }
 
-.pager {
-  margin-top: 16px;
-  justify-content: flex-end;
-}
 
 .hint {
   margin: 0 0 12px;

@@ -51,7 +51,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
         <el-option v-for="(label, value) in statusText" :key="value" :label="label" :value="value" />
       </el-select>
     </div>
-    <el-table v-loading="loading" :data="rows" @row-click="(row: InstanceView) => router.push(`/instances/${row.id}`)">
+    <el-table v-loading="loading" :data="rows" class="clickable" @row-click="(row: InstanceView) => router.push(`/instances/${row.id}`)">
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTag[row.status as RunStatus]">{{ statusText[row.status as RunStatus] }}</el-tag>
@@ -85,7 +85,6 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       :page-size="query.size"
       :total="total"
       layout="total, prev, pager, next"
-      class="pager"
       @current-change="apply(false)"
     />
   </el-card>
@@ -107,14 +106,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   font-size: 12px;
 }
 
-.pager {
-  margin-top: 16px;
-  justify-content: flex-end;
-}
 
-:deep(.el-table__row) {
-  cursor: pointer;
-}
 .scope {
   flex: none;
 }

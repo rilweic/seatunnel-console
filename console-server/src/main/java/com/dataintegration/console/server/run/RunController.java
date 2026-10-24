@@ -40,11 +40,17 @@ public class RunController {
     private final RunService runService;
     private final InstanceService instanceService;
     private final BackfillService backfillService;
+    private final JobOverviewService jobOverviewService;
 
-    public RunController(RunService runService, InstanceService instanceService, BackfillService backfillService) {
+    public RunController(
+            RunService runService,
+            InstanceService instanceService,
+            BackfillService backfillService,
+            JobOverviewService jobOverviewService) {
         this.runService = runService;
         this.instanceService = instanceService;
         this.backfillService = backfillService;
+        this.jobOverviewService = jobOverviewService;
     }
 
     @PostMapping("/api/jobs/{jobId}/run")
@@ -105,6 +111,16 @@ public class RunController {
     @GetMapping("/api/instances/{id}")
     public Result<InstanceDetail> detail(@PathVariable String id) {
         return Result.ok(instanceService.detail(id));
+    }
+
+    @GetMapping("/api/instances/{id}/metrics")
+    public Result<InstanceService.RunMetrics> metrics(@PathVariable String id, @RequestParam(required = false) Integer attemptNo) {
+        return Result.ok(instanceService.metrics(id, attemptNo, true));
+    }
+
+    @GetMapping("/api/jobs/{jobId}/overview")
+    public Result<JobOverviewService.Overview> overview(@PathVariable String jobId) {
+        return Result.ok(jobOverviewService.overview(jobId));
     }
 
     @GetMapping("/api/instances/{id}/attempts/{attemptNo}/log")

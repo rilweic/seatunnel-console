@@ -140,7 +140,9 @@ onMounted(load)
           {{ row.username }}<span v-if="row.id === store.user?.id" class="me">（我）</span>
         </template>
       </el-table-column>
-      <el-table-column prop="displayName" label="显示名" min-width="120" />
+      <el-table-column label="显示名" min-width="120">
+        <template #default="{ row }">{{ row.displayName || '-' }}</template>
+      </el-table-column>
       <el-table-column label="角色" width="100">
         <template #default="{ row }">
           <el-tag size="small" :type="row.role === 'ADMIN' ? 'warning' : 'info'">{{ row.role === 'ADMIN' ? '管理员' : '普通用户' }}</el-tag>

@@ -39,7 +39,8 @@ public class JobController {
             String editMode,
             @Size(max = 512) String description) {}
 
-    public record UpdateRequest(@NotBlank @Size(max = 128) String name, @Size(max = 512) String description) {}
+    /** @param projectId null keeps the job in its project */
+    public record UpdateRequest(@NotBlank @Size(max = 128) String name, @Size(max = 512) String description, String projectId) {}
 
     /** {@code hocon} is ignored for wizard jobs, whose config is generated from {@code form}. */
     public record VersionRequest(
@@ -84,7 +85,7 @@ public class JobController {
 
     @PutMapping("/{id}")
     public Result<JobView> update(@PathVariable String id, @Valid @RequestBody UpdateRequest body) {
-        return Result.ok(jobService.update(id, body.name(), body.description()));
+        return Result.ok(jobService.update(id, body.name(), body.description(), body.projectId()));
     }
 
     @DeleteMapping("/{id}")

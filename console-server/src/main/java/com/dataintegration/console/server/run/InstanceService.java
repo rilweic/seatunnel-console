@@ -9,11 +9,13 @@ import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
+import com.dataintegration.console.server.persistence.entity.JobMetricSample;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
+import com.dataintegration.console.server.persistence.mapper.JobMetricSampleMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
@@ -21,6 +23,10 @@ import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.springframework.stereotype.Service;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -87,6 +93,19 @@ public class InstanceService {
      */
     public record LogView(String source, String content, boolean truncated, String message) {}
 
+    /** Engine counters at one poll; rates are derived from consecutive samples. */
+    public record SampleView(LocalDateTime time, Long readRows, Long writeRows, Long readBytes, Long writeBytes) {}
+
+    /**
+     * Engine metrics of one attempt: the latest snapshot (live while running, final afterwards) and
+     * the samples taken while it ran.
+     *
+     * @param attemptNo null when the run has no attempt yet
+     */
+    public record RunMetrics(Integer attemptNo, EngineMetrics metrics, List<SampleView> samples) {}
+
+    private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
+
     private final JobInstanceMapper instanceMapper;
     private final JobInstanceAttemptMapper attemptMapper;
     private final JobInstanceEventMapper eventMapper;
@@ -95,6 +114,8 @@ public class InstanceService {
     private final EngineLogService engineLogService;
     private final LogStorage logStorage;
     private final UserDirectory users;
+    private final JobMetricSampleMapper sampleMapper;
+    private final ObjectMapper objectMapper;
 
     public InstanceService(
             JobInstanceMapper instanceMapper,
@@ -104,7 +125,9 @@ public class InstanceService {
             JobVersionMapper versionMapper,
             EngineLogService engineLogService,
             LogStorage logStorage,
-            UserDirectory users) {
+            UserDirectory users,
+            JobMetricSampleMapper sampleMapper,
+            ObjectMapper objectMapper) {
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
@@ -113,6 +136,8 @@ public class InstanceService {
         this.engineLogService = engineLogService;
         this.logStorage = logStorage;
         this.users = users;
+        this.sampleMapper = sampleMapper;
+        this.objectMapper = objectMapper;
     }
 
     /** @param mine only runs of the current user's jobs, whoever or whatever triggered them */
@@ -155,6 +180,48 @@ public class InstanceService {
                 instance.getStartupParamsJson(),
                 attempts,
                 events);
+    }
+
+    /** Views of instances already loaded, with job names, version numbers and trigger users. */
+    public List<InstanceView> views(List<JobInstance> instances) {
+        Map<String, JobDefinition> jobs = jobs(instances);
+        Map<String, Integer> versionNos = versionNos(instances);
+        Map<String, String> userNames = users.names(instances.stream().map(JobInstance::getCreatedBy).toList());
+        return instances.stream().map(i -> view(i, jobs, versionNos, userNames)).toList();
+    }
+
+    /**
+     * @param attemptNo null for the latest attempt
+     * @param withSamples false to skip the samples, when only the snapshot is needed
+     */
+    public RunMetrics metrics(String instanceId, Integer attemptNo, boolean withSamples) {
+        require(instanceId);
+        List<JobInstanceAttempt> attempts = attempts(instanceId);
+        JobInstanceAttempt attempt = attemptNo == null
+                ? (attempts.isEmpty() ? null : attempts.get(attempts.size() - 1))
+                : attempts.stream().filter(a -> a.getAttemptNo() == attemptNo.intValue()).findFirst().orElse(null);
+        if (attempt == null) {
+            return new RunMetrics(null, EngineMetrics.EMPTY, List.of());
+        }
+        EngineMetrics metrics = EngineMetrics.EMPTY;
+        if (attempt.getMetricsJson() != null) {
+            try {
+                metrics = EngineMetrics.parse(objectMapper.readValue(attempt.getMetricsJson(), STRING_MAP), objectMapper);
+            } catch (JacksonException e) {
+                // Unreadable snapshot; show the run without metrics.
+            }
+        }
+        List<SampleView> samples = !withSamples
+                ? List.of()
+                : sampleMapper
+                        .selectList(new LambdaQueryWrapper<JobMetricSample>()
+                                .eq(JobMetricSample::getInstanceId, instanceId)
+                                .eq(JobMetricSample::getAttemptNo, attempt.getAttemptNo())
+                                .orderByAsc(JobMetricSample::getSampledAt))
+                        .stream()
+                        .map(m -> new SampleView(m.getSampledAt(), m.getReadRows(), m.getWriteRows(), m.getReadBytes(), m.getWriteBytes()))
+                        .toList();
+        return new RunMetrics(attempt.getAttemptNo(), metrics, samples);
     }
 
     /**

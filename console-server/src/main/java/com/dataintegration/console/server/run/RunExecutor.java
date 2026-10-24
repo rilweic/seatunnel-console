@@ -411,23 +411,12 @@ public class RunExecutor {
         return new RunResult(instance.getId(), status, message);
     }
 
-    private static void applyMetrics(JobInstance instance, Map<String, String> metrics) {
-        instance.setReadRows(longOf(metrics, "SourceReceivedCount"));
-        instance.setWriteRows(longOf(metrics, "SinkWriteCount"));
-        instance.setReadBytes(longOf(metrics, "SourceReceivedBytes"));
-        instance.setWriteBytes(longOf(metrics, "SinkWriteBytes"));
-    }
-
-    private static Long longOf(Map<String, String> metrics, String key) {
-        String value = metrics.get(key);
-        if (value == null) {
-            return null;
-        }
-        try {
-            return Long.parseLong(value.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    private void applyMetrics(JobInstance instance, Map<String, String> raw) {
+        EngineMetrics metrics = EngineMetrics.parse(raw, objectMapper);
+        instance.setReadRows(metrics.readRows());
+        instance.setWriteRows(metrics.writeRows());
+        instance.setReadBytes(metrics.readBytes());
+        instance.setWriteBytes(metrics.writeBytes());
     }
 
     private static void awaitRetry(Duration interval, CancelSignal signal) {
@@ -464,6 +453,11 @@ public class RunExecutor {
 
         @Override
         public void onProgress(EngineJobInfo info) {
+            if (!info.metrics().isEmpty()) {
+                attempt.setMetricsJson(objectMapper.writeValueAsString(info.metrics()));
+                recorder.update(attempt);
+                recorder.progress(instanceId, attempt.getAttemptNo(), EngineMetrics.parse(info.metrics(), objectMapper));
+            }
             if (info.status() == lastStatus) {
                 return;
             }

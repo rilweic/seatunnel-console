@@ -126,6 +126,16 @@ export interface JobView extends Owned {
   currentVersionNo: number | null
   description: string | null
   updatedAt: string
+  /** How the job is running; null where the server does not compute it. */
+  activity: JobActivity | null
+}
+
+export interface JobActivity {
+  lastRunId: string | null
+  lastRunStatus: RunStatus | null
+  lastRunAt: string | null
+  scheduleEnabled: boolean
+  cron: string | null
 }
 
 export interface WizardTable {
@@ -226,7 +236,8 @@ export const jobApi = {
   get: (id: string) => get<{ job: JobView; currentVersion: VersionDetail | null }>(`/jobs/${id}`),
   create: (body: { projectId: string; name: string; jobType: 'BATCH'; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
     post<JobView>('/jobs', body),
-  update: (id: string, body: { name: string; description?: string }) => put<JobView>(`/jobs/${id}`, body),
+  update: (id: string, body: { name: string; description?: string | null; projectId?: string }) => put<JobView>(`/jobs/${id}`, body),
+  overview: (id: string) => get<JobOverview>(`/jobs/${id}/overview`),
   remove: (id: string) => del<void>(`/jobs/${id}`),
   saveVersion: (
     id: string,
@@ -358,6 +369,80 @@ export const instanceApi = {
   detail: (id: string) => get<InstanceDetail>(`/instances/${id}`),
   log: (id: string, attemptNo: number) => get<LogView>(`/instances/${id}/attempts/${attemptNo}/log`),
   stop: (id: string) => post<void>(`/instances/${id}/stop`),
+  metrics: (id: string, attemptNo?: number) => get<RunMetrics>(`/instances/${id}/metrics`, { attemptNo }),
+}
+
+/** One plugin's view of a table; SeaTunnel names tables database.table (database.schema.table for PostgreSQL). */
+export interface TableMetric {
+  side: 'SOURCE' | 'SINK'
+  vertex: string
+  table: string
+  rows: number | null
+  bytes: number | null
+  qps: number | null
+}
+
+/** Zeta job metrics; QPS values are the engine's averages over the job's lifetime. */
+export interface EngineMetrics {
+  readRows: number | null
+  writeRows: number | null
+  readBytes: number | null
+  writeBytes: number | null
+  readQps: number | null
+  writeQps: number | null
+  tables: TableMetric[]
+}
+
+export interface MetricSample {
+  time: string
+  readRows: number | null
+  writeRows: number | null
+  readBytes: number | null
+  writeBytes: number | null
+}
+
+export interface RunMetrics {
+  attemptNo: number | null
+  metrics: EngineMetrics
+  samples: MetricSample[]
+}
+
+export interface RunPoint {
+  id: string
+  status: RunStatus
+  triggerType: InstanceView['triggerType']
+  scheduledTime: string
+  startedAt: string | null
+  durationMillis: number | null
+  readRows: number | null
+  writeRows: number | null
+}
+
+export interface FlowEndpoint {
+  connector: string | null
+  datasourceId: string | null
+  datasourceName: string | null
+  datasourceType: DatasourceType | null
+  location: string | null
+}
+
+export interface JobOverview {
+  /** Runs finished in the last 7 days. */
+  stats: { runs: number; success: number; failed: number; canceled: number; avgDurationMillis: number | null; writeRows: number }
+  lastRun: InstanceView | null
+  active: InstanceView[]
+  trend: RunPoint[]
+  metricsInstanceId: string | null
+  metrics: EngineMetrics
+  flow: {
+    sources: FlowEndpoint[]
+    sinks: FlowEndpoint[]
+    tables: string[]
+    mode: 'FULL' | 'INCREMENTAL' | null
+    window: string | null
+    detail: string | null
+  }
+  schedule: ScheduleView | null
 }
 
 export type BackfillStatus = 'RUNNING' | 'PAUSED' | 'FINISHED' | 'CANCELED'

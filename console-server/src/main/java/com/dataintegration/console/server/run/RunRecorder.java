@@ -7,9 +7,11 @@ import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
+import com.dataintegration.console.server.persistence.entity.JobMetricSample;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
+import com.dataintegration.console.server.persistence.mapper.JobMetricSampleMapper;
 
 import org.springframework.stereotype.Component;
 
@@ -33,12 +35,17 @@ public class RunRecorder {
     private final JobInstanceMapper instanceMapper;
     private final JobInstanceAttemptMapper attemptMapper;
     private final JobInstanceEventMapper eventMapper;
+    private final JobMetricSampleMapper sampleMapper;
 
     public RunRecorder(
-            JobInstanceMapper instanceMapper, JobInstanceAttemptMapper attemptMapper, JobInstanceEventMapper eventMapper) {
+            JobInstanceMapper instanceMapper,
+            JobInstanceAttemptMapper attemptMapper,
+            JobInstanceEventMapper eventMapper,
+            JobMetricSampleMapper sampleMapper) {
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
+        this.sampleMapper = sampleMapper;
     }
 
     public JobInstance requireInstance(String id) {
@@ -107,6 +114,31 @@ public class RunRecorder {
         event.setLevel(level.name());
         event.setMessage(message == null ? "" : message);
         eventMapper.insert(event);
+    }
+
+    /**
+     * Records the counters of a running attempt: on the instance, so lists show live progress, and
+     * as a sample for the throughput chart. Only the counter columns are written, so a concurrent
+     * stop or status change is never overwritten.
+     */
+    public void progress(String instanceId, int attemptNo, EngineMetrics metrics) {
+        instanceMapper.update(
+                null,
+                new LambdaUpdateWrapper<JobInstance>()
+                        .set(JobInstance::getReadRows, metrics.readRows())
+                        .set(JobInstance::getWriteRows, metrics.writeRows())
+                        .set(JobInstance::getReadBytes, metrics.readBytes())
+                        .set(JobInstance::getWriteBytes, metrics.writeBytes())
+                        .eq(JobInstance::getId, instanceId));
+        JobMetricSample sample = new JobMetricSample();
+        sample.setInstanceId(instanceId);
+        sample.setAttemptNo(attemptNo);
+        sample.setReadRows(metrics.readRows());
+        sample.setWriteRows(metrics.writeRows());
+        sample.setReadBytes(metrics.readBytes());
+        sample.setWriteBytes(metrics.writeBytes());
+        sample.setSampledAt(LocalDateTime.now());
+        sampleMapper.insert(sample);
     }
 
     public static String clip(String text) {

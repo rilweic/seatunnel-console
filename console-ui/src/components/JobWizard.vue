@@ -22,7 +22,7 @@ import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 
 const props = defineProps<{ jobId: string; ownerId: string | null; readonly: boolean; initialForm: WizardForm | null }>()
 const params = defineModel<ParamRow[]>('params', { required: true })
-const emit = defineEmits<{ saved: [versionNo: number] }>()
+const emit = defineEmits<{ saved: [versionNo: number]; dirty: [dirty: boolean] }>()
 
 /** Bound by the job page, which keeps it in the URL. */
 const step = defineModel<number>('step', { default: 0 })
@@ -297,17 +297,43 @@ async function runPrecheck() {
 
 const hasErrors = computed(() => !precheck.value || precheck.value.checks.some((c) => c.level === 'ERROR'))
 
+/**
+ * Saves from any step: checks the steps first (stopping on the first incomplete one), then runs
+ * the server precheck and shows it on the last step when it reports errors.
+ */
 async function save() {
+  for (let i = 0; i < steps.length - 1; i++) {
+    const error = stepError(i)
+    if (error) {
+      step.value = i
+      ElMessage.warning(error)
+      return
+    }
+  }
   saving.value = true
   try {
+    await runPrecheck()
+    if (hasErrors.value) {
+      step.value = steps.length - 1
+      ElMessage.warning('预检查发现错误，修正后才能保存')
+      return
+    }
     const version = await jobApi.saveVersion(props.jobId, { form: payload(), params: toMap(params.value), remark: remark.value || undefined })
     ElMessage.success(`已保存为 v${version.versionNo}`)
     remark.value = ''
+    snapshot.value = currentSnapshot()
     emit('saved', version.versionNo)
   } finally {
     saving.value = false
   }
 }
+
+// ---- unsaved changes ----
+const currentSnapshot = () => JSON.stringify([payload(), toMap(params.value)])
+/** Taken once the saved form has been loaded into the steps; null until then. */
+const snapshot = ref<string | null>(null)
+const dirty = computed(() => snapshot.value !== null && currentSnapshot() !== snapshot.value)
+watch(dirty, (value) => emit('dirty', value))
 
 // ---- navigation ----
 function stepError(i: number): string | null {
@@ -364,6 +390,8 @@ onMounted(async () => {
   if (form.target.datasourceId && !targetIsEs.value) {
     targetNamespaces.value = await datasourceApi.namespaces(form.target.datasourceId)
   }
+  await nextTick()
+  snapshot.value = currentSnapshot()
   if (initialStep > 0) {
     go(initialStep, true)
   }
@@ -586,16 +614,19 @@ onMounted(async () => {
         </div>
         <pre class="hocon">{{ precheck.generated.hocon }}</pre>
       </template>
-      <div class="save-bar">
-        <el-input v-model="remark" placeholder="版本备注（可选）" maxlength="512" class="w320" />
-        <el-button type="primary" :loading="saving" :disabled="hasErrors || readonly" @click="save">保存为新版本</el-button>
-        <span v-if="precheck && hasErrors" class="tip warn">有错误，修正后才能保存</span>
-      </div>
+      <div v-if="precheck && hasErrors" class="tip warn">有错误，修正后才能保存</div>
     </section>
 
     <div class="nav">
-      <el-button v-if="step > 0" @click="step--">上一步</el-button>
-      <el-button v-if="step < steps.length - 1" type="primary" @click="go(step + 1)">下一步</el-button>
+      <div class="nav-steps">
+        <el-button v-if="step > 0" @click="step--">上一步</el-button>
+        <el-button v-if="step < steps.length - 1" @click="go(step + 1)">下一步</el-button>
+      </div>
+      <template v-if="!readonly">
+        <span v-if="dirty" class="tip warn">有未保存的修改</span>
+        <el-input v-model="remark" placeholder="版本备注（可选）" maxlength="512" class="w320" />
+        <el-button type="primary" :loading="saving || checking" :disabled="!dirty && initialForm !== null" @click="save">保存为新版本</el-button>
+      </template>
     </div>
   </div>
 </template>
@@ -756,18 +787,19 @@ onMounted(async () => {
   white-space: pre-wrap;
 }
 
-.save-bar,
 .nav {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 16px;
-}
-
-.nav {
-  justify-content: flex-end;
   padding-top: 16px;
   border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.nav-steps {
+  margin-right: auto;
 }
 
 @media (max-width: 900px) {

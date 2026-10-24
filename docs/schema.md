@@ -32,9 +32,8 @@ project ─┬─< project_param
                              ├── job_schedule (1:1, 只有离线任务有)
                              ├─< backfill_batch
                              └─< job_instance ─┬─< job_instance_attempt   (每次提交到引擎一条)
-                                               └─< job_instance_event     (时间线)
-
-seatunnel_metadata（按 SeaTunnel 版本存储，独立）
+                                               ├─< job_instance_event     (时间线)
+                                               └─< job_metric_sample      (运行中每次轮询一条)
 ```
 
 外键只在逻辑上存在，**不建数据库外键约束**，由代码保证一致性，这样软删除和数据归档更方便。
@@ -47,7 +46,6 @@ seatunnel_metadata（按 SeaTunnel 版本存储，独立）
 | `project` | 给任务分组，不做权限隔离 |
 | `project_param` | 项目参数，变量优先级为：启动参数 > 任务参数 > 项目参数 > 内置参数 |
 | `datasource` | `config_json` 存放不敏感的配置（host、port、database 等），`secret_cipher` 存放加密后的敏感字段。**如果仍被某个任务的当前版本引用，就不允许删除**，通过 `job_version_datasource` 判断 |
-| `seatunnel_metadata` | 导入的 `seatunnel-metadata-export.sh` 输出，每个 SeaTunnel 版本一条 |
 | `job_definition` | 任务的身份信息：名称、类型（BATCH / STREAMING）、编辑模式（FORM / SCRIPT）。`current_version_id` 指向当前版本 |
 | `job_version` | 每次保存新增一行。`hocon_template` 里只有 `datasource_id` 和变量，**不含密码**。`params_json` 是任务参数，也跟着版本走 |
 | `job_version_datasource` | 某个版本引用了哪些数据源，用来判断数据源能不能删除 |
@@ -56,6 +54,7 @@ seatunnel_metadata（按 SeaTunnel 版本存储，独立）
 | `job_instance` | 一次**逻辑上**的运行，汇总状态、行数、错误信息、变量的最终取值、打码后的配置和校验结果 |
 | `job_instance_attempt` | 每**提交一次**到引擎就记一条，重试时会产生新的一条。每次尝试都有自己的 `engine_job_id` 和 **SeaTunnel 作业日志**归档 |
 | `job_instance_event` | 运行实例详情页的时间线 |
+| `job_metric_sample` | 运行中每次轮询记一行引擎累计计数（读写行数、字节数），用来画吞吐量曲线（design.md §10.4）。最新的完整指标快照在 `job_instance_attempt.metrics_json` |
 
 ## 4. 运行实例
 

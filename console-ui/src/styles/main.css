@@ -187,6 +187,11 @@ code {
   padding: 0 7px;
 }
 
+/* rows that open a detail page */
+.el-table.clickable .el-table__row {
+  cursor: pointer;
+}
+
 .el-table__empty-text {
   color: var(--el-text-color-secondary);
 }

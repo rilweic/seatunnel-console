@@ -4,8 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { jobApi, projectApi, type JobView, type ProjectView } from '@/api/console'
-import { formatTime } from '@/utils/format'
+import { jobApi, projectApi, type JobView, type ProjectView, type RunStatus } from '@/api/console'
+import { formatTime, statusTag, statusText } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
@@ -67,14 +67,18 @@ async function create() {
       description: dialog.description || undefined,
     })
     dialog.visible = false
-    router.push(`/jobs/${job.id}`)
+    router.push(`/jobs/${job.id}/edit`)
   } finally {
     dialog.saving = false
   }
 }
 
 async function remove(row: JobView) {
-  await ElMessageBox.confirm(`删除任务「${row.name}」？历史运行记录会保留。`, '删除任务', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`删除任务「${row.name}」？历史运行记录会保留。`, '删除任务', { type: 'warning' })
+  } catch {
+    return
+  }
   await jobApi.remove(row.id)
   ElMessage.success('已删除')
   load()
@@ -94,32 +98,57 @@ onMounted(() => {
     <div class="toolbar">
       <div class="filters">
         <el-radio-group v-model="query.mine" class="scope" @change="apply()">
-        <el-radio-button :value="true">我的</el-radio-button>
-        <el-radio-button :value="false">全部</el-radio-button>
-      </el-radio-group>
+          <el-radio-button :value="true">我的</el-radio-button>
+          <el-radio-button :value="false">全部</el-radio-button>
+        </el-radio-group>
         <el-select v-model="query.projectId" placeholder="全部项目" clearable class="project" @change="apply()">
           <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
         </el-select>
         <el-input v-model="query.keyword" placeholder="搜索任务名称" clearable class="search" @change="apply()" />
       </div>
     </div>
-    <el-table v-loading="loading" :data="rows" @row-click="(row: JobView) => router.push(`/jobs/${row.id}`)">
-      <el-table-column prop="name" label="名称" min-width="180" />
-      <el-table-column prop="projectName" label="项目" min-width="120" />
-      <el-table-column label="类型" width="90">
-        <template #default>离线</template>
+    <el-table v-loading="loading" :data="rows" class="clickable" @row-click="(row: JobView) => router.push(`/jobs/${row.id}`)">
+      <el-table-column label="名称" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span class="name">{{ row.name }}</span>
+          <div v-if="row.description" class="sub">{{ row.description }}</div>
+        </template>
       </el-table-column>
-      <el-table-column label="当前版本" width="100">
+      <el-table-column prop="projectName" label="项目" min-width="120" show-overflow-tooltip />
+      <el-table-column label="配置方式" width="90">
+        <template #default="{ row }">{{ row.editMode === 'FORM' ? '向导' : '脚本' }}</template>
+      </el-table-column>
+      <el-table-column label="当前版本" width="90">
         <template #default="{ row }">{{ row.currentVersionNo ? `v${row.currentVersionNo}` : '未保存' }}</template>
+      </el-table-column>
+      <el-table-column label="最近运行" width="190">
+        <template #default="{ row }">
+          <template v-if="row.activity?.lastRunStatus">
+            <el-tag :type="statusTag[row.activity.lastRunStatus as RunStatus]">{{ statusText[row.activity.lastRunStatus as RunStatus] }}</el-tag>
+            <span class="sub inline">{{ formatTime(row.activity.lastRunAt).slice(5, 16) }}</span>
+          </template>
+          <span v-else class="sub">未运行</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="调度" width="190">
+        <template #default="{ row }">
+          <template v-if="row.activity?.cron">
+            <el-tag :type="row.activity.scheduleEnabled ? 'success' : 'info'">{{ row.activity.scheduleEnabled ? '已启用' : '已暂停' }}</el-tag>
+            <span class="sub inline mono">{{ row.activity.cron }}</span>
+          </template>
+          <span v-else class="sub">手动</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="创建人" width="110">
+        <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-<el-table-column label="创建人" width="120">
-        <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click.stop="router.push(`/jobs/${row.id}`)">详情</el-button>
+          <el-button link type="primary" :disabled="!row.editable" @click.stop="router.push(`/jobs/${row.id}/edit`)">编辑</el-button>
           <el-button link type="danger" :disabled="!row.editable" @click.stop="remove(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -129,7 +158,6 @@ onMounted(() => {
       :page-size="query.size"
       :total="total"
       layout="total, prev, pager, next"
-      class="pager"
       @current-change="apply(false)"
     />
   </el-card>
@@ -190,20 +218,33 @@ onMounted(() => {
   width: 100%;
 }
 
-.pager {
-  margin-top: 16px;
-  justify-content: flex-end;
+.name {
+  font-weight: 500;
 }
 
-:deep(.el-table__row) {
-  cursor: pointer;
+.sub {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+.sub.inline {
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
 .mode-tip {
   margin-top: 4px;
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
 }
+
 .scope {
   flex: none;
 }

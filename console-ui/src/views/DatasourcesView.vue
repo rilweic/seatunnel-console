@@ -139,7 +139,11 @@ async function save() {
 }
 
 async function remove(row: DatasourceView) {
-  await ElMessageBox.confirm(`删除数据源「${row.name}」？仍被任务使用时无法删除。`, '删除数据源', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`删除数据源「${row.name}」？仍被任务使用时无法删除。`, '删除数据源', { type: 'warning' })
+  } catch {
+    return
+  }
   await datasourceApi.remove(row.id)
   ElMessage.success('已删除')
   load()
@@ -190,7 +194,7 @@ onMounted(load)
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-<el-table-column label="创建人" width="120">
+      <el-table-column label="创建人" width="120">
         <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
@@ -206,7 +210,6 @@ onMounted(load)
       :page-size="query.size"
       :total="total"
       layout="total, prev, pager, next"
-      class="pager"
       @current-change="apply(false)"
     />
   </el-card>
@@ -264,10 +267,6 @@ onMounted(load)
   width: 160px;
 }
 
-.pager {
-  margin-top: 16px;
-  justify-content: flex-end;
-}
 .scope {
   flex: none;
 }

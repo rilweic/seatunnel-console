@@ -53,3 +53,38 @@ export const triggerText: Record<string, string> = {
 export function isActive(status: RunStatus): boolean {
   return status === 'PENDING' || status === 'RUNNING'
 }
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) {
+    return '-'
+  }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`
+}
+
+/** Rows per second, compact: 0.4, 12, 3.2万. */
+export function formatRate(perSecond: number | null | undefined): string {
+  if (perSecond === null || perSecond === undefined || !Number.isFinite(perSecond)) {
+    return '-'
+  }
+  if (perSecond >= 10000) {
+    return `${(perSecond / 10000).toFixed(1)}万`
+  }
+  return perSecond >= 10 ? Math.round(perSecond).toLocaleString('zh-CN') : perSecond.toFixed(1)
+}
+
+/** Large counts for stat cards: 1,234 / 12.3万 / 1.2亿. */
+export function formatCompact(value: number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return '-'
+  }
+  if (value >= 1e8) return `${(value / 1e8).toFixed(1)}亿`
+  if (value >= 1e5) return `${(value / 1e4).toFixed(1)}万`
+  return value.toLocaleString('zh-CN')
+}
