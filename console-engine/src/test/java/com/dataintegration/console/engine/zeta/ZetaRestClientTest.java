@@ -216,6 +216,9 @@ class ZetaRestClientTest {
         // a master behind a reverse proxy keeps its path prefix
         assertThat(ZetaRestClient.rebaseLoopback("http://localhost:8080/logs/job-1.log", "https://gw.example.com/seatunnel/"))
                 .isEqualTo("https://gw.example.com/seatunnel/logs/job-1.log");
+        // Zeta's own context-path is already in the node's link and is not added twice
+        assertThat(ZetaRestClient.rebaseLoopback("http://localhost:8080/seatunnel/logs/job-1.log", "http://master-1:8080/seatunnel"))
+                .isEqualTo("http://master-1:8080/seatunnel/logs/job-1.log");
         // a real node address, or a master that is itself local, stays as it is
         assertThat(ZetaRestClient.rebaseLoopback("http://worker-2:8080/logs/job-1.log", "http://seatunnel-master:8080"))
                 .isEqualTo("http://worker-2:8080/logs/job-1.log");

@@ -42,7 +42,10 @@ const levelColor: Record<string, string> = { INFO: 'primary', WARN: 'warning', E
 
 async function loadDetail() {
   const first = detail.value === null
-  detail.value = await instanceApi.detail(id)
+  const loaded = await instanceApi.detail(id)
+  // Left the page meanwhile: the breadcrumb and the URL now belong to another page.
+  if (disposed) return
+  detail.value = loaded
   if (first) {
     const i = detail.value.instance
     setBreadcrumb([
@@ -157,6 +160,7 @@ const startupParams = computed(() => {
 })
 
 watch(activeAttempt, (attempt) => {
+  if (disposed) return
   router.replace({ query: attempt === detail.value?.attempts.at(-1)?.attemptNo ? {} : { attempt: String(attempt) } })
   loadLog()
   loadMetrics()
