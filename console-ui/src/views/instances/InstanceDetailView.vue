@@ -57,17 +57,21 @@ async function loadDetail() {
   }
 }
 
+/** Each load is numbered; only the latest one's response is shown, however late the others come. */
+let logSeq = 0
+let metricsSeq = 0
+
 async function loadLog() {
   if (!detail.value || detail.value.attempts.length === 0) {
     log.value = null
     return
   }
   logLoading.value = true
-  const attempt = activeAttempt.value
+  const seq = ++logSeq
   try {
-    const loaded = await instanceApi.log(id, attempt)
-    // Switched to another attempt meanwhile: that one's request decides.
-    if (attempt !== activeAttempt.value) return
+    const loaded = await instanceApi.log(id, activeAttempt.value)
+    // A newer request (another attempt, or the same one polled again) was started meanwhile: it decides.
+    if (seq !== logSeq) return
     log.value = loaded
   } finally {
     logLoading.value = false
@@ -79,9 +83,9 @@ async function loadLog() {
 }
 
 async function loadMetrics() {
-  const attempt = activeAttempt.value
-  const loaded = detail.value && detail.value.attempts.length > 0 ? await instanceApi.metrics(id, attempt) : null
-  if (attempt === activeAttempt.value) {
+  const seq = ++metricsSeq
+  const loaded = detail.value && detail.value.attempts.length > 0 ? await instanceApi.metrics(id, activeAttempt.value) : null
+  if (seq === metricsSeq) {
     metrics.value = loaded
   }
 }

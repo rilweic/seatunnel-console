@@ -233,7 +233,11 @@ public class JobService {
     }
 
     /** Soft delete. The schedule goes with it; the mirrored XXL-JOB job is removed on a best-effort basis. */
+    @Transactional
     public void delete(String id) {
+        // Locked before anything else is read in this transaction, so a run being created right now
+        // (RunRecorder.insert takes the same lock) is either seen below or finds the job deleted.
+        lockJob(id);
         JobDefinition job = requireEditable(id);
         // A deleted job's runs can no longer be stopped from the console, so none may be going.
         long active = instanceMapper.selectCount(new LambdaQueryWrapper<JobInstance>()
@@ -463,6 +467,22 @@ public class JobService {
             throw new ConsoleException(ErrorCodes.NOT_FOUND, "version not found: " + versionId);
         }
         return versionDetail(version);
+    }
+
+    private void lockJob(String id) {
+        if (jobMapper.selectOne(new LambdaQueryWrapper<JobDefinition>().eq(JobDefinition::getId, id).last("for update")) == null) {
+            throw new ConsoleException(ErrorCodes.NOT_FOUND, "job not found: " + id);
+        }
+    }
+
+    /**
+     * Edit rights on a job that may have been deleted since, e.g. to stop one of its runs: those
+     * follow the job's creator too.
+     */
+    public void requireEditableIncludingDeleted(String id) {
+        JobDefinition job = jobMapper.selectNamesIncludingDeleted(List.of(id)).stream().findFirst()
+                .orElseThrow(() -> new ConsoleException(ErrorCodes.NOT_FOUND, "job not found: " + id));
+        Access.requireOwner(job.getCreatedBy(), "任务「" + job.getName() + "」");
     }
 
     /** The job, if the current user may change or run it (its creator or an administrator). */

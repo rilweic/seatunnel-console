@@ -136,4 +136,28 @@ class HoconTemplateTest {
         String masked = template.renderMasked((connector, id) -> Map.of("hosts", List.of("http://es:9200"), "password", "******"));
         assertThat(masked).doesNotContain("p@ss").doesNotContain("\"k\"").contains("******").contains("select 1");
     }
+
+    @Test
+    void credentialsInListsObjectsAndUrlsAreFoundAndMasked() {
+        HoconTemplate template = HoconTemplate.parse(
+                """
+                env { job.mode = "BATCH", password = ["p@ss"] }
+                source {
+                  Jdbc {
+                    url = "jdbc:postgresql://db/shop?sslmode=require&password=s3cret"
+                    query = "select 1"
+                    secret { value = "v" }
+                  }
+                }
+                transform = [{ plugin_name = "Http", hosts = ["http://u:hunter2@api:80"] }]
+                sink { Console {} }
+                """);
+
+        assertThat(template.explicitSecrets()).containsExactlyInAnyOrder(
+                "env.password", "source.Jdbc.url", "source.Jdbc.secret", "transform[0].hosts[0]");
+
+        String masked = template.renderMasked((connector, id) -> Map.of());
+        assertThat(masked).doesNotContain("p@ss").doesNotContain("s3cret").doesNotContain("hunter2").doesNotContain("\"v\"")
+                .contains("sslmode=require").contains("u:******@api");
+    }
 }

@@ -233,7 +233,7 @@ public class RunService {
      */
     public void stop(String instanceId) {
         String reason = "stopped by " + username();
-        jobService.requireEditable(recorder.requireInstance(instanceId).getJobDefinitionId());
+        jobService.requireEditableIncludingDeleted(recorder.requireInstance(instanceId).getJobDefinitionId());
         if (recorder.cancelPending(instanceId, reason)) {
             recorder.event(instanceId, null, RunEventType.FINISHED, Level.WARN, RunStatus.CANCELED + ": " + reason);
             return;

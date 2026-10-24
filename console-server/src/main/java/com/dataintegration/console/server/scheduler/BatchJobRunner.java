@@ -179,8 +179,13 @@ public class BatchJobRunner {
                 warn(listener, "cannot read the status of engine job " + jobId + " (" + failedPolls + "/"
                         + MAX_POLL_FAILURES + "), will retry: " + e.getMessage());
                 if (failedPolls >= MAX_POLL_FAILURES) {
-                    return cancel(jobId, lastMetrics, listener,
-                            "lost contact with engine job " + jobId + " after " + failedPolls + " failed status checks");
+                    String reason = "lost contact with engine job " + jobId + " after " + failedPolls + " failed status checks";
+                    Outcome stopped = cancel(jobId, lastMetrics, listener, reason);
+                    // Stopped by the console because it lost track, not by anyone's request: a
+                    // failure (it may be retried, the job is confirmed stopped), never CANCELED.
+                    return stopped.finalStatus() == EngineJobStatus.CANCELED
+                            ? new Outcome(jobId, EngineJobStatus.FAILED, stopped.metrics(), reason + "; stopped it")
+                            : stopped;
                 }
                 continue;
             }

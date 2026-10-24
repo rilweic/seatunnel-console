@@ -35,16 +35,25 @@ async function load() {
     loading.value = false
   }
   for (const id of Object.keys(backfillRuns.value)) {
-    loadRuns(id, backfillRuns.value[id]!.page)
+    loadRuns(id, runsPage[id] ?? 1)
   }
   if (backfills.value.some((b) => b.status === 'RUNNING')) {
     timer = window.setTimeout(load, 5000)
   }
 }
 
+/** Latest request per batch: a slower answer for an earlier page (or refresh) must not replace it. */
+const runsSeq: Record<string, number> = {}
+/** The page last asked for, which the periodic refresh reloads (not the one last shown). */
+const runsPage: Record<string, number> = {}
+
 async function loadRuns(batchId: string, page = 1) {
+  runsPage[batchId] = page
+  const seq = (runsSeq[batchId] = (runsSeq[batchId] ?? 0) + 1)
   const result = await instanceApi.list({ backfillId: batchId, page, size: RUNS_PAGE })
-  backfillRuns.value[batchId] = { items: result.items, total: result.total, page }
+  if (seq === runsSeq[batchId]) {
+    backfillRuns.value[batchId] = { items: result.items, total: result.total, page }
+  }
 }
 
 async function cancel(b: BackfillView) {

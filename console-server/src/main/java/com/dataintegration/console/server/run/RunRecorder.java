@@ -4,16 +4,19 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
+import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
 import com.dataintegration.console.server.persistence.entity.JobMetricSample;
+import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobMetricSampleMapper;
 
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -36,16 +39,19 @@ public class RunRecorder {
     private final JobInstanceAttemptMapper attemptMapper;
     private final JobInstanceEventMapper eventMapper;
     private final JobMetricSampleMapper sampleMapper;
+    private final JobDefinitionMapper jobMapper;
 
     public RunRecorder(
             JobInstanceMapper instanceMapper,
             JobInstanceAttemptMapper attemptMapper,
             JobInstanceEventMapper eventMapper,
-            JobMetricSampleMapper sampleMapper) {
+            JobMetricSampleMapper sampleMapper,
+            JobDefinitionMapper jobMapper) {
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
         this.sampleMapper = sampleMapper;
+        this.jobMapper = jobMapper;
     }
 
     public JobInstance requireInstance(String id) {
@@ -56,7 +62,19 @@ public class RunRecorder {
         return instance;
     }
 
+    /**
+     * Records a new run, holding the job's row lock meanwhile: deleting the job takes the same lock
+     * before it checks for active runs, so a run is never created for a job deleted in between
+     * (its runs could then no longer be stopped from the console).
+     */
+    @Transactional
     public void insert(JobInstance instance) {
+        JobDefinition job = jobMapper.selectOne(new LambdaQueryWrapper<JobDefinition>()
+                .eq(JobDefinition::getId, instance.getJobDefinitionId())
+                .last("for update"));
+        if (job == null) {
+            throw new ConsoleException(ErrorCodes.NOT_FOUND, "job was deleted: " + instance.getJobDefinitionId());
+        }
         instanceMapper.insert(instance);
     }
 

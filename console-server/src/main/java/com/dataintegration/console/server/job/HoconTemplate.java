@@ -152,8 +152,7 @@ public final class HoconTemplate {
         if (value instanceof ConfigObject object) {
             object.forEach((key, child) -> {
                 String childPath = path.isEmpty() ? key : path + "." + key;
-                String text = text(child);
-                if (isSecretKey(key) && text != null && !text.isBlank()) {
+                if (isSecretKey(key) && hasValue(child)) {
                     found.add(childPath);
                 } else {
                     collectSecrets(childPath, child, found);
@@ -169,6 +168,21 @@ public final class HoconTemplate {
                 found.add(path);
             }
         }
+    }
+
+    /**
+     * Whether a value under a credential-like key carries anything: a non-blank scalar, or such a
+     * scalar anywhere inside a list or object ({@code password = ["p@ss"]} is a password too).
+     */
+    private static boolean hasValue(ConfigValue value) {
+        if (value instanceof ConfigObject object) {
+            return object.values().stream().anyMatch(HoconTemplate::hasValue);
+        }
+        if (value instanceof ConfigList list) {
+            return list.stream().anyMatch(HoconTemplate::hasValue);
+        }
+        String text = text(value);
+        return text != null && !text.isBlank();
     }
 
     /** A scalar's text; null for objects, lists, nulls and unresolved substitutions. */
@@ -238,8 +252,8 @@ public final class HoconTemplate {
         ConfigObject result = object;
         for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
             ConfigValue value = entry.getValue();
-            String text = text(value);
-            ConfigValue masked = isSecretKey(entry.getKey()) && text != null ? ConfigValueFactory.fromAnyRef(MASK) : maskSecrets(value);
+            // The whole value goes under a credential-like key, whatever its shape.
+            ConfigValue masked = isSecretKey(entry.getKey()) && hasValue(value) ? ConfigValueFactory.fromAnyRef(MASK) : maskSecrets(value);
             result = result.withValue(entry.getKey(), masked);
         }
         return result;
