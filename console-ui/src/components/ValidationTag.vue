@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { InstanceView } from '@/api/console'
 import { formatNumber } from '@/utils/format'
+import { textTooltip } from '@/utils/tooltip'
 
 defineProps<{ instance: Pick<InstanceView, 'validationStatus' | 'sourceCount' | 'targetCount' | 'validationMessage'> }>()
 
@@ -9,7 +10,13 @@ const type = { PASSED: 'success', MISMATCH: 'danger', ERROR: 'warning' } as cons
 </script>
 
 <template>
-  <el-tooltip v-if="instance.validationStatus && instance.validationStatus !== 'SKIPPED'" :content="instance.validationMessage ?? ''" placement="top">
+  <el-tooltip
+    v-if="instance.validationStatus && instance.validationStatus !== 'SKIPPED'"
+    :content="instance.validationMessage ?? ''"
+    :disabled="!instance.validationMessage"
+    placement="top"
+    v-bind="textTooltip"
+  >
     <el-tag size="small" :type="type[instance.validationStatus]">
       {{ text[instance.validationStatus] }}
       <template v-if="instance.validationStatus === 'MISMATCH'">

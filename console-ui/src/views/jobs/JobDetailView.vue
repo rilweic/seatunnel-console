@@ -12,6 +12,7 @@ import { jobApi, type JobView } from '@/api/console'
 import BackButton from '@/components/BackButton.vue'
 import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { formatTime, statusTag, statusText } from '@/utils/format'
+import { textTooltip } from '@/utils/tooltip'
 
 import BackfillDialog from './detail/BackfillDialog.vue'
 import JobBackfillsPane from './detail/JobBackfillsPane.vue'
@@ -94,12 +95,12 @@ onMounted(load)
         <div v-if="job.description" class="description">{{ job.description }}</div>
       </div>
       <div class="actions">
-        <el-tooltip :content="editTip" :disabled="!editTip" placement="bottom">
+        <el-tooltip :content="editTip" :disabled="!editTip" placement="bottom" v-bind="textTooltip">
           <span>
             <el-button :icon="Edit" :disabled="!job.editable" @click="router.push(`/jobs/${jobId}/edit`)">编辑</el-button>
           </span>
         </el-tooltip>
-        <el-tooltip :content="runTip" :disabled="!runTip" placement="bottom">
+        <el-tooltip :content="runTip" :disabled="!runTip" placement="bottom" v-bind="textTooltip">
           <span class="buttons">
             <el-button :disabled="!!runTip" @click="backfillDialog = true">补数</el-button>
             <el-button type="primary" :disabled="!!runTip" @click="runDialog = true">立即运行</el-button>

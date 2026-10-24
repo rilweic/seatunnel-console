@@ -6,6 +6,9 @@ import { createApp } from 'vue'
 
 import App from './App.vue'
 import router from './router'
+import { keepTooltipsWhileCopying } from './utils/tooltip'
 import './styles/main.css'
+
+keepTooltipsWhileCopying()
 
 createApp(App).use(createPinia()).use(router).use(ElementPlus, { locale: zhCn }).mount('#app')

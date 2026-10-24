@@ -62,6 +62,9 @@ onBeforeUnmount(() => {
           <el-tag :type="statusTag[row.status as RunStatus]">{{ statusText[row.status as RunStatus] }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column prop="projectName" label="项目" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.projectName ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="任务" min-width="180">
         <template #default="{ row }">{{ row.jobName }} <span class="muted">v{{ row.versionNo }}</span></template>
       </el-table-column>

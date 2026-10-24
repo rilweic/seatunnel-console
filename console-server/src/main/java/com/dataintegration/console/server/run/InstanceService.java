@@ -11,12 +11,14 @@ import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
 import com.dataintegration.console.server.persistence.entity.JobMetricSample;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
+import com.dataintegration.console.server.persistence.entity.Project;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobMetricSampleMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
+import com.dataintegration.console.server.persistence.mapper.ProjectMapper;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.user.UserDirectory;
@@ -43,6 +45,7 @@ public class InstanceService {
     public record InstanceView(
             String id,
             String projectId,
+            String projectName,
             String jobDefinitionId,
             String jobName,
             Integer versionNo,
@@ -110,6 +113,7 @@ public class InstanceService {
     private final JobInstanceAttemptMapper attemptMapper;
     private final JobInstanceEventMapper eventMapper;
     private final JobDefinitionMapper jobMapper;
+    private final ProjectMapper projectMapper;
     private final JobVersionMapper versionMapper;
     private final EngineLogService engineLogService;
     private final LogStorage logStorage;
@@ -122,6 +126,7 @@ public class InstanceService {
             JobInstanceAttemptMapper attemptMapper,
             JobInstanceEventMapper eventMapper,
             JobDefinitionMapper jobMapper,
+            ProjectMapper projectMapper,
             JobVersionMapper versionMapper,
             EngineLogService engineLogService,
             LogStorage logStorage,
@@ -132,6 +137,7 @@ public class InstanceService {
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
         this.jobMapper = jobMapper;
+        this.projectMapper = projectMapper;
         this.versionMapper = versionMapper;
         this.engineLogService = engineLogService;
         this.logStorage = logStorage;
@@ -155,10 +161,11 @@ public class InstanceService {
                                 .inSql(mine, JobInstance::getJobDefinitionId,
                                         "select id from job_definition where created_by = " + quote(CurrentUser.idOrNull()))
                                 .orderByDesc(JobInstance::getCreatedAt));
+        Map<String, String> projectNames = projectNames(result.getRecords());
         Map<String, JobDefinition> jobs = jobs(result.getRecords());
         Map<String, Integer> versionNos = versionNos(result.getRecords());
         Map<String, String> userNames = users.names(result.getRecords().stream().map(JobInstance::getCreatedBy).toList());
-        return Pages.result(result).map(i -> view(i, jobs, versionNos, userNames));
+        return Pages.result(result).map(i -> view(i, projectNames, jobs, versionNos, userNames));
     }
 
     public InstanceDetail detail(String id) {
@@ -174,7 +181,7 @@ public class InstanceService {
                         .toList();
         List<JobInstance> one = List.of(instance);
         return new InstanceDetail(
-                view(instance, jobs(one), versionNos(one), users.names(Collections.singletonList(instance.getCreatedBy()))),
+                view(instance, projectNames(one), jobs(one), versionNos(one), users.names(Collections.singletonList(instance.getCreatedBy()))),
                 instance.getConfigMasked(),
                 instance.getVariablesJson(),
                 instance.getStartupParamsJson(),
@@ -182,12 +189,13 @@ public class InstanceService {
                 events);
     }
 
-    /** Views of instances already loaded, with job names, version numbers and trigger users. */
+    /** Views of instances already loaded, with project/job names, version numbers and trigger users. */
     public List<InstanceView> views(List<JobInstance> instances) {
+        Map<String, String> projectNames = projectNames(instances);
         Map<String, JobDefinition> jobs = jobs(instances);
         Map<String, Integer> versionNos = versionNos(instances);
         Map<String, String> userNames = users.names(instances.stream().map(JobInstance::getCreatedBy).toList());
-        return instances.stream().map(i -> view(i, jobs, versionNos, userNames)).toList();
+        return instances.stream().map(i -> view(i, projectNames, jobs, versionNos, userNames)).toList();
     }
 
     /**
@@ -279,6 +287,16 @@ public class InstanceService {
         return id == null ? "null" : "'" + id.replace("'", "''") + "'";
     }
 
+    private Map<String, String> projectNames(List<JobInstance> instances) {
+        List<String> ids = instances.stream().map(JobInstance::getProjectId).distinct().toList();
+        if (ids.isEmpty()) {
+            return new HashMap<>();
+        }
+        // Runs keep their original project even when the job moves or the project is deleted.
+        return projectMapper.selectNamesIncludingDeleted(ids).stream()
+                .collect(Collectors.toMap(Project::getId, Project::getName));
+    }
+
     private Map<String, JobDefinition> jobs(List<JobInstance> instances) {
         List<String> ids = instances.stream().map(JobInstance::getJobDefinitionId).distinct().toList();
         if (ids.isEmpty()) {
@@ -298,7 +316,8 @@ public class InstanceService {
     }
 
     private static InstanceView view(
-            JobInstance i, Map<String, JobDefinition> jobs, Map<String, Integer> versionNos, Map<String, String> userNames) {
+            JobInstance i, Map<String, String> projectNames, Map<String, JobDefinition> jobs,
+            Map<String, Integer> versionNos, Map<String, String> userNames) {
         JobDefinition job = jobs.get(i.getJobDefinitionId());
         Long duration = i.getStartedAt() == null
                 ? null
@@ -306,6 +325,7 @@ public class InstanceService {
         return new InstanceView(
                 i.getId(),
                 i.getProjectId(),
+                projectNames.get(i.getProjectId()),
                 i.getJobDefinitionId(),
                 job == null ? null : job.getName(),
                 versionNos.get(i.getJobVersionId()),

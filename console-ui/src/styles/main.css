@@ -201,6 +201,43 @@ code {
   justify-content: flex-end;
 }
 
+/* Shared by table overflow hints and validation details, including nested tables. */
+.el-popper.app-text-tooltip {
+  box-sizing: border-box;
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: min(320px, 45vh);
+  overflow: auto;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: var(--el-box-shadow-light);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+
+/* A selection started in a tooltip stays in it rather than running on into the page. */
+html.selecting-tooltip body {
+  user-select: none;
+}
+
+/* API and connection errors can contain long URLs, SQL or engine responses too. */
+.el-message {
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.el-message__content {
+  min-width: 0;
+  max-height: min(320px, 45vh);
+  overflow: auto;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /*
  * descriptions: Ant Design's borderless layout - muted label, plain value, no grey label column -
  * so key/value blocks read like the tables around them.
