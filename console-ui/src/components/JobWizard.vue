@@ -3,7 +3,7 @@
  * The job wizard (docs/design.md §7.2): collects a WizardForm in five steps. The HOCON is generated
  * and checked by the server; this component never builds config itself.
  */
-import { Check } from '@element-plus/icons-vue'
+import { Check, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
@@ -102,6 +102,15 @@ async function loadSourceTables() {
   }
   await nextTick()
   restoreSelection()
+}
+
+/** Re-reads the table list, e.g. after tables were created; the selection is kept. */
+async function refreshTables() {
+  await loadSourceTables()
+  const names = new Set(sourceTables.value.map((t) => t.name))
+  const gone = selected.value.filter((n) => !names.has(n))
+  if (gone.length) ElMessage.warning(`已选的表在源库里找不到了：${gone.join('，')}`)
+  else ElMessage.success(`已刷新，共 ${sourceTables.value.length} 张表`)
 }
 
 /** Shows `selected` in the table; it never changes `selected` itself. */
@@ -469,6 +478,7 @@ onMounted(async () => {
         <div class="tables-bar">
           <el-input v-model="tableFilter" placeholder="筛选表名，支持正则，如 ^order_" clearable class="table-filter" />
           <span class="tip bar-hint">输入关键字或正则表达式快速筛选</span>
+          <el-button :icon="Refresh" :loading="loadingTables" class="refresh" @click="refreshTables">刷新</el-button>
         </div>
         <el-table ref="tableRef" v-loading="loadingTables" :data="filteredTables" row-key="name" max-height="440" class="table-box" @select="onSelect" @select-all="onSelectAll">
           <el-table-column type="selection" width="48" :reserve-selection="false" />
@@ -872,6 +882,10 @@ onMounted(async () => {
 
 .bar-hint {
   margin: 0;
+}
+
+.refresh {
+  margin-left: auto;
 }
 
 .table-box {
