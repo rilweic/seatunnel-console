@@ -188,7 +188,7 @@ watch([mode, minuteStep, hourStep, minute, time, weekdays, monthDays, custom], (
 
     <div v-if="summary" class="summary">{{ summary }}</div>
     <div v-if="mode === 'custom'" class="tip">
-      格式：秒 分 时 日 月 周，日和周中必须有一个是 <code>?</code>。例如每天 2 点 <code>0 0 2 * * ?</code>，每周一 1:30
+      格式：秒 分 时 日 月 周，日和周中必须有一个是 <code>?</code>；两次运行至少间隔 2 分钟。例如每天 2 点 <code>0 0 2 * * ?</code>，每周一 1:30
       <code>0 30 1 ? * MON</code>，工作日 9 点 <code>0 0 9 ? * MON-FRI</code>
     </div>
   </div>

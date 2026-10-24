@@ -5,7 +5,9 @@ import com.dataintegration.console.common.ErrorCodes;
 
 import org.springframework.scheduling.support.CronExpression;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -16,23 +18,54 @@ import java.util.List;
  */
 final class CronSchedule {
 
+    /** Batch jobs run at most this often (docs/design.md §5.2); a cron that fires faster is a mistake. */
+    static final Duration MIN_INTERVAL = Duration.ofMinutes(2);
+
+    /** Fire times looked at for the interval check, within a year from now. */
+    private static final int INTERVAL_SAMPLES = 2000;
+
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("MM-dd HH:mm:ss");
+
     private CronSchedule() {}
 
     static CronExpression parse(String cron) {
         String trimmed = cron == null ? "" : cron.trim();
         String[] fields = trimmed.split("\\s+");
         if (fields.length != 6) {
-            throw invalid("cron needs 6 fields: second minute hour day-of-month month day-of-week, e.g. 0 0 2 * * ?");
+            throw invalid("cron 需要 6 段：秒 分 时 日 月 周，例如 0 0 2 * * ?");
         }
         // Quartz (and so XXL-JOB) requires exactly one of the two day fields to be '?'.
         if ("?".equals(fields[3]) == "?".equals(fields[5])) {
-            throw invalid("exactly one of day-of-month and day-of-week must be '?', e.g. 0 0 2 * * ? or 0 0 2 ? * MON");
+            throw invalid("日和周两段中必须有且只有一个是 ?，例如 0 0 2 * * ? 或 0 0 2 ? * MON");
         }
         try {
             return CronExpression.parse(trimmed);
         } catch (IllegalArgumentException e) {
-            throw invalid("invalid cron: " + e.getMessage());
+            throw invalid("cron 无效：" + e.getMessage());
         }
+    }
+
+    /**
+     * A cron for a schedule: valid, and never firing twice within {@link #MIN_INTERVAL}. The fire
+     * times of the coming year are sampled, so a cron that only crowds its runs on some days (e.g.
+     * every minute during 02:00) is caught too.
+     */
+    static CronExpression parseSchedule(String cron, LocalDateTime from) {
+        CronExpression expression = parse(cron);
+        LocalDateTime until = from.plusYears(1);
+        LocalDateTime previous = expression.next(from);
+        for (int i = 0; previous != null && previous.isBefore(until) && i < INTERVAL_SAMPLES; i++) {
+            LocalDateTime next = expression.next(previous);
+            if (next == null) {
+                break;
+            }
+            if (Duration.between(previous, next).compareTo(MIN_INTERVAL) < 0) {
+                throw invalid("两次运行至少要间隔 " + MIN_INTERVAL.toMinutes() + " 分钟，这个 cron 会在 " + previous.format(TIME)
+                        + " 和 " + next.format(TIME) + " 连续运行");
+            }
+            previous = next;
+        }
+        return expression;
     }
 
     static List<LocalDateTime> nextFireTimes(String cron, LocalDateTime from, int count) {

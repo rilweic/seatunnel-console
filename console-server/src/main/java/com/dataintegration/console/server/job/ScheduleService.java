@@ -92,7 +92,7 @@ public class ScheduleService {
     public ScheduleView save(String jobId, ScheduleCommand command) {
         JobDefinition job = jobService.requireEditable(jobId);
         XxlJobAdminClient client = requireClient();
-        CronSchedule.parse(command.cron());
+        CronSchedule.parseSchedule(command.cron(), LocalDateTime.now());
         if (command.enabled() && job.getCurrentVersionId() == null) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before enabling its schedule");
         }
@@ -128,6 +128,7 @@ public class ScheduleService {
     }
 
     public List<String> preview(String cron) {
+        CronSchedule.parseSchedule(cron, LocalDateTime.now());
         return CronSchedule.nextFireTimes(cron, LocalDateTime.now(), PREVIEW_COUNT).stream()
                 .map(PREVIEW_FORMAT::format)
                 .toList();
