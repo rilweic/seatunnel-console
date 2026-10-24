@@ -36,9 +36,10 @@ public class ProjectController {
     @GetMapping
     public Result<PageResult<ProjectView>> list(
             @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "false") boolean mine,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
-        return Result.ok(projectService.list(keyword, page, size));
+        return Result.ok(projectService.list(keyword, mine, page, size));
     }
 
     @GetMapping("/{id}")

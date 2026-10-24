@@ -11,6 +11,7 @@ import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.datasource.DataSourcePlugin;
 import com.dataintegration.console.datasource.DataSourcePlugins;
+import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.crypto.SecretCipher;
 import com.dataintegration.console.server.persistence.entity.DatasourceEntity;
@@ -19,6 +20,7 @@ import com.dataintegration.console.server.persistence.entity.JobVersionDatasourc
 import com.dataintegration.console.server.persistence.mapper.DatasourceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionDatasourceMapper;
+import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.springframework.stereotype.Service;
@@ -26,6 +28,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +54,9 @@ public class DatasourceService {
             String description,
             Map<String, String> config,
             Set<String> secretsSet,
+            String ownerId,
+            String ownerName,
+            boolean editable,
             String createdAt,
             String updatedAt) {}
 
@@ -62,6 +68,7 @@ public class DatasourceService {
     private final DataSourcePlugins plugins;
     private final SecretCipher cipher;
     private final ObjectMapper objectMapper;
+    private final UserDirectory users;
 
     public DatasourceService(
             DatasourceMapper datasourceMapper,
@@ -69,28 +76,36 @@ public class DatasourceService {
             JobDefinitionMapper jobMapper,
             DataSourcePlugins plugins,
             SecretCipher cipher,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            UserDirectory users) {
         this.datasourceMapper = datasourceMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
         this.jobMapper = jobMapper;
         this.plugins = plugins;
         this.cipher = cipher;
         this.objectMapper = objectMapper;
+        this.users = users;
     }
 
-    public PageResult<DatasourceView> list(String keyword, String type, Integer page, Integer size) {
+    /**
+     * @param ownerId only datasources of this user, e.g. a job's owner when picking its datasources
+     */
+    public PageResult<DatasourceView> list(String keyword, String type, String ownerId, Integer page, Integer size) {
         Page<DatasourceEntity> result =
                 datasourceMapper.selectPage(
                         Pages.of(page, size),
                         new LambdaQueryWrapper<DatasourceEntity>()
                                 .like(keyword != null && !keyword.isBlank(), DatasourceEntity::getName, keyword)
                                 .eq(type != null && !type.isBlank(), DatasourceEntity::getType, type)
+                                .eq(ownerId != null && !ownerId.isBlank(), DatasourceEntity::getCreatedBy, ownerId)
                                 .orderByDesc(DatasourceEntity::getCreatedAt));
-        return Pages.result(result).map(this::view);
+        Map<String, String> owners = users.names(result.getRecords().stream().map(DatasourceEntity::getCreatedBy).toList());
+        return Pages.result(result).map(e -> view(e, owners));
     }
 
     public DatasourceView get(String id) {
-        return view(require(id));
+        DatasourceEntity entity = require(id);
+        return view(entity, users.names(Collections.singletonList(entity.getCreatedBy())));
     }
 
     public DatasourceView create(String name, String type, String description, Map<String, String> props) {
@@ -104,12 +119,12 @@ public class DatasourceService {
         entity.setCreatedBy(CurrentUser.idOrNull());
         store(entity, plugin, cleaned);
         datasourceMapper.insert(entity);
-        return view(entity);
+        return get(entity.getId());
     }
 
     /** Type cannot change. A secret left empty keeps its saved value. */
     public DatasourceView update(String id, String name, String description, Map<String, String> props) {
-        DatasourceEntity entity = require(id);
+        DatasourceEntity entity = requireEditable(id);
         DataSourcePlugin plugin = plugins.get(entity.getType());
         Map<String, String> merged = mergeSecrets(entity, plugin, clean(props));
         plugin.validate(merged);
@@ -117,7 +132,7 @@ public class DatasourceService {
         entity.setDescription(description);
         store(entity, plugin, merged);
         datasourceMapper.updateById(entity);
-        return view(require(id));
+        return get(id);
     }
 
     /**
@@ -127,20 +142,20 @@ public class DatasourceService {
     public ConnectionTestResult test(String datasourceId, String type, Map<String, String> props) {
         Map<String, String> cleaned = clean(props);
         if (datasourceId != null && !datasourceId.isBlank()) {
-            DatasourceEntity entity = require(datasourceId);
+            DatasourceEntity entity = requireEditable(datasourceId);
             return plugins.get(entity.getType()).testConnection(mergeSecrets(entity, plugins.get(entity.getType()), cleaned));
         }
         return plugins.get(type).testConnection(cleaned);
     }
 
     public ConnectionTestResult testSaved(String id) {
-        DatasourceEntity entity = require(id);
+        DatasourceEntity entity = requireEditable(id);
         return plugins.get(entity.getType()).testConnection(decryptedProps(entity));
     }
 
     /** Refused while the current version of any live job still references this datasource. */
     public void delete(String id) {
-        require(id);
+        requireEditable(id);
         List<String> users = jobsUsing(id);
         if (!users.isEmpty()) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "datasource is used by jobs: " + String.join(", ", users));
@@ -173,17 +188,17 @@ public class DatasourceService {
     }
 
     public List<String> namespaces(String datasourceId) {
-        DatasourceEntity entity = require(datasourceId);
+        DatasourceEntity entity = requireEditable(datasourceId);
         return plugins.get(entity.getType()).namespaces(decryptedProps(entity));
     }
 
     public List<TableMeta> tables(String datasourceId, String namespace) {
-        DatasourceEntity entity = require(datasourceId);
+        DatasourceEntity entity = requireEditable(datasourceId);
         return plugins.get(entity.getType()).tables(decryptedProps(entity), namespace);
     }
 
     public List<ColumnMeta> columns(String datasourceId, String namespace, String table) {
-        DatasourceEntity entity = require(datasourceId);
+        DatasourceEntity entity = requireEditable(datasourceId);
         return plugins.get(entity.getType()).columns(decryptedProps(entity), namespace, table);
     }
 
@@ -195,6 +210,13 @@ public class DatasourceService {
     /** Datasource type name, e.g. MYSQL, for picking the right validation form. */
     public String typeOf(String datasourceId) {
         return require(datasourceId).getType();
+    }
+
+    /** Editing, testing or browsing a datasource uses its credentials: creator or administrator only. */
+    public DatasourceEntity requireEditable(String id) {
+        DatasourceEntity entity = require(id);
+        Access.requireOwner(entity.getCreatedBy(), "数据源「" + entity.getName() + "」");
+        return entity;
     }
 
     public DatasourceEntity require(String id) {
@@ -271,7 +293,7 @@ public class DatasourceService {
         return cleaned;
     }
 
-    private DatasourceView view(DatasourceEntity entity) {
+    private DatasourceView view(DatasourceEntity entity, Map<String, String> owners) {
         Set<String> secretsSet = new TreeSet<>();
         if (entity.getSecretCipher() != null) {
             secretsSet.addAll(secrets(entity).keySet());
@@ -283,6 +305,9 @@ public class DatasourceService {
                 entity.getDescription(),
                 config(entity),
                 secretsSet,
+                entity.getCreatedBy(),
+                owners.get(entity.getCreatedBy()),
+                Access.canEdit(entity.getCreatedBy()),
                 entity.getCreatedAt() == null ? null : entity.getCreatedAt().toString(),
                 entity.getUpdatedAt() == null ? null : entity.getUpdatedAt().toString());
     }

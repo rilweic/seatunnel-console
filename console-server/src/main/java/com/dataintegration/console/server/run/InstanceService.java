@@ -15,12 +15,16 @@ import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptM
 import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
+import com.dataintegration.console.server.auth.Access;
+import com.dataintegration.console.server.auth.CurrentUser;
+import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -51,6 +55,8 @@ public class InstanceService {
             Long sourceCount,
             Long targetCount,
             String validationMessage,
+            String createdByName,
+            boolean editable,
             LocalDateTime createdAt) {}
 
     public record AttemptView(
@@ -87,6 +93,7 @@ public class InstanceService {
     private final JobVersionMapper versionMapper;
     private final EngineLogService engineLogService;
     private final LogStorage logStorage;
+    private final UserDirectory users;
 
     public InstanceService(
             JobInstanceMapper instanceMapper,
@@ -95,7 +102,8 @@ public class InstanceService {
             JobDefinitionMapper jobMapper,
             JobVersionMapper versionMapper,
             EngineLogService engineLogService,
-            LogStorage logStorage) {
+            LogStorage logStorage,
+            UserDirectory users) {
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
@@ -103,10 +111,12 @@ public class InstanceService {
         this.versionMapper = versionMapper;
         this.engineLogService = engineLogService;
         this.logStorage = logStorage;
+        this.users = users;
     }
 
+    /** @param mine only runs of the current user's jobs, whoever or whatever triggered them */
     public PageResult<InstanceView> list(
-            String projectId, String jobId, String status, String backfillBatchId, Integer page, Integer size) {
+            String projectId, String jobId, String status, String backfillBatchId, boolean mine, Integer page, Integer size) {
         Page<JobInstance> result =
                 instanceMapper.selectPage(
                         Pages.of(page, size),
@@ -116,10 +126,13 @@ public class InstanceService {
                                 .eq(blank(jobId), JobInstance::getJobDefinitionId, jobId)
                                 .eq(blank(status), JobInstance::getStatus, status)
                                 .eq(blank(backfillBatchId), JobInstance::getBackfillBatchId, backfillBatchId)
+                                .inSql(mine, JobInstance::getJobDefinitionId,
+                                        "select id from job_definition where created_by = " + quote(CurrentUser.idOrNull()))
                                 .orderByDesc(JobInstance::getCreatedAt));
-        Map<String, String> jobNames = jobNames(result.getRecords());
+        Map<String, JobDefinition> jobs = jobs(result.getRecords());
         Map<String, Integer> versionNos = versionNos(result.getRecords());
-        return Pages.result(result).map(i -> view(i, jobNames, versionNos));
+        Map<String, String> userNames = users.names(result.getRecords().stream().map(JobInstance::getCreatedBy).toList());
+        return Pages.result(result).map(i -> view(i, jobs, versionNos, userNames));
     }
 
     public InstanceDetail detail(String id) {
@@ -135,7 +148,8 @@ public class InstanceService {
                         .toList();
         List<JobInstance> one = List.of(instance);
         return new InstanceDetail(
-                view(instance, jobNames(one), versionNos(one)), instance.getConfigMasked(),
+                view(instance, jobs(one), versionNos(one), users.names(Collections.singletonList(instance.getCreatedBy()))),
+                instance.getConfigMasked(),
                 instance.getVariablesJson(),
                 instance.getStartupParamsJson(),
                 attempts,
@@ -192,14 +206,19 @@ public class InstanceService {
                 .orderByAsc(JobInstanceAttempt::getAttemptNo));
     }
 
-    private Map<String, String> jobNames(List<JobInstance> instances) {
+    /** User ids are UUIDs, never user input, but quote them safely anyway for the inSql fragment. */
+    private static String quote(String id) {
+        return id == null ? "null" : "'" + id.replace("'", "''") + "'";
+    }
+
+    private Map<String, JobDefinition> jobs(List<JobInstance> instances) {
         List<String> ids = instances.stream().map(JobInstance::getJobDefinitionId).distinct().toList();
         if (ids.isEmpty()) {
             return Map.of();
         }
         // Deleted jobs keep their runs; the logic-delete filter would hide their names, so select directly.
         return jobMapper.selectNamesIncludingDeleted(ids).stream()
-                .collect(Collectors.toMap(JobDefinition::getId, JobDefinition::getName));
+                .collect(Collectors.toMap(JobDefinition::getId, j -> j));
     }
 
     private Map<String, Integer> versionNos(List<JobInstance> instances) {
@@ -210,7 +229,9 @@ public class InstanceService {
         return versionMapper.selectByIds(ids).stream().collect(Collectors.toMap(JobVersion::getId, JobVersion::getVersionNo));
     }
 
-    private static InstanceView view(JobInstance i, Map<String, String> jobNames, Map<String, Integer> versionNos) {
+    private static InstanceView view(
+            JobInstance i, Map<String, JobDefinition> jobs, Map<String, Integer> versionNos, Map<String, String> userNames) {
+        JobDefinition job = jobs.get(i.getJobDefinitionId());
         Long duration = i.getStartedAt() == null
                 ? null
                 : Duration.between(i.getStartedAt(), i.getFinishedAt() == null ? LocalDateTime.now() : i.getFinishedAt()).toMillis();
@@ -218,7 +239,7 @@ public class InstanceService {
                 i.getId(),
                 i.getProjectId(),
                 i.getJobDefinitionId(),
-                jobNames.get(i.getJobDefinitionId()),
+                job == null ? null : job.getName(),
                 versionNos.get(i.getJobVersionId()),
                 i.getTriggerType(),
                 i.getStatus(),
@@ -236,6 +257,8 @@ public class InstanceService {
                 i.getSourceCount(),
                 i.getTargetCount(),
                 i.getValidationMessage(),
+                userNames.get(i.getCreatedBy()),
+                job != null && Access.canEdit(job.getCreatedBy()),
                 i.getCreatedAt());
     }
 

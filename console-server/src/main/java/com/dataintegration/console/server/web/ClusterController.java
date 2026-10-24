@@ -3,6 +3,7 @@ package com.dataintegration.console.server.web;
 import com.dataintegration.console.common.Result;
 import com.dataintegration.console.engine.EngineClient;
 
+import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.health.ClusterHealthService;
 import com.dataintegration.console.server.health.DiagnosticService;
 
@@ -38,6 +39,7 @@ public class ClusterController {
     /** Runs tiny real jobs on the cluster; takes up to a minute and a half. */
     @PostMapping("/diagnose")
     public Result<List<ClusterHealthService.Check>> diagnose() {
+        Access.requireAdmin();
         return Result.ok(diagnosticService.run());
     }
 

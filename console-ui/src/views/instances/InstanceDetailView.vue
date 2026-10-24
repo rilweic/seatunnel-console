@@ -135,13 +135,13 @@ onBeforeUnmount(() => window.clearTimeout(timer))
         <div class="title">
           <el-tag :type="statusTag[instance.status as RunStatus]" size="large">{{ statusText[instance.status as RunStatus] }}</el-tag>
           <router-link :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
-          <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行 · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
+          <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
           <router-link v-if="instance.backfillBatchId" :to="`/jobs/${instance.jobDefinitionId}?tab=backfills`" class="muted">属于一次补数</router-link>
         </div>
         <div>
-          <el-button v-if="active" type="danger" plain :loading="stopping" @click="stop">停止</el-button>
-          <el-button v-else @click="rerunDialog = { visible: true, useLatestVersion: false, loading: false }">重跑</el-button>
+          <el-button v-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>
+          <el-button v-else :disabled="!instance.editable" @click="rerunDialog = { visible: true, useLatestVersion: false, loading: false }">重跑</el-button>
           <el-button @click="refresh">刷新</el-button>
         </div>
       </div>

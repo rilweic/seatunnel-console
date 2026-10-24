@@ -12,7 +12,7 @@ const router = useRouter()
 
 const rows = ref<InstanceView[]>([])
 const total = ref(0)
-const query = reactive({ status: '', page: 1, size: 20 })
+const query = reactive({ status: '', mine: true, page: 1, size: 20 })
 const loading = ref(false)
 let timer: number | undefined
 
@@ -42,6 +42,10 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       <el-button :icon="Refresh" @click="load()">刷新</el-button>
     </PageHeader>
     <div class="toolbar">
+      <el-radio-group v-model="query.mine" class="scope" @change="load()">
+        <el-radio-button :value="true">我的</el-radio-button>
+        <el-radio-button :value="false">全部</el-radio-button>
+      </el-radio-group>
       <el-select v-model="query.status" placeholder="全部状态" clearable class="status" @change="load()">
         <el-option v-for="(label, value) in statusText" :key="value" :label="label" :value="value" />
       </el-select>
@@ -69,6 +73,9 @@ onBeforeUnmount(() => window.clearTimeout(timer))
       </el-table-column>
       <el-table-column label="校验" width="130">
         <template #default="{ row }"><ValidationTag :instance="row" /></template>
+      </el-table-column>
+      <el-table-column label="触发人" width="110">
+        <template #default="{ row }">{{ row.createdByName ?? (row.triggerType === 'MANUAL' || row.triggerType === 'RERUN' ? '-' : '调度') }}</template>
       </el-table-column>
       <el-table-column prop="errorMessage" label="错误" min-width="220" show-overflow-tooltip />
     </el-table>
@@ -106,5 +113,8 @@ onBeforeUnmount(() => window.clearTimeout(timer))
 
 :deep(.el-table__row) {
   cursor: pointer;
+}
+.scope {
+  flex: none;
 }
 </style>

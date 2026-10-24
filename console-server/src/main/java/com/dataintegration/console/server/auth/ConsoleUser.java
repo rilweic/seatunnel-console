@@ -9,7 +9,14 @@ import java.util.Collection;
 import java.util.List;
 
 /** Authenticated principal stored in the HTTP session. Never holds the password hash after login. */
-public record ConsoleUser(String id, String username, String displayName, String role, String passwordHash, boolean enabled)
+public record ConsoleUser(
+        String id,
+        String username,
+        String displayName,
+        String role,
+        String passwordHash,
+        boolean enabled,
+        boolean mustChangePassword)
         implements UserDetails, Serializable {
 
     public static final String ROLE_ADMIN = "ADMIN";
@@ -36,7 +43,11 @@ public record ConsoleUser(String id, String username, String displayName, String
     }
 
     public ConsoleUser withoutPassword() {
-        return new ConsoleUser(id, username, displayName, role, null, enabled);
+        return new ConsoleUser(id, username, displayName, role, null, enabled, mustChangePassword);
+    }
+
+    public boolean admin() {
+        return ROLE_ADMIN.equals(role);
     }
 
     @Override

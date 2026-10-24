@@ -64,9 +64,10 @@ public class JobController {
     public Result<PageResult<JobView>> list(
             @RequestParam(required = false) String projectId,
             @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "false") boolean mine,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
-        return Result.ok(jobService.list(projectId, keyword, page, size));
+        return Result.ok(jobService.list(projectId, keyword, mine, page, size));
     }
 
     @GetMapping("/{id}")

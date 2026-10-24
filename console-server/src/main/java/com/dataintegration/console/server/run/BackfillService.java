@@ -100,7 +100,7 @@ public class BackfillService {
     }
 
     public BatchView create(String jobId, LocalDate start, LocalDate end, Map<String, String> startupParams) {
-        JobDefinition job = jobService.require(jobId);
+        JobDefinition job = jobService.requireEditable(jobId);
         if (job.getCurrentVersionId() == null) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before backfilling it");
         }
@@ -146,6 +146,7 @@ public class BackfillService {
     /** Stops the batch; its active run, if any, is stopped too. */
     public BatchView cancel(String batchId) {
         BackfillBatch batch = require(batchId);
+        jobService.requireEditable(batch.getJobDefinitionId());
         int updated = batchMapper.update(
                 null,
                 new LambdaUpdateWrapper<BackfillBatch>()
@@ -170,6 +171,7 @@ public class BackfillService {
 
     public BatchView resume(String batchId) {
         BackfillBatch batch = require(batchId);
+        jobService.requireEditable(batch.getJobDefinitionId());
         int updated = batchMapper.update(
                 null,
                 new LambdaUpdateWrapper<BackfillBatch>()

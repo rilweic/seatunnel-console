@@ -96,7 +96,7 @@ public class RunService {
      * now when null. Returns the PENDING instance id.
      */
     public String runNow(String jobId, LocalDateTime scheduledTime, Map<String, String> startupParams) {
-        JobDefinition job = jobService.require(jobId);
+        JobDefinition job = jobService.requireEditable(jobId);
         if (job.getCurrentVersionId() == null) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before running it");
         }
@@ -121,7 +121,7 @@ public class RunService {
         if (!RunStatus.valueOf(original.getStatus()).isTerminal()) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "run is still " + original.getStatus() + ", stop it or wait for it to end");
         }
-        JobDefinition job = jobService.require(original.getJobDefinitionId());
+        JobDefinition job = jobService.requireEditable(original.getJobDefinitionId());
         String versionId = useLatestVersion ? job.getCurrentVersionId() : original.getJobVersionId();
         return start(new NewRun(
                 job,
@@ -207,7 +207,7 @@ public class RunService {
      */
     public void stop(String instanceId) {
         String reason = "stopped by " + username();
-        recorder.requireInstance(instanceId);
+        jobService.requireEditable(recorder.requireInstance(instanceId).getJobDefinitionId());
         if (recorder.cancelPending(instanceId, reason)) {
             recorder.event(instanceId, null, RunEventType.FINISHED, Level.WARN, RunStatus.CANCELED + ": " + reason);
             return;

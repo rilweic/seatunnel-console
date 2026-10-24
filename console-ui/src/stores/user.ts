@@ -1,11 +1,12 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { authApi, type UserView } from '@/api/console'
 
 export const useUserStore = defineStore('user', () => {
   const user = ref<UserView | null>(null)
   const checked = ref(false)
+  const isAdmin = computed(() => user.value?.role === 'ADMIN')
 
   /** Restores the session after a page reload; false when not logged in. */
   async function ensureLoaded(): Promise<boolean> {
@@ -34,5 +35,10 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  return { user, ensureLoaded, login, logout }
+  /** After a password change the server returns the refreshed account. */
+  function set(next: UserView) {
+    user.value = next
+  }
+
+  return { user, isAdmin, ensureLoaded, login, logout, set }
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { jobApi, projectApi, type JobView, type ProjectView } from '@/api/console'
@@ -16,7 +16,16 @@ const total = ref(0)
 const projects = ref<ProjectView[]>([])
 // The project filter lives in the URL (?projectId=), so links from the projects page, refresh and
 // back all keep it. The layout keys pages by full path, so changing it reloads this page.
-const query = reactive({ projectId: (route.query.projectId as string) || '', keyword: '', page: 1, size: 20 })
+// Opened from a project (possibly someone else's), show all of its jobs, not only mine.
+const query = reactive({
+  projectId: (route.query.projectId as string) || '',
+  keyword: '',
+  mine: !route.query.projectId,
+  page: 1,
+  size: 20,
+})
+/** New jobs can only go into projects the user may change. */
+const ownProjects = computed(() => projects.value.filter((p) => p.editable))
 
 function filterProject() {
   router.replace({ query: query.projectId ? { projectId: query.projectId } : {} })
@@ -48,11 +57,11 @@ const dialog = reactive({
 })
 
 function openCreate() {
-  if (projects.value.length === 0) {
-    ElMessage.warning('请先在「项目」中新建一个项目')
+  if (ownProjects.value.length === 0) {
+    ElMessage.warning('你还没有自己的项目，请先在「项目」中新建一个')
     return
   }
-  Object.assign(dialog, { visible: true, projectId: query.projectId || projects.value[0]!.id, name: '', editMode: 'FORM', description: '' })
+  Object.assign(dialog, { visible: true, projectId: ownProjects.value.find((p) => p.id === query.projectId)?.id ?? ownProjects.value[0]!.id, name: '', editMode: 'FORM', description: '' })
 }
 
 async function create() {
@@ -96,6 +105,10 @@ onMounted(() => {
     </PageHeader>
     <div class="toolbar">
       <div class="filters">
+        <el-radio-group v-model="query.mine" class="scope" @change="load">
+        <el-radio-button :value="true">我的</el-radio-button>
+        <el-radio-button :value="false">全部</el-radio-button>
+      </el-radio-group>
         <el-select v-model="query.projectId" placeholder="全部项目" clearable class="project" @change="filterProject">
           <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
         </el-select>
@@ -114,9 +127,12 @@ onMounted(() => {
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
+<el-table-column label="创建人" width="120">
+        <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
-          <el-button link type="danger" @click.stop="remove(row)">删除</el-button>
+          <el-button link type="danger" :disabled="!row.editable" @click.stop="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -133,8 +149,8 @@ onMounted(() => {
   <el-dialog v-model="dialog.visible" title="新建离线任务" width="520px">
     <el-form label-width="80px">
       <el-form-item label="项目" required>
-        <el-select v-model="dialog.projectId" class="full">
-          <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+        <el-select v-model="dialog.projectId" class="full" placeholder="只能在自己的项目里建任务">
+          <el-option v-for="p in ownProjects" :key="p.id" :label="p.name" :value="p.id" />
         </el-select>
       </el-form-item>
       <el-form-item label="名称" required>
@@ -199,5 +215,8 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary);
+}
+.scope {
+  flex: none;
 }
 </style>

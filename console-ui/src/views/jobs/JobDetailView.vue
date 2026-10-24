@@ -54,6 +54,8 @@ sink {
 
 const job = ref<JobView | null>(null)
 const isWizard = computed(() => job.value?.editMode === 'FORM')
+/** Someone else's job: everything is visible, nothing can be changed or run. */
+const readonly = computed(() => job.value !== null && !job.value.editable)
 const currentForm = ref<WizardForm | null>(null)
 /** Remounts the wizard after a save, so it starts from the saved form. */
 const wizardKey = ref(0)
@@ -466,7 +468,8 @@ function onTab(name: string | number) {
 onMounted(async () => {
   await load()
   onTab(tab.value)
-  datasources.value = (await datasourceApi.list({ size: 200 })).items
+  // A job may only use its creator's datasources, whoever is editing it.
+  datasources.value = (await datasourceApi.list({ size: 200, ownerId: job.value?.ownerId })).items
 })
 </script>
 
@@ -480,15 +483,32 @@ onMounted(async () => {
         </div>
       </div>
       <div class="actions">
-        <el-button v-if="isWizard" link type="primary" @click="switchToScript">转为脚本模式</el-button>
-        <el-button :disabled="!job.currentVersionNo" @click="openBackfill">补数</el-button>
-        <el-button type="primary" :loading="running" :disabled="!job.currentVersionNo" @click="run">立即运行</el-button>
+        <el-button v-if="isWizard && !readonly" link type="primary" @click="switchToScript">转为脚本模式</el-button>
+        <el-button :disabled="!job.currentVersionNo || readonly" @click="openBackfill">补数</el-button>
+        <el-button type="primary" :loading="running" :disabled="!job.currentVersionNo || readonly" @click="run">立即运行</el-button>
       </div>
     </div>
 
+    <el-alert
+      v-if="readonly"
+      type="info"
+      :closable="false"
+      show-icon
+      class="readonly"
+      :title="`这是 ${job.ownerName ?? '其他用户'} 创建的任务，你可以查看配置和运行记录，但不能修改或运行`"
+    />
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane :label="isWizard ? '配置（向导）' : '配置（脚本模式）'" name="config">
-        <JobWizard v-if="isWizard" :key="wizardKey" v-model:params="jobParams" :job-id="jobId" :initial-form="currentForm" @saved="onWizardSaved" />
+        <JobWizard
+          v-if="isWizard"
+          :key="wizardKey"
+          v-model:params="jobParams"
+          :job-id="jobId"
+          :owner-id="job.ownerId"
+          :readonly="readonly"
+          :initial-form="currentForm"
+          @saved="onWizardSaved"
+        />
         <template v-else>
         <div class="editor-bar">
           <el-select v-model="pickedDatasource" placeholder="选择数据源" filterable class="ds-select">
@@ -565,7 +585,7 @@ onMounted(async () => {
 
         <div class="save-bar">
           <el-input v-model="remark" placeholder="版本备注（可选）" maxlength="512" class="remark" />
-          <el-button type="primary" :loading="saving" :disabled="!dirty" @click="save">保存为新版本</el-button>
+          <el-button type="primary" :loading="saving" :disabled="!dirty || readonly" @click="save">保存为新版本</el-button>
           <el-button @click="openPreview">预览渲染结果</el-button>
           <span v-if="dirty" class="unsaved">有未保存的修改</span>
         </div>
@@ -616,7 +636,7 @@ onMounted(async () => {
               <span class="tip">XXL-JOB 停机期间错过的触发</span>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="savingSchedule" :disabled="!!cronError" @click="saveSchedule">保存调度</el-button>
+              <el-button type="primary" :loading="savingSchedule" :disabled="!!cronError || readonly" @click="saveSchedule">保存调度</el-button>
               <template v-if="schedule">
                 <el-tag :type="syncTag[schedule.syncStatus]" class="sync-tag">{{ syncText[schedule.syncStatus] }}</el-tag>
                 <span class="tip">XXL-JOB 任务 ID：{{ schedule.xxlJobId ?? '-' }}<template v-if="schedule.syncedAt"> · 同步于 {{ formatTime(schedule.syncedAt) }}</template></span>
@@ -687,8 +707,8 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
-              <el-button v-if="row.status === 'PAUSED'" link type="primary" @click.stop="resumeBackfill(row)">继续</el-button>
-              <el-popconfirm v-if="row.status === 'RUNNING' || row.status === 'PAUSED'" title="取消补数？正在运行的那次也会被停止。" @confirm="cancelBackfill(row)">
+              <el-button v-if="row.status === 'PAUSED' && !readonly" link type="primary" @click.stop="resumeBackfill(row)">继续</el-button>
+              <el-popconfirm v-if="(row.status === 'RUNNING' || row.status === 'PAUSED') && !readonly" title="取消补数？正在运行的那次也会被停止。" @confirm="cancelBackfill(row)">
                 <template #reference>
                   <el-button link type="danger" @click.stop>取消</el-button>
                 </template>
@@ -704,6 +724,9 @@ onMounted(async () => {
             <template #default="{ row }">v{{ row.versionNo }}</template>
           </el-table-column>
           <el-table-column prop="remark" label="备注" min-width="200" />
+          <el-table-column label="创建人" width="120">
+            <template #default="{ row }">{{ row.createdByName ?? '-' }}</template>
+          </el-table-column>
           <el-table-column label="创建时间" width="170">
             <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
           </el-table-column>
@@ -711,7 +734,7 @@ onMounted(async () => {
             <template #default="{ row }">
               <el-button link type="primary" @click="previewVersion(row)">查看</el-button>
               <el-button link type="primary" :disabled="versions.length < 2" @click="compareVersion(row)">对比</el-button>
-              <el-button link type="primary" :disabled="row.versionNo === job.currentVersionNo" @click="rollbackVersion(row)">回滚</el-button>
+              <el-button link type="primary" :disabled="row.versionNo === job.currentVersionNo || readonly" @click="rollbackVersion(row)">回滚</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -880,6 +903,10 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.readonly {
+  margin-bottom: 8px;
 }
 
 .ok {

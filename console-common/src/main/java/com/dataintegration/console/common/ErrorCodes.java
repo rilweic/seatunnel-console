@@ -7,6 +7,8 @@ public final class ErrorCodes {
     public static final int INVALID_ARGUMENT = 1001;
     public static final int UNAUTHENTICATED = 1002;
     public static final int FORBIDDEN = 1003;
+    /** Logged in with an initial or reset password; only the password change is allowed. */
+    public static final int PASSWORD_CHANGE_REQUIRED = 1005;
     public static final int NOT_FOUND = 1004;
     public static final int CONFLICT = 1009;
 

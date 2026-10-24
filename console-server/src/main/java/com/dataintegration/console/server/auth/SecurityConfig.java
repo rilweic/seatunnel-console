@@ -12,6 +12,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
 
@@ -47,6 +48,7 @@ public class SecurityConfig {
                                         .accessDeniedHandler(
                                                 (request, response, e) ->
                                                         writeError(response, 403, ErrorCodes.FORBIDDEN, "access denied")))
+                .addFilterAfter(new MustChangePasswordFilter(), AuthorizationFilter.class)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .logout(
@@ -67,7 +69,7 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    private static void writeError(HttpServletResponse response, int status, int code, String message)
+    static void writeError(HttpServletResponse response, int status, int code, String message)
             throws IOException {
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);

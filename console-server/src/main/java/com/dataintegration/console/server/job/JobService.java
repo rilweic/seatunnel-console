@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.common.PageResult;
+import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.HoconTemplate.DatasourceRef;
@@ -20,6 +21,7 @@ import com.dataintegration.console.server.persistence.mapper.JobVersionMapper;
 import com.dataintegration.console.server.persistence.mapper.ProjectMapper;
 import com.dataintegration.console.server.project.ProjectService;
 import com.dataintegration.console.server.scheduler.XxlJobAdminClient;
+import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.slf4j.Logger;
@@ -33,9 +35,12 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -63,9 +68,12 @@ public class JobService {
             String editMode,
             Integer currentVersionNo,
             String description,
+            String ownerId,
+            String ownerName,
+            boolean editable,
             String updatedAt) {}
 
-    public record VersionSummary(String id, int versionNo, String remark, String createdBy, String createdAt) {}
+    public record VersionSummary(String id, int versionNo, String remark, String createdBy, String createdByName, String createdAt) {}
 
     public record VersionDetail(
             String id,
@@ -99,6 +107,7 @@ public class JobService {
     private final JobConfigRenderer renderer;
     private final RowCountValidator validator;
     private final WizardService wizardService;
+    private final UserDirectory users;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -112,7 +121,8 @@ public class JobService {
             ObjectMapper objectMapper,
             JobConfigRenderer renderer,
             RowCountValidator validator,
-            WizardService wizardService) {
+            WizardService wizardService,
+            UserDirectory users) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -125,21 +135,25 @@ public class JobService {
         this.renderer = renderer;
         this.validator = validator;
         this.wizardService = wizardService;
+        this.users = users;
     }
 
-    public PageResult<JobView> list(String projectId, String keyword, Integer page, Integer size) {
+    /** @param mine only the current user's jobs */
+    public PageResult<JobView> list(String projectId, String keyword, boolean mine, Integer page, Integer size) {
         Page<JobDefinition> result =
                 jobMapper.selectPage(
                         Pages.of(page, size),
                         new LambdaQueryWrapper<JobDefinition>()
                                 .eq(projectId != null && !projectId.isBlank(), JobDefinition::getProjectId, projectId)
                                 .like(keyword != null && !keyword.isBlank(), JobDefinition::getName, keyword)
+                                .eq(mine, JobDefinition::getCreatedBy, CurrentUser.idOrNull())
                                 .orderByDesc(JobDefinition::getUpdatedAt));
         Map<String, Integer> versionNos = versionNos(result.getRecords());
         Map<String, String> projectNames =
                 projectNames(result.getRecords().stream().map(JobDefinition::getProjectId).toList());
+        Map<String, String> owners = users.names(result.getRecords().stream().map(JobDefinition::getCreatedBy).toList());
         return Pages.result(result)
-                .map(job -> view(job, versionNos.get(job.getCurrentVersionId()), projectNames.get(job.getProjectId())));
+                .map(job -> view(job, versionNos.get(job.getCurrentVersionId()), projectNames.get(job.getProjectId()), owners));
     }
 
     public JobDetail get(String id) {
@@ -149,7 +163,7 @@ public class JobService {
     }
 
     public JobView create(String projectId, String name, String jobType, String editMode, String description) {
-        projectService.require(projectId);
+        projectService.requireEditable(projectId);
         if (!TYPE_BATCH.equals(jobType)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "only BATCH jobs are supported in this version");
         }
@@ -168,7 +182,7 @@ public class JobService {
     }
 
     public JobView update(String id, String name, String description) {
-        JobDefinition job = require(id);
+        JobDefinition job = requireEditable(id);
         job.setName(name.trim());
         job.setDescription(description);
         jobMapper.updateById(job);
@@ -177,7 +191,7 @@ public class JobService {
 
     /** Soft delete. The schedule goes with it; the mirrored XXL-JOB job is removed on a best-effort basis. */
     public void delete(String id) {
-        JobDefinition job = require(id);
+        JobDefinition job = requireEditable(id);
         jobMapper.deleteById(id);
         scheduleMapper.deleteById(id);
         XxlJobAdminClient client = xxlJobAdminClient.getIfAvailable();
@@ -198,7 +212,7 @@ public class JobService {
     @Transactional
     public VersionDetail saveVersion(
             String jobId, String hocon, Map<String, String> params, ValidationSpec validation, WizardForm form, String remark) {
-        JobDefinition job = require(jobId);
+        JobDefinition job = requireEditable(jobId);
         if (params != null) {
             params.keySet().forEach(Variables::validateName);
         }
@@ -207,6 +221,7 @@ public class JobService {
             if (form == null) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is edited with the wizard; send the form");
             }
+            requireOwnersDatasources(job, wizardDatasources(form));
             WizardService.PrecheckResult check = wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), null));
             if (!check.passed()) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "预检查未通过：" + String.join("；", check.errors()));
@@ -254,6 +269,8 @@ public class JobService {
                 }
             }
         }
+
+        requireOwnersDatasources(job, datasourceIds);
 
         JobVersion latest =
                 versionMapper.selectOne(
@@ -304,10 +321,11 @@ public class JobService {
 
     /** Checks a wizard form against the live datasources and returns what saving it would generate. */
     public WizardService.PrecheckResult wizardPrecheck(String jobId, WizardForm form, Map<String, String> params) {
-        JobDefinition job = require(jobId);
+        JobDefinition job = requireEditable(jobId);
         if (!MODE_FORM.equals(job.getEditMode())) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is not edited with the wizard");
         }
+        requireOwnersDatasources(job, wizardDatasources(form));
         return wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID));
     }
 
@@ -316,7 +334,7 @@ public class JobService {
      * stays as it is; the next save is a plain script version.
      */
     public JobView switchToScript(String jobId) {
-        JobDefinition job = require(jobId);
+        JobDefinition job = requireEditable(jobId);
         if (!MODE_FORM.equals(job.getEditMode())) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "job is already edited as a script");
         }
@@ -332,7 +350,7 @@ public class JobService {
             Map<String, String> params,
             ValidationSpec validation,
             LocalDateTime scheduledTime) {
-        JobDefinition job = require(jobId);
+        JobDefinition job = requireEditable(jobId);
         if (validation == null || !validation.enabled()) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "validation is not enabled");
         }
@@ -348,7 +366,7 @@ public class JobService {
 
     public PreviewResult preview(
             String jobId, String hocon, Map<String, String> params, Map<String, String> startupParams, LocalDateTime scheduledTime) {
-        JobDefinition job = require(jobId);
+        JobDefinition job = requireEditable(jobId);
         JobConfigRenderer.Rendered rendered = renderer.render(
                 job, hocon, params, startupParams, scheduledTime == null ? LocalDateTime.now() : scheduledTime, PREVIEW_INSTANCE_ID, false);
         return new PreviewResult(rendered.variables(), rendered.masked(), List.copyOf(rendered.unresolved()));
@@ -356,20 +374,15 @@ public class JobService {
 
     public List<VersionSummary> versions(String jobId) {
         require(jobId);
-        return versionMapper
-                .selectList(
-                        new LambdaQueryWrapper<JobVersion>()
-                                .select(
-                                        JobVersion::getId,
-                                        JobVersion::getVersionNo,
-                                        JobVersion::getRemark,
-                                        JobVersion::getCreatedBy,
-                                        JobVersion::getCreatedAt)
-                                .eq(JobVersion::getJobDefinitionId, jobId)
-                                .orderByDesc(JobVersion::getVersionNo))
-                .stream()
+        List<JobVersion> versions = versionMapper.selectList(
+                new LambdaQueryWrapper<JobVersion>()
+                        .select(JobVersion::getId, JobVersion::getVersionNo, JobVersion::getRemark, JobVersion::getCreatedBy, JobVersion::getCreatedAt)
+                        .eq(JobVersion::getJobDefinitionId, jobId)
+                        .orderByDesc(JobVersion::getVersionNo));
+        Map<String, String> names = users.names(versions.stream().map(JobVersion::getCreatedBy).toList());
+        return versions.stream()
                 .map(v -> new VersionSummary(
-                        v.getId(), v.getVersionNo(), v.getRemark(), v.getCreatedBy(), String.valueOf(v.getCreatedAt())))
+                        v.getId(), v.getVersionNo(), v.getRemark(), v.getCreatedBy(), names.get(v.getCreatedBy()), String.valueOf(v.getCreatedAt())))
                 .toList();
     }
 
@@ -379,6 +392,41 @@ public class JobService {
             throw new ConsoleException(ErrorCodes.NOT_FOUND, "version not found: " + versionId);
         }
         return versionDetail(version);
+    }
+
+    /** The job, if the current user may change or run it (its creator or an administrator). */
+    public JobDefinition requireEditable(String id) {
+        JobDefinition job = require(id);
+        Access.requireOwner(job.getCreatedBy(), "任务「" + job.getName() + "」");
+        return job;
+    }
+
+    /**
+     * A job may only use datasources of its own creator (docs/design.md §2), also when an
+     * administrator edits it; an administrator moves datasources by transferring ownership.
+     */
+    private void requireOwnersDatasources(JobDefinition job, Collection<String> datasourceIds) {
+        for (String id : new LinkedHashSet<>(datasourceIds)) {
+            if (id == null) {
+                continue;
+            }
+            var ds = datasourceService.require(id);
+            if (!Objects.equals(ds.getCreatedBy(), job.getCreatedBy())) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                        "数据源「" + ds.getName() + "」不属于任务的创建人，任务只能使用创建人自己的数据源");
+            }
+        }
+    }
+
+    private static List<String> wizardDatasources(WizardForm form) {
+        List<String> ids = new ArrayList<>();
+        if (form.source() != null) {
+            ids.add(form.source().datasourceId());
+        }
+        if (form.target() != null) {
+            ids.add(form.target().datasourceId());
+        }
+        return ids;
     }
 
     public JobDefinition require(String id) {
@@ -440,10 +488,11 @@ public class JobService {
     }
 
     private JobView view(JobDefinition job, Integer currentVersionNo) {
-        return view(job, currentVersionNo, projectNames(List.of(job.getProjectId())).get(job.getProjectId()));
+        return view(job, currentVersionNo, projectNames(List.of(job.getProjectId())).get(job.getProjectId()),
+                users.names(Collections.singletonList(job.getCreatedBy())));
     }
 
-    private JobView view(JobDefinition job, Integer currentVersionNo, String projectName) {
+    private JobView view(JobDefinition job, Integer currentVersionNo, String projectName, Map<String, String> owners) {
         return new JobView(
                 job.getId(),
                 job.getProjectId(),
@@ -453,6 +502,9 @@ public class JobService {
                 job.getEditMode(),
                 currentVersionNo,
                 job.getDescription(),
+                job.getCreatedBy(),
+                owners.get(job.getCreatedBy()),
+                Access.canEdit(job.getCreatedBy()),
                 job.getUpdatedAt() == null ? null : job.getUpdatedAt().toString());
     }
 

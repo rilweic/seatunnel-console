@@ -5,15 +5,47 @@ export interface UserView {
   username: string
   displayName: string | null
   role: 'ADMIN' | 'USER'
+  mustChangePassword: boolean
 }
 
 export const authApi = {
   login: (username: string, password: string) => post<UserView>('/auth/login', { username, password }),
   me: () => get<UserView>('/auth/me', undefined, true),
   logout: () => post<void>('/auth/logout'),
+  changePassword: (oldPassword: string, newPassword: string) => put<UserView>('/auth/password', { oldPassword, newPassword }),
 }
 
-export interface ProjectView {
+export interface AccountView {
+  id: string
+  username: string
+  displayName: string | null
+  role: 'ADMIN' | 'USER'
+  enabled: boolean
+  mustChangePassword: boolean
+  lastLoginAt: string | null
+  createdAt: string
+  projects: number
+  datasources: number
+  jobs: number
+}
+
+export const userApi = {
+  list: () => get<AccountView[]>('/users'),
+  create: (body: { username: string; displayName?: string; role: string; password: string }) => post<AccountView>('/users', body),
+  update: (id: string, body: { displayName?: string | null; role: string; enabled: boolean }) => put<AccountView>(`/users/${id}`, body),
+  resetPassword: (id: string, password: string) => post<AccountView>(`/users/${id}/reset-password`, { password }),
+  transfer: (id: string, toUserId: string) =>
+    post<{ projects: number; datasources: number; jobs: number }>(`/users/${id}/transfer`, { toUserId }),
+}
+
+/** Owner fields every owned resource carries; editable is computed for the current user. */
+export interface Owned {
+  ownerId: string | null
+  ownerName: string | null
+  editable: boolean
+}
+
+export interface ProjectView extends Owned {
   id: string
   name: string
   description: string | null
@@ -28,7 +60,7 @@ export interface ParamItem {
 }
 
 export const projectApi = {
-  list: (params: { keyword?: string; page?: number; size?: number }) => get<PageResult<ProjectView>>('/projects', params),
+  list: (params: { keyword?: string; mine?: boolean; page?: number; size?: number }) => get<PageResult<ProjectView>>('/projects', params),
   create: (body: { name: string; description?: string }) => post<ProjectView>('/projects', body),
   update: (id: string, body: { name: string; description?: string }) => put<ProjectView>(`/projects/${id}`, body),
   remove: (id: string) => del<void>(`/projects/${id}`),
@@ -38,7 +70,7 @@ export const projectApi = {
 
 export type DatasourceType = 'MYSQL' | 'POSTGRESQL' | 'ELASTICSEARCH'
 
-export interface DatasourceView {
+export interface DatasourceView extends Owned {
   id: string
   name: string
   type: DatasourceType
@@ -73,7 +105,7 @@ export const datasourceApi = {
   tables: (id: string, namespace?: string) => get<TableMeta[]>(`/datasources/${id}/tables`, { namespace }),
   columns: (id: string, namespace: string | undefined, table: string) =>
     get<ColumnMeta[]>(`/datasources/${id}/columns`, { namespace, table }),
-  list: (params: { keyword?: string; type?: string; page?: number; size?: number }) =>
+  list: (params: { keyword?: string; type?: string; ownerId?: string | null; page?: number; size?: number }) =>
     get<PageResult<DatasourceView>>('/datasources', params),
   create: (body: { name: string; type: DatasourceType; description?: string; props: Record<string, string> }) =>
     post<DatasourceView>('/datasources', body),
@@ -84,7 +116,7 @@ export const datasourceApi = {
     post<ConnectionTestResult>('/datasources/test', body),
 }
 
-export interface JobView {
+export interface JobView extends Owned {
   id: string
   projectId: string
   projectName: string | null
@@ -144,6 +176,7 @@ export interface VersionSummary {
   versionNo: number
   remark: string | null
   createdBy: string | null
+  createdByName: string | null
   createdAt: string
 }
 
@@ -188,7 +221,7 @@ export interface VersionDetail {
 }
 
 export const jobApi = {
-  list: (params: { projectId?: string; keyword?: string; page?: number; size?: number }) =>
+  list: (params: { projectId?: string; keyword?: string; mine?: boolean; page?: number; size?: number }) =>
     get<PageResult<JobView>>('/jobs', params),
   get: (id: string) => get<{ job: JobView; currentVersion: VersionDetail | null }>(`/jobs/${id}`),
   create: (body: { projectId: string; name: string; jobType: 'BATCH'; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
@@ -275,6 +308,8 @@ export interface InstanceView {
   sourceCount: number | null
   targetCount: number | null
   validationMessage: string | null
+  createdByName: string | null
+  editable: boolean
   createdAt: string
 }
 
@@ -315,7 +350,7 @@ export interface LogView {
 }
 
 export const instanceApi = {
-  list: (params: { projectId?: string; jobId?: string; status?: string; backfillId?: string; page?: number; size?: number }) =>
+  list: (params: { projectId?: string; jobId?: string; status?: string; backfillId?: string; mine?: boolean; page?: number; size?: number }) =>
     get<PageResult<InstanceView>>('/instances', params),
   rerun: (id: string, useLatestVersion: boolean) => post<{ instanceId: string }>(`/instances/${id}/rerun`, { useLatestVersion }),
   detail: (id: string) => get<InstanceDetail>(`/instances/${id}`),

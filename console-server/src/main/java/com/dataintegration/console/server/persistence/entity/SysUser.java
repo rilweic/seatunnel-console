@@ -23,6 +23,8 @@ public class SysUser {
     private String displayName;
     private String role;
     private Boolean enabled;
+    private Boolean mustChangePassword;
+    private LocalDateTime passwordChangedAt;
     private LocalDateTime lastLoginAt;
 
     @TableField(fill = FieldFill.INSERT)

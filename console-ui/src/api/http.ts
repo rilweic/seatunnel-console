@@ -41,6 +41,11 @@ http.interceptors.response.use(
       }
       return Promise.reject(error)
     }
+    if (error.response?.data?.code === 1005) {
+      const { default: router } = await import('@/router')
+      router.push({ path: '/change-password', query: { redirect: router.currentRoute.value.fullPath } })
+      return Promise.reject(error)
+    }
     const message = error.response?.data?.message ?? error.message
     if (error.config?.silent !== true) {
       ElMessage.error(message)

@@ -20,7 +20,7 @@ import {
 } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 
-const props = defineProps<{ jobId: string; initialForm: WizardForm | null }>()
+const props = defineProps<{ jobId: string; ownerId: string | null; readonly: boolean; initialForm: WizardForm | null }>()
 const params = defineModel<ParamRow[]>('params', { required: true })
 const emit = defineEmits<{ saved: [versionNo: number] }>()
 
@@ -347,7 +347,8 @@ async function go(target: number) {
 }
 
 onMounted(async () => {
-  datasources.value = (await datasourceApi.list({ size: 200 })).items
+  // A job may only use its creator's datasources.
+  datasources.value = (await datasourceApi.list({ size: 200, ownerId: props.ownerId })).items
   if (form.source.datasourceId) {
     await loadSourceNamespaces()
     await loadSourceTables()
@@ -576,7 +577,7 @@ onMounted(async () => {
       </template>
       <div class="save-bar">
         <el-input v-model="remark" placeholder="版本备注（可选）" maxlength="512" class="w320" />
-        <el-button type="primary" :loading="saving" :disabled="hasErrors" @click="save">保存为新版本</el-button>
+        <el-button type="primary" :loading="saving" :disabled="hasErrors || readonly" @click="save">保存为新版本</el-button>
         <span v-if="precheck && hasErrors" class="tip warn">有错误，修正后才能保存</span>
       </div>
     </section>

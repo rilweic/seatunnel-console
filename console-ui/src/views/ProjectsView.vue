@@ -16,7 +16,7 @@ function openJobs(row: ProjectView) {
 
 const rows = ref<ProjectView[]>([])
 const total = ref(0)
-const query = reactive({ keyword: '', page: 1, size: 20 })
+const query = reactive({ keyword: '', mine: true, page: 1, size: 20 })
 const loading = ref(false)
 
 async function load() {
@@ -68,10 +68,10 @@ async function remove(row: ProjectView) {
   load()
 }
 
-const params = reactive({ visible: false, projectId: '', projectName: '', items: [] as ParamItem[], saving: false })
+const params = reactive({ visible: false, projectId: '', projectName: '', editable: false, items: [] as ParamItem[], saving: false })
 
 async function openParams(row: ProjectView) {
-  Object.assign(params, { visible: true, projectId: row.id, projectName: row.name, items: [] })
+  Object.assign(params, { visible: true, projectId: row.id, projectName: row.name, editable: row.editable, items: [] })
   params.items = await projectApi.params(row.id)
 }
 
@@ -95,6 +95,10 @@ onMounted(load)
       <el-button type="primary" :icon="Plus" @click="openCreate">新建项目</el-button>
     </PageHeader>
     <div class="toolbar">
+      <el-radio-group v-model="query.mine" size="default" class="scope" @change="load">
+        <el-radio-button :value="true">我的</el-radio-button>
+        <el-radio-button :value="false">全部</el-radio-button>
+      </el-radio-group>
       <el-input v-model="query.keyword" placeholder="搜索项目名称" clearable class="search" @change="load" />
     </div>
     <el-table v-loading="loading" :data="rows">
@@ -112,12 +116,15 @@ onMounted(load)
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
       </el-table-column>
+<el-table-column label="创建人" width="120">
+        <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openJobs(row)">任务</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button link type="primary" :disabled="!row.editable" @click="openEdit(row)">编辑</el-button>
           <el-button link type="primary" @click="openParams(row)">项目参数</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="danger" :disabled="!row.editable" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -164,7 +171,7 @@ onMounted(load)
     <el-button class="add-param" @click="params.items.push({ key: '', value: '' })">添加参数</el-button>
     <template #footer>
       <el-button @click="params.visible = false">取消</el-button>
-      <el-button type="primary" :loading="params.saving" @click="saveParams">保存</el-button>
+      <el-button type="primary" :loading="params.saving" :disabled="!params.editable" @click="saveParams">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -194,5 +201,8 @@ onMounted(load)
 
 .add-param {
   margin-top: 12px;
+}
+.scope {
+  flex: none;
 }
 </style>

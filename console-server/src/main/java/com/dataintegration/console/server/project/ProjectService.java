@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.common.PageResult;
+import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
@@ -13,11 +14,13 @@ import com.dataintegration.console.server.persistence.entity.ProjectParam;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.ProjectMapper;
 import com.dataintegration.console.server.persistence.mapper.ProjectParamMapper;
+import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -27,34 +30,42 @@ import java.util.stream.Collectors;
 @Service
 public class ProjectService {
 
-    public record ProjectView(String id, String name, String description, long jobCount, String createdAt) {}
+    /** @param editable whether the current user may change it (creator or administrator) */
+    public record ProjectView(
+            String id, String name, String description, long jobCount, String ownerId, String ownerName, boolean editable, String createdAt) {}
 
     public record ParamItem(String key, String value, String description) {}
 
     private final ProjectMapper projectMapper;
     private final ProjectParamMapper paramMapper;
     private final JobDefinitionMapper jobMapper;
+    private final UserDirectory users;
 
-    public ProjectService(ProjectMapper projectMapper, ProjectParamMapper paramMapper, JobDefinitionMapper jobMapper) {
+    public ProjectService(
+            ProjectMapper projectMapper, ProjectParamMapper paramMapper, JobDefinitionMapper jobMapper, UserDirectory users) {
         this.projectMapper = projectMapper;
         this.paramMapper = paramMapper;
         this.jobMapper = jobMapper;
+        this.users = users;
     }
 
-    public PageResult<ProjectView> list(String keyword, Integer page, Integer size) {
+    /** @param mine only the current user's projects */
+    public PageResult<ProjectView> list(String keyword, boolean mine, Integer page, Integer size) {
         Page<Project> result =
                 projectMapper.selectPage(
                         Pages.of(page, size),
                         new LambdaQueryWrapper<Project>()
                                 .like(keyword != null && !keyword.isBlank(), Project::getName, keyword)
+                                .eq(mine, Project::getCreatedBy, CurrentUser.idOrNull())
                                 .orderByDesc(Project::getCreatedAt));
         Map<String, Long> jobCounts = jobCounts(result.getRecords().stream().map(Project::getId).toList());
-        return Pages.result(result).map(p -> view(p, jobCounts.getOrDefault(p.getId(), 0L)));
+        Map<String, String> owners = users.names(result.getRecords().stream().map(Project::getCreatedBy).toList());
+        return Pages.result(result).map(p -> view(p, jobCounts.getOrDefault(p.getId(), 0L), owners));
     }
 
     public ProjectView get(String id) {
         Project project = require(id);
-        return view(project, jobCounts(List.of(id)).getOrDefault(id, 0L));
+        return view(project, jobCounts(List.of(id)).getOrDefault(id, 0L), users.names(Collections.singletonList(project.getCreatedBy())));
     }
 
     public ProjectView create(String name, String description) {
@@ -63,11 +74,11 @@ public class ProjectService {
         project.setDescription(description);
         project.setCreatedBy(CurrentUser.idOrNull());
         projectMapper.insert(project);
-        return view(project, 0);
+        return get(project.getId());
     }
 
     public ProjectView update(String id, String name, String description) {
-        Project project = require(id);
+        Project project = requireEditable(id);
         project.setName(name.trim());
         project.setDescription(description);
         projectMapper.updateById(project);
@@ -77,7 +88,7 @@ public class ProjectService {
     /** Soft delete; refused while the project still has live jobs. */
     @Transactional
     public void delete(String id) {
-        require(id);
+        requireEditable(id);
         if (jobCounts(List.of(id)).getOrDefault(id, 0L) > 0) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "project still has jobs, delete them first");
         }
@@ -99,7 +110,7 @@ public class ProjectService {
     /** Replaces the whole parameter set, which is how the UI edits it. */
     @Transactional
     public List<ParamItem> replaceParams(String projectId, List<ParamItem> items) {
-        require(projectId);
+        requireEditable(projectId);
         Set<String> seen = new HashSet<>();
         for (ParamItem item : items) {
             if (item.key() == null || item.key().isBlank()) {
@@ -123,6 +134,13 @@ public class ProjectService {
         return params(projectId);
     }
 
+    /** The project, if the current user may change it or add jobs to it. */
+    public Project requireEditable(String id) {
+        Project project = require(id);
+        Access.requireOwner(project.getCreatedBy(), "项目「" + project.getName() + "」");
+        return project;
+    }
+
     public Project require(String id) {
         Project project = projectMapper.selectById(id);
         if (project == null) {
@@ -144,12 +162,15 @@ public class ProjectService {
                 .collect(Collectors.groupingBy(JobDefinition::getProjectId, Collectors.counting()));
     }
 
-    private static ProjectView view(Project p, long jobCount) {
+    private static ProjectView view(Project p, long jobCount, Map<String, String> owners) {
         return new ProjectView(
                 p.getId(),
                 p.getName(),
                 p.getDescription(),
                 jobCount,
+                p.getCreatedBy(),
+                owners.get(p.getCreatedBy()),
+                Access.canEdit(p.getCreatedBy()),
                 p.getCreatedAt() == null ? null : p.getCreatedAt().toString());
     }
 }

@@ -53,9 +53,10 @@ public class DatasourceController {
     public Result<PageResult<DatasourceView>> list(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String type,
+            @RequestParam(required = false) String ownerId,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
-        return Result.ok(datasourceService.list(keyword, type, page, size));
+        return Result.ok(datasourceService.list(keyword, type, ownerId, page, size));
     }
 
     @GetMapping("/{id}")

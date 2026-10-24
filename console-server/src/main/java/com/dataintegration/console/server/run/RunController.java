@@ -96,9 +96,10 @@ public class RunController {
             @RequestParam(required = false) String jobId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String backfillId,
+            @RequestParam(defaultValue = "false") boolean mine,
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size) {
-        return Result.ok(instanceService.list(projectId, jobId, status, backfillId, page, size));
+        return Result.ok(instanceService.list(projectId, jobId, status, backfillId, mine, page, size));
     }
 
     @GetMapping("/api/instances/{id}")

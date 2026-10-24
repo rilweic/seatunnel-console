@@ -90,7 +90,7 @@ public class ScheduleService {
     }
 
     public ScheduleView save(String jobId, ScheduleCommand command) {
-        JobDefinition job = jobService.require(jobId);
+        JobDefinition job = jobService.requireEditable(jobId);
         XxlJobAdminClient client = requireClient();
         CronSchedule.parse(command.cron());
         if (command.enabled() && job.getCurrentVersionId() == null) {

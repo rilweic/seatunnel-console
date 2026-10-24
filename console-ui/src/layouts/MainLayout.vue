@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, Folder, Monitor, Tickets } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, Folder, Monitor, Tickets, User } from '@element-plus/icons-vue'
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -31,13 +31,14 @@ function toggle() {
   }
 }
 
-const menus = [
+const menus = computed(() => [
   { path: '/projects', title: '项目', icon: Folder },
   { path: '/datasources', title: '数据源', icon: Coin },
   { path: '/jobs', title: '任务', icon: Tickets },
   { path: '/instances', title: '运行实例', icon: Connection },
   { path: '/cluster', title: '集群健康', icon: Monitor },
-]
+  ...(userStore.isAdmin ? [{ path: '/users', title: '用户管理', icon: User }] : []),
+])
 
 const roleText = computed(() => (userStore.user?.role === 'ADMIN' ? '管理员' : '普通用户'))
 
@@ -72,7 +73,8 @@ async function logout() {
         </span>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item @click="logout">退出登录</el-dropdown-item>
+            <el-dropdown-item @click="router.push('/change-password')">修改密码</el-dropdown-item>
+            <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>

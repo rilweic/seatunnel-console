@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { datasourceApi, type DatasourceType, type DatasourceView } from '@/api/console'
+import { useUserStore } from '@/stores/user'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 
@@ -48,13 +49,14 @@ const typeLabels: Record<DatasourceType, string> = {
 
 const rows = ref<DatasourceView[]>([])
 const total = ref(0)
-const query = reactive({ keyword: '', type: '', page: 1, size: 20 })
+const store = useUserStore()
+const query = reactive({ keyword: '', type: '', mine: true, page: 1, size: 20 })
 const loading = ref(false)
 
 async function load() {
   loading.value = true
   try {
-    const result = await datasourceApi.list(query)
+    const result = await datasourceApi.list({ ...query, ownerId: query.mine ? store.user?.id : undefined })
     rows.value = result.items
     total.value = result.total
   } finally {
@@ -166,6 +168,10 @@ onMounted(load)
     </PageHeader>
     <div class="toolbar">
       <div class="filters">
+        <el-radio-group v-model="query.mine" class="scope" @change="load">
+        <el-radio-button :value="true">我的</el-radio-button>
+        <el-radio-button :value="false">全部</el-radio-button>
+      </el-radio-group>
         <el-input v-model="query.keyword" placeholder="搜索名称" clearable class="search" @change="load" />
         <el-select v-model="query.type" placeholder="全部类型" clearable class="type" @change="load">
           <el-option v-for="(label, value) in typeLabels" :key="value" :label="label" :value="value" />
@@ -183,11 +189,14 @@ onMounted(load)
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
+<el-table-column label="创建人" width="120">
+        <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button link type="primary" :disabled="!row.editable" @click="openEdit(row)">编辑</el-button>
           <el-button link type="primary" @click="copyId(row)">复制 ID</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="danger" :disabled="!row.editable" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -257,5 +266,8 @@ onMounted(load)
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.scope {
+  flex: none;
 }
 </style>
