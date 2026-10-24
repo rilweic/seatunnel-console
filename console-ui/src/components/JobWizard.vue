@@ -156,6 +156,10 @@ watch(selected, (names) => {
 // ---- step 2: target ----
 const targetNamespaces = ref<string[]>([])
 
+async function loadTargetNamespaces() {
+  targetNamespaces.value = form.target.datasourceId && !targetIsEs.value ? await datasourceApi.namespaces(form.target.datasourceId) : []
+}
+
 async function onTargetDatasource() {
   form.target.namespace = ''
   targetNamespaces.value = []
@@ -446,7 +450,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="库 / schema">
-          <el-select v-model="form.source.namespace" placeholder="选择库或 schema" filterable @change="onSourceNamespace">
+          <el-select v-model="form.source.namespace" placeholder="选择库或 schema" filterable @change="onSourceNamespace" @visible-change="(open: boolean) => open && loadSourceNamespaces()">
             <el-option v-for="n in sourceNamespaces" :key="n" :label="n" :value="n" />
           </el-select>
         </el-form-item>
@@ -492,7 +496,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.target.datasourceId && !targetIsEs" label="库 / schema">
-          <el-select v-model="form.target.namespace" placeholder="必须已存在，不会自动建库" filterable class="w320">
+          <el-select v-model="form.target.namespace" placeholder="必须已存在，不会自动建库" filterable class="w320" @visible-change="(open: boolean) => open && loadTargetNamespaces()">
             <el-option v-for="n in targetNamespaces" :key="n" :label="n" :value="n" />
           </el-select>
         </el-form-item>
