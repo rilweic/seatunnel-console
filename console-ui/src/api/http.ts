@@ -59,8 +59,18 @@ export async function get<T>(url: string, params?: Record<string, unknown>, sile
   return response.data.data
 }
 
-export async function post<T>(url: string, body?: unknown): Promise<T> {
-  const response = await http.post<Result<T>>(url, body)
+/** Calls that legitimately take longer than the default minute (counts, diagnostic jobs). */
+export const LONG_TIMEOUT = {
+  /** Wizard precheck and script check: each table's query runs once on the database. */
+  check: 3 * 60_000,
+  /** Diagnostic jobs: the server waits up to 90 seconds for them. */
+  diagnose: 3 * 60_000,
+  /** Row counts: the server allows up to 10 minutes (console.validation.timeout). */
+  validation: 11 * 60_000,
+}
+
+export async function post<T>(url: string, body?: unknown, timeout?: number): Promise<T> {
+  const response = await http.post<Result<T>>(url, body, timeout ? { timeout } : undefined)
   return response.data.data
 }
 

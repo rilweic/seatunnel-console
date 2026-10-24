@@ -5,7 +5,11 @@ import com.xxl.job.core.executor.impl.XxlJobSpringExecutor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 /** Disabled with {@code console.xxl-job.enabled=false}, e.g. when no xxl-job-admin is available. */
 @Configuration(proxyBeanMethods = false)
@@ -33,6 +37,11 @@ public class XxlJobConfig {
     @Bean
     public XxlJobAdminClient xxlJobAdminClient(
             XxlJobProperties properties, RestClient.Builder restClientBuilder) {
-        return new XxlJobAdminClient(properties, restClientBuilder);
+        // Bounded, so an admin that hangs cannot hold a run, a backfill step or a schedule save.
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(Math.max(1, properties.adminTimeoutSeconds())))
+                .build());
+        requestFactory.setReadTimeout(Duration.ofSeconds(15));
+        return new XxlJobAdminClient(properties, restClientBuilder.clone().requestFactory(requestFactory));
     }
 }

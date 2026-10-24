@@ -20,7 +20,13 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.time.Duration;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CompletableFuture;
+import java.net.http.HttpConnectTimeoutException;
+import java.net.ConnectException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
@@ -268,6 +274,9 @@ public class ZetaRestClient implements EngineClient {
         return files;
     }
 
+    /** A log read may take this many request timeouts in total (2 minutes by default). */
+    static final int LOG_READ_TIMEOUT_FACTOR = 4;
+
     private static final Set<String> LOOPBACK = Set.of("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1");
 
     /**
@@ -289,60 +298,77 @@ public class ZetaRestClient implements EngineClient {
         }
     }
 
-    /** {@code file.location()} is the absolute logLink reported by the node that owns the file. */
+    /**
+     * {@code file.location()} is the absolute logLink reported by the node that owns the file. Zeta
+     * serves whole files and cannot be asked for a range, so the body is streamed and only its last
+     * {@code maxBytes} kept; the whole read is bounded in time, since a transfer that stalls after
+     * the headers would otherwise block the caller (an archiving run thread) indefinitely.
+     */
     @Override
     public LogContent readLog(EngineLogFile file, long maxBytes) {
         HttpRequest request = decorate(HttpRequest.newBuilder().GET(), file.location(), "text/plain");
+        TailBuffer tail = new TailBuffer((int) Math.min(maxBytes, Integer.MAX_VALUE - 8));
+        CompletableFuture<HttpResponse<Void>> call =
+                httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofByteArrayConsumer(chunk -> chunk.ifPresent(tail::write)));
+        Duration limit = config.requestTimeout().multipliedBy(LOG_READ_TIMEOUT_FACTOR);
+        HttpResponse<Void> response;
         try {
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream body = response.body()) {
-                if (response.statusCode() / 100 != 2) {
-                    throw new ConsoleException(
-                            ErrorCodes.ENGINE_REQUEST_FAILED,
-                            "reading log " + file.name() + " returned HTTP " + response.statusCode());
-                }
-                return tail(body, (int) Math.min(maxBytes, Integer.MAX_VALUE - 8));
-            }
-        } catch (IOException e) {
+            response = call.get(limit.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            call.cancel(true);
             throw new ConsoleException(
-                    ErrorCodes.ENGINE_UNAVAILABLE, "cannot read log " + file.name() + " from " + file.node() + ": " + e);
+                    ErrorCodes.ENGINE_UNAVAILABLE, "reading log " + file.name() + " from " + file.node() + " took longer than " + limit);
+        } catch (ExecutionException e) {
+            throw new ConsoleException(
+                    ErrorCodes.ENGINE_UNAVAILABLE, "cannot read log " + file.name() + " from " + file.node() + ": " + e.getCause());
         } catch (InterruptedException e) {
+            call.cancel(true);
             Thread.currentThread().interrupt();
             throw new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "interrupted while reading log", e);
         }
+        if (response.statusCode() / 100 != 2) {
+            throw new ConsoleException(
+                    ErrorCodes.ENGINE_REQUEST_FAILED, "reading log " + file.name() + " returned HTTP " + response.statusCode());
+        }
+        return tail.result();
     }
 
-    /**
-     * The last {@code maxBytes} of a stream, holding no more than that in memory however long the
-     * log is (Zeta serves whole files and cannot be asked for a range).
-     */
-    static LogContent tail(InputStream in, int maxBytes) throws IOException {
-        byte[] ring = new byte[Math.max(1, maxBytes)];
-        byte[] chunk = new byte[64 * 1024];
-        long total = 0;
-        int n;
-        while ((n = in.read(chunk)) != -1) {
+    /** Keeps the last {@code capacity} bytes written to it, however many arrive. */
+    static final class TailBuffer {
+        private final byte[] ring;
+        private long total;
+
+        TailBuffer(int capacity) {
+            this.ring = new byte[Math.max(1, capacity)];
+        }
+
+        synchronized void write(byte[] chunk) {
             int offset = 0;
-            while (offset < n) {
+            while (offset < chunk.length) {
                 int pos = (int) (total % ring.length);
-                int len = Math.min(n - offset, ring.length - pos);
+                int len = Math.min(chunk.length - offset, ring.length - pos);
                 System.arraycopy(chunk, offset, ring, pos, len);
                 offset += len;
                 total += len;
             }
         }
-        if (total <= ring.length) {
-            return new LogContent(new String(ring, 0, (int) total, StandardCharsets.UTF_8), false);
+
+        synchronized LogContent result() {
+            if (total <= ring.length) {
+                return new LogContent(new String(ring, 0, (int) total, StandardCharsets.UTF_8), false);
+            }
+            int start = (int) (total % ring.length);
+            byte[] ordered = new byte[ring.length];
+            System.arraycopy(ring, start, ordered, 0, ring.length - start);
+            System.arraycopy(ring, 0, ordered, ring.length - start, start);
+            return new LogContent(new String(ordered, StandardCharsets.UTF_8), true);
         }
-        int start = (int) (total % ring.length);
-        byte[] ordered = new byte[ring.length];
-        System.arraycopy(ring, start, ordered, 0, ring.length - start);
-        System.arraycopy(ring, 0, ordered, ring.length - start, start);
-        return new LogContent(new String(ordered, StandardCharsets.UTF_8), true);
     }
 
     private JsonNode send(String path, HttpRequest.Builder builder, String contentType) {
         IOException lastFailure = null;
+        // Whether some master may have received the request although no answer came back.
+        boolean maybeDelivered = false;
         for (String master : config.masterUrls()) {
             HttpRequest request = decorate(builder.copy(), master + path, contentType);
             HttpResponse<String> response;
@@ -351,11 +377,12 @@ public class ZetaRestClient implements EngineClient {
             } catch (IOException e) {
                 log.warn("Zeta master {} unreachable: {}", master, e.toString());
                 lastFailure = e;
+                maybeDelivered |= !(e instanceof ConnectException || e instanceof HttpConnectTimeoutException);
                 continue;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new ConsoleException(
-                        ErrorCodes.ENGINE_UNAVAILABLE, "interrupted while calling Zeta", e);
+                        ErrorCodes.ENGINE_RESPONSE_LOST, "interrupted while calling Zeta " + stripQuery(path), e);
             }
             if (response.statusCode() / 100 != 2) {
                 throw new ConsoleException(
@@ -369,8 +396,9 @@ public class ZetaRestClient implements EngineClient {
                     : mapper.readTree(responseBody);
         }
         throw new ConsoleException(
-                ErrorCodes.ENGINE_UNAVAILABLE,
-                "no Zeta master reachable: " + config.masterUrls(),
+                maybeDelivered ? ErrorCodes.ENGINE_RESPONSE_LOST : ErrorCodes.ENGINE_UNAVAILABLE,
+                (maybeDelivered ? "no answer from Zeta for " + stripQuery(path) + " (it may have been received): "
+                        : "no Zeta master reachable: ") + config.masterUrls(),
                 lastFailure);
     }
 

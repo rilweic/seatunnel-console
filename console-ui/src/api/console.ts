@@ -1,4 +1,4 @@
-import { del, get, post, put, type PageResult } from './http'
+import { del, get, LONG_TIMEOUT, post, put, type PageResult } from './http'
 
 export interface UserView {
   id: string
@@ -248,16 +248,16 @@ export const jobApi = {
       validation?: ValidationSpec | null
       form?: WizardForm
     },
-  ) => post<VersionDetail>(`/jobs/${id}/versions`, body),
+  ) => post<VersionDetail>(`/jobs/${id}/versions`, body, LONG_TIMEOUT.check),
   wizardPrecheck: (id: string, body: { form: WizardForm; params?: Record<string, string> }) =>
-    post<PrecheckResult>(`/jobs/${id}/wizard/precheck`, body),
+    post<PrecheckResult>(`/jobs/${id}/wizard/precheck`, body, LONG_TIMEOUT.check),
   switchToScript: (id: string) => post<JobView>(`/jobs/${id}/switch-to-script`),
   checkScript: (id: string, body: { hocon: string; params?: Record<string, string> }) =>
-    post<PrecheckResult['checks']>(`/jobs/${id}/check`, body),
+    post<PrecheckResult['checks']>(`/jobs/${id}/check`, body, LONG_TIMEOUT.check),
   testValidation: (
     id: string,
     body: { hocon: string; params?: Record<string, string>; validation: ValidationSpec; scheduledTime?: string },
-  ) => post<{ result: ValidationResult; variables: Record<string, string> }>(`/jobs/${id}/validation/test`, body),
+  ) => post<{ result: ValidationResult; variables: Record<string, string> }>(`/jobs/${id}/validation/test`, body, LONG_TIMEOUT.validation),
   versions: (id: string) => get<VersionSummary[]>(`/jobs/${id}/versions`),
   version: (id: string, versionId: string) => get<VersionDetail>(`/jobs/${id}/versions/${versionId}`),
   restoreVersion: (id: string, versionId: string) => post<VersionDetail>(`/jobs/${id}/versions/${versionId}/restore`),
@@ -506,5 +506,5 @@ export interface ClusterHealth {
 export const clusterApi = {
   overview: () => get<Record<string, string>>('/cluster/overview'),
   health: () => get<ClusterHealth>('/cluster/health'),
-  diagnose: () => post<HealthCheck[]>('/cluster/diagnose'),
+  diagnose: () => post<HealthCheck[]>('/cluster/diagnose', undefined, LONG_TIMEOUT.diagnose),
 }

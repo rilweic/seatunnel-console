@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.job;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -11,11 +12,13 @@ import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.HoconTemplate.DatasourceRef;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardService;
+import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobSchedule;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
 import com.dataintegration.console.server.persistence.entity.JobVersionDatasource;
+import com.dataintegration.console.server.persistence.mapper.BackfillBatchMapper;
 import com.dataintegration.console.server.persistence.mapper.JobDefinitionMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobScheduleMapper;
@@ -123,6 +126,7 @@ public class JobService {
     private final UserDirectory users;
     private final ScriptChecker scriptChecker;
     private final JobInstanceMapper instanceMapper;
+    private final BackfillBatchMapper backfillMapper;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -139,7 +143,8 @@ public class JobService {
             WizardService wizardService,
             UserDirectory users,
             ScriptChecker scriptChecker,
-            JobInstanceMapper instanceMapper) {
+            JobInstanceMapper instanceMapper,
+            BackfillBatchMapper backfillMapper) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -155,6 +160,7 @@ public class JobService {
         this.users = users;
         this.scriptChecker = scriptChecker;
         this.instanceMapper = instanceMapper;
+        this.backfillMapper = backfillMapper;
     }
 
     /** @param mine only the current user's jobs */
@@ -210,19 +216,38 @@ public class JobService {
      */
     public JobView update(String id, String name, String description, String projectId) {
         JobDefinition job = requireEditable(id);
+        // Only the edited columns: writing the whole row read above could undo a concurrent
+        // ownership transfer, version save or XXL-JOB id change.
+        JobDefinition update = new JobDefinition();
+        update.setId(id);
         if (projectId != null && !projectId.equals(job.getProjectId())) {
             projectService.requireEditable(projectId);
-            job.setProjectId(projectId);
+            update.setProjectId(projectId);
         }
-        job.setName(name.trim());
-        job.setDescription(description);
-        jobMapper.updateById(job);
-        return view(require(id), currentVersionNo(job));
+        update.setName(name.trim());
+        jobMapper.update(update, new LambdaUpdateWrapper<JobDefinition>()
+                .set(JobDefinition::getDescription, description)
+                .eq(JobDefinition::getId, id));
+        JobDefinition saved = require(id);
+        return view(saved, currentVersionNo(saved));
     }
 
     /** Soft delete. The schedule goes with it; the mirrored XXL-JOB job is removed on a best-effort basis. */
     public void delete(String id) {
         JobDefinition job = requireEditable(id);
+        // A deleted job's runs can no longer be stopped from the console, so none may be going.
+        long active = instanceMapper.selectCount(new LambdaQueryWrapper<JobInstance>()
+                .eq(JobInstance::getJobDefinitionId, id)
+                .in(JobInstance::getStatus, "PENDING", "RUNNING"));
+        if (active > 0) {
+            throw new ConsoleException(ErrorCodes.CONFLICT, "任务还有 " + active + " 个运行中或等待中的实例，请先停止再删除");
+        }
+        long backfills = backfillMapper.selectCount(new LambdaQueryWrapper<BackfillBatch>()
+                .eq(BackfillBatch::getJobDefinitionId, id)
+                .in(BackfillBatch::getStatus, "RUNNING", "PAUSED"));
+        if (backfills > 0) {
+            throw new ConsoleException(ErrorCodes.CONFLICT, "任务还有进行中或暂停的补数，请先在「补数」里取消再删除");
+        }
         jobMapper.deleteById(id);
         scheduleMapper.deleteById(id);
         XxlJobAdminClient client = xxlJobAdminClient.getIfAvailable();
@@ -317,8 +342,10 @@ public class JobService {
         versionMapper.insert(version);
         datasourceIds.forEach(dsId -> versionDatasourceMapper.insert(new JobVersionDatasource(version.getId(), dsId)));
 
-        job.setCurrentVersionId(version.getId());
-        jobMapper.updateById(job);
+        JobDefinition current = new JobDefinition();
+        current.setId(jobId);
+        current.setCurrentVersionId(version.getId());
+        jobMapper.updateById(current);
         return versionDetail(version);
     }
 
@@ -375,9 +402,12 @@ public class JobService {
         if (!MODE_FORM.equals(job.getEditMode())) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "job is already edited as a script");
         }
-        job.setEditMode(MODE_SCRIPT);
-        jobMapper.updateById(job);
-        return view(require(jobId), currentVersionNo(job));
+        JobDefinition update = new JobDefinition();
+        update.setId(jobId);
+        update.setEditMode(MODE_SCRIPT);
+        jobMapper.updateById(update);
+        JobDefinition saved = require(jobId);
+        return view(saved, currentVersionNo(saved));
     }
 
     /** Runs the validation counts now against the editor's content, as a run at scheduledTime would. */
@@ -451,7 +481,8 @@ public class JobService {
             if (id == null) {
                 continue;
             }
-            var ds = datasourceService.require(id);
+            // Locked inside a version save, so a concurrent delete waits and then sees the new reference.
+            var ds = datasourceService.requireLocked(id);
             if (!Objects.equals(ds.getCreatedBy(), job.getCreatedBy())) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
                         "数据源「" + ds.getName() + "」不属于任务的创建人，任务只能使用创建人自己的数据源");

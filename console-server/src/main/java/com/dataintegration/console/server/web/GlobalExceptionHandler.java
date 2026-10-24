@@ -60,7 +60,7 @@ public class GlobalExceptionHandler {
             case ErrorCodes.FORBIDDEN -> HttpStatus.FORBIDDEN;
             case ErrorCodes.NOT_FOUND -> HttpStatus.NOT_FOUND;
             case ErrorCodes.CONFLICT -> HttpStatus.CONFLICT;
-            case ErrorCodes.ENGINE_UNAVAILABLE, ErrorCodes.SCHEDULER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
+            case ErrorCodes.ENGINE_UNAVAILABLE, ErrorCodes.ENGINE_RESPONSE_LOST, ErrorCodes.SCHEDULER_UNAVAILABLE -> HttpStatus.SERVICE_UNAVAILABLE;
             case ErrorCodes.INTERNAL_ERROR -> HttpStatus.INTERNAL_SERVER_ERROR;
             default -> HttpStatus.BAD_REQUEST;
         };

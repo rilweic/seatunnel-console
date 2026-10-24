@@ -7,6 +7,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.dataintegration.console.common.ConsoleException;
@@ -15,6 +16,7 @@ import com.dataintegration.console.common.ErrorCodes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -61,6 +63,18 @@ class XxlJobAdminClientTest {
 
         assertThat(id).isEqualTo(15);
         server.verify();
+    }
+
+    @Test
+    void httpErrorStatusBecomesAConsoleException() {
+        server.expect(requestTo("http://admin:8081/api/triggerJob"))
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR).body("boom"));
+
+        assertThatThrownBy(() -> client.triggerJob(15, "{}"))
+                .isInstanceOf(ConsoleException.class)
+                .hasMessageContaining("HTTP 500")
+                .extracting(e -> ((ConsoleException) e).getCode())
+                .isEqualTo(ErrorCodes.SCHEDULER_REQUEST_FAILED);
     }
 
     @Test

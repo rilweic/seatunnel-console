@@ -91,25 +91,35 @@ async function loadSourceTables() {
   restoreSelection()
 }
 
-let restoring = false
+/** Shows `selected` in the table; it never changes `selected` itself. */
 function restoreSelection() {
-  restoring = true
   tableRef.value?.clearSelection()
   for (const t of filteredTables.value) {
     if (selected.value.includes(t.name)) tableRef.value?.toggleRowSelection(t, true)
   }
-  restoring = false
 }
 
-/** Selection survives filtering: rows hidden by the filter keep their state. */
-function onSelectionChange(rows: TableMeta[]) {
-  if (restoring) return
-  const visible = new Set(filteredTables.value.map((t) => t.name))
-  const kept = selected.value.filter((n) => !visible.has(n))
-  selected.value = [...kept, ...rows.map((r) => r.name)].sort()
+/*
+ * `selected` changes only on the user's own clicks (select / select-all). The table's
+ * selection-change also fires when its rows change, e.g. while typing a filter, and would then
+ * report the hidden tables as unchecked; listening to it lost the selection.
+ */
+// Order is kept (new tables go last), so checking and unchecking a table leaves the form as it was.
+function onSelect(rows: TableMeta[], row: TableMeta) {
+  const checked = rows.some((r) => r.name === row.name)
+  selected.value = checked
+    ? [...selected.value.filter((n) => n !== row.name), row.name]
+    : selected.value.filter((n) => n !== row.name)
 }
 
-watch(tableFilter, () => nextTick(restoreSelection))
+function onSelectAll(rows: TableMeta[]) {
+  const visible = filteredTables.value.map((t) => t.name)
+  selected.value = rows.length > 0
+    ? [...selected.value, ...visible.filter((n) => !selected.value.includes(n))]
+    : selected.value.filter((n) => !visible.includes(n))
+}
+
+watch(filteredTables, () => nextTick(restoreSelection))
 
 async function onSourceDatasource() {
   form.source.namespace = ''
@@ -423,7 +433,7 @@ onMounted(async () => {
           <el-input v-model="tableFilter" placeholder="筛选表名，支持正则，如 ^order_" clearable class="w320" />
           <span class="tip">已选 {{ selected.length }} 张表<template v-if="tablesWithoutPk.length">，其中 {{ tablesWithoutPk.length }} 张没有主键</template>。正则只用来筛选列表，保存的是勾选的表。</span>
         </div>
-        <el-table ref="tableRef" v-loading="loadingTables" :data="filteredTables" row-key="name" max-height="420" @selection-change="onSelectionChange">
+        <el-table ref="tableRef" v-loading="loadingTables" :data="filteredTables" row-key="name" max-height="420" @select="onSelect" @select-all="onSelectAll">
           <el-table-column type="selection" width="48" :reserve-selection="false" />
           <el-table-column prop="name" label="表名" min-width="240" />
           <el-table-column label="主键" min-width="200">

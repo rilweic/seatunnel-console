@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -37,6 +38,13 @@ public final class HoconTemplate {
             Pattern.compile("(?i).*(password|passwd|secret|token|credential|api_?key|access_?key).*");
 
     public static final String MASK = "******";
+
+    /**
+     * A credential inside a string value: a {@code password=} style query parameter (JDBC URLs) or
+     * the password of {@code scheme://user:password@host}. Groups 1 and 3 are kept, 2 and 4 masked.
+     */
+    private static final Pattern SECRET_IN_VALUE = Pattern.compile(
+            "(?i)((?:^|[?&;])(?:password|passwd|pwd|sslpassword|secret|token)=)([^&;\\s]+)|(://[^/:@\\s]+:)([^@/\\s]+)(?=@)");
     private static final List<String> SECTIONS = List.of("source", "sink");
 
     public record DatasourceRef(String section, String connector, String datasourceId) {}
@@ -129,26 +137,49 @@ public final class HoconTemplate {
     }
 
     /**
-     * Credentials written directly into source or sink blocks, as {@code section.Connector.key},
-     * nested options included. Saving a script that has any is refused (docs/design.md §6).
+     * Credentials written anywhere in the config (env, source, transform, sink; nested objects and
+     * lists included), as paths like {@code source.Jdbc.password} or {@code source.Jdbc.url}: an
+     * option named like a credential, or a value carrying one (a password in a URL). Saving a
+     * script that has any is refused (docs/design.md §6).
      */
     public List<String> explicitSecrets() {
         List<String> found = new ArrayList<>();
-        forEachBlock((section, connector, block) -> {
-            collectSecrets(section + "." + connector, block, found);
-            return block;
-        });
+        collectSecrets("", config.root(), found);
         return found;
     }
 
-    private static void collectSecrets(String path, ConfigObject object, List<String> found) {
-        object.forEach((key, value) -> {
-            if (value instanceof ConfigObject nested) {
-                collectSecrets(path + "." + key, nested, found);
-            } else if (isSecretKey(key) && value.unwrapped() != null && !String.valueOf(value.unwrapped()).isBlank()) {
-                found.add(path + "." + key);
+    private static void collectSecrets(String path, ConfigValue value, List<String> found) {
+        if (value instanceof ConfigObject object) {
+            object.forEach((key, child) -> {
+                String childPath = path.isEmpty() ? key : path + "." + key;
+                String text = text(child);
+                if (isSecretKey(key) && text != null && !text.isBlank()) {
+                    found.add(childPath);
+                } else {
+                    collectSecrets(childPath, child, found);
+                }
+            });
+        } else if (value instanceof ConfigList list) {
+            for (int i = 0; i < list.size(); i++) {
+                collectSecrets(path + "[" + i + "]", list.get(i), found);
             }
-        });
+        } else {
+            String text = text(value);
+            if (text != null && SECRET_IN_VALUE.matcher(text).find()) {
+                found.add(path);
+            }
+        }
+    }
+
+    /** A scalar's text; null for objects, lists, nulls and unresolved substitutions. */
+    private static String text(ConfigValue value) {
+        try {
+            return value instanceof ConfigObject || value instanceof ConfigList || value.unwrapped() == null
+                    ? null
+                    : String.valueOf(value.unwrapped());
+        } catch (ConfigException e) {
+            return null;
+        }
     }
 
     /** {@code env.job.mode}, or null when not set (SeaTunnel then defaults to BATCH). */
@@ -198,28 +229,41 @@ public final class HoconTemplate {
                         case LIST -> rewriteList(section, (ConfigList) value, resolver);
                         default -> value;
                     };
-            root = root.withValue(section, mask ? maskSecrets(rewritten) : rewritten);
+            root = root.withValue(section, rewritten);
         }
-        return root.render(ConfigRenderOptions.concise());
+        return (mask ? maskSecrets(root) : root).render(ConfigRenderOptions.concise());
+    }
+
+    private static ConfigObject maskSecrets(ConfigObject object) {
+        ConfigObject result = object;
+        for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
+            ConfigValue value = entry.getValue();
+            String text = text(value);
+            ConfigValue masked = isSecretKey(entry.getKey()) && text != null ? ConfigValueFactory.fromAnyRef(MASK) : maskSecrets(value);
+            result = result.withValue(entry.getKey(), masked);
+        }
+        return result;
     }
 
     private static ConfigValue maskSecrets(ConfigValue value) {
         if (value instanceof ConfigObject object) {
-            ConfigObject result = object;
-            for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
-                ConfigValue masked = entry.getValue() instanceof ConfigObject || entry.getValue() instanceof ConfigList
-                        ? maskSecrets(entry.getValue())
-                        : isSecretKey(entry.getKey()) && entry.getValue().unwrapped() != null
-                                ? ConfigValueFactory.fromAnyRef(MASK)
-                                : entry.getValue();
-                result = result.withValue(entry.getKey(), masked);
-            }
-            return result;
+            return maskSecrets(object);
         }
         if (value instanceof ConfigList list) {
             List<ConfigValue> items = new ArrayList<>();
             list.forEach(item -> items.add(maskSecrets(item)));
             return ConfigValueFactory.fromIterable(items);
+        }
+        String text = text(value);
+        if (text != null && value.valueType() == ConfigValueType.STRING && SECRET_IN_VALUE.matcher(text).find()) {
+            Matcher m = SECRET_IN_VALUE.matcher(text);
+            StringBuilder out = new StringBuilder();
+            while (m.find()) {
+                String replacement = m.group(1) != null ? m.group(1) + MASK : m.group(3) + MASK;
+                m.appendReplacement(out, Matcher.quoteReplacement(replacement));
+            }
+            m.appendTail(out);
+            return ConfigValueFactory.fromAnyRef(out.toString());
         }
         return value;
     }

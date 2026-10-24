@@ -12,7 +12,9 @@ const props = defineProps<{ jobId: string; readonly: boolean }>()
 
 const router = useRouter()
 const backfills = ref<BackfillView[]>([])
-const backfillRuns = ref<Record<string, InstanceView[]>>({})
+/** Runs of each expanded batch, a page at a time (a batch can have up to a few thousand). */
+const backfillRuns = ref<Record<string, { items: InstanceView[]; total: number; page: number }>>({})
+const RUNS_PAGE = 20
 const loading = ref(false)
 let timer: number | undefined
 
@@ -33,15 +35,16 @@ async function load() {
     loading.value = false
   }
   for (const id of Object.keys(backfillRuns.value)) {
-    loadRuns(id)
+    loadRuns(id, backfillRuns.value[id]!.page)
   }
   if (backfills.value.some((b) => b.status === 'RUNNING')) {
     timer = window.setTimeout(load, 5000)
   }
 }
 
-async function loadRuns(batchId: string) {
-  backfillRuns.value[batchId] = (await instanceApi.list({ backfillId: batchId, size: 100 })).items
+async function loadRuns(batchId: string, page = 1) {
+  const result = await instanceApi.list({ backfillId: batchId, page, size: RUNS_PAGE })
+  backfillRuns.value[batchId] = { items: result.items, total: result.total, page }
 }
 
 async function cancel(b: BackfillView) {
@@ -65,7 +68,7 @@ defineExpose({ load })
   <el-table v-loading="loading" :data="backfills" row-key="id" empty-text="还没有补数。点右上角「补数」按日期范围补跑历史数据" @expand-change="(row: BackfillView) => loadRuns(row.id)">
     <el-table-column type="expand">
       <template #default="{ row }">
-        <el-table :data="backfillRuns[row.id] ?? []" class="inner clickable" @row-click="(r: InstanceView) => router.push(`/instances/${r.id}`)">
+        <el-table :data="backfillRuns[row.id]?.items ?? []" class="inner clickable" @row-click="(r: InstanceView) => router.push(`/instances/${r.id}`)">
           <el-table-column label="计划时间" width="170">
             <template #default="{ row: r }">{{ formatTime(r.scheduledTime) }}</template>
           </el-table-column>
@@ -85,6 +88,16 @@ defineExpose({ load })
           </el-table-column>
           <el-table-column prop="errorMessage" label="错误" min-width="200" show-overflow-tooltip />
         </el-table>
+        <el-pagination
+          v-if="(backfillRuns[row.id]?.total ?? 0) > RUNS_PAGE"
+          :current-page="backfillRuns[row.id]!.page"
+          :page-size="RUNS_PAGE"
+          :total="backfillRuns[row.id]!.total"
+          layout="total, prev, pager, next"
+          small
+          class="inner-pager"
+          @current-change="(p: number) => loadRuns(row.id, p)"
+        />
       </template>
     </el-table-column>
     <el-table-column label="日期范围" width="210">
@@ -134,6 +147,10 @@ defineExpose({ load })
 .inner {
   margin: 0 16px 0 48px;
   width: auto;
+}
+
+.inner-pager {
+  margin: 8px 16px 8px 48px;
 }
 
 .ok {

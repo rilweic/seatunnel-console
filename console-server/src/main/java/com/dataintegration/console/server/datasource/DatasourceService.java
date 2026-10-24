@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.datasource;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -24,6 +25,7 @@ import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -128,10 +130,16 @@ public class DatasourceService {
         DataSourcePlugin plugin = plugins.get(entity.getType());
         Map<String, String> merged = mergeSecrets(entity, plugin, clean(props));
         plugin.validate(merged);
-        entity.setName(name.trim());
-        entity.setDescription(description);
-        store(entity, plugin, merged);
-        datasourceMapper.updateById(entity);
+        // Only the edited columns: the whole row read above would put back an owner changed by a
+        // concurrent transfer.
+        DatasourceEntity update = new DatasourceEntity();
+        update.setId(id);
+        update.setName(name.trim());
+        store(update, plugin, merged);
+        datasourceMapper.update(update, new LambdaUpdateWrapper<DatasourceEntity>()
+                .set(DatasourceEntity::getDescription, description)
+                .set(DatasourceEntity::getSecretCipher, update.getSecretCipher())
+                .eq(DatasourceEntity::getId, id));
         return get(id);
     }
 
@@ -153,8 +161,14 @@ public class DatasourceService {
         return plugins.get(entity.getType()).testConnection(decryptedProps(entity));
     }
 
-    /** Refused while the current version of any live job still references this datasource. */
+    /**
+     * Refused while the current version of any live job still references this datasource. The row
+     * is locked first (before any other read of this transaction), so a version saved concurrently
+     * either committed before and is seen, or waits and then finds the datasource gone.
+     */
+    @Transactional
     public void delete(String id) {
+        requireLocked(id);
         requireEditable(id);
         List<String> users = jobsUsing(id);
         if (!users.isEmpty()) {
@@ -216,6 +230,16 @@ public class DatasourceService {
     public DatasourceEntity requireEditable(String id) {
         DatasourceEntity entity = require(id);
         Access.requireOwner(entity.getCreatedBy(), "数据源「" + entity.getName() + "」");
+        return entity;
+    }
+
+    /** Like {@link #require}, holding a row lock until the surrounding transaction ends. */
+    public DatasourceEntity requireLocked(String id) {
+        DatasourceEntity entity = datasourceMapper.selectOne(
+                new LambdaQueryWrapper<DatasourceEntity>().eq(DatasourceEntity::getId, id).last("for update"));
+        if (entity == null) {
+            throw new ConsoleException(ErrorCodes.NOT_FOUND, "datasource not found: " + id);
+        }
         return entity;
     }
 

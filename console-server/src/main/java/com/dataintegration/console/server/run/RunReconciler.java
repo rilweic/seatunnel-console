@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.run.RunRecorder.Level;
@@ -76,11 +77,23 @@ public class RunReconciler {
         }
     }
 
-    private void fail(JobInstance instance, String message) {
-        instance.setStatus(RunStatus.FAILED.name());
-        instance.setFinishedAt(LocalDateTime.now());
-        instance.setErrorMessage(message);
-        recorder.update(instance);
-        recorder.event(instance.getId(), instance.getAttemptCount(), RunEventType.ERROR, Level.ERROR, message);
+    /**
+     * Only while the run still has the status it was selected with: between the query and this
+     * update it may have been claimed, finished or stopped, and that must not be overwritten.
+     */
+    private boolean fail(JobInstance instance, String message) {
+        boolean failed = instanceMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<JobInstance>()
+                                .set(JobInstance::getStatus, RunStatus.FAILED.name())
+                                .set(JobInstance::getFinishedAt, LocalDateTime.now())
+                                .set(JobInstance::getErrorMessage, message)
+                                .eq(JobInstance::getId, instance.getId())
+                                .eq(JobInstance::getStatus, instance.getStatus()))
+                > 0;
+        if (failed) {
+            recorder.event(instance.getId(), instance.getAttemptCount(), RunEventType.ERROR, Level.ERROR, message);
+        }
+        return failed;
     }
 }

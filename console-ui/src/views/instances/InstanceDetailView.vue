@@ -63,8 +63,12 @@ async function loadLog() {
     return
   }
   logLoading.value = true
+  const attempt = activeAttempt.value
   try {
-    log.value = await instanceApi.log(id, activeAttempt.value)
+    const loaded = await instanceApi.log(id, attempt)
+    // Switched to another attempt meanwhile: that one's request decides.
+    if (attempt !== activeAttempt.value) return
+    log.value = loaded
   } finally {
     logLoading.value = false
   }
@@ -75,16 +79,31 @@ async function loadLog() {
 }
 
 async function loadMetrics() {
-  metrics.value = detail.value && detail.value.attempts.length > 0 ? await instanceApi.metrics(id, activeAttempt.value) : null
+  const attempt = activeAttempt.value
+  const loaded = detail.value && detail.value.attempts.length > 0 ? await instanceApi.metrics(id, attempt) : null
+  if (attempt === activeAttempt.value) {
+    metrics.value = loaded
+  }
 }
 
-/** While the run is active, refresh status, metrics and the live SeaTunnel log every few seconds. */
+let disposed = false
+
+/**
+ * While the run is active, refresh status, metrics and the live SeaTunnel log every few seconds.
+ * A failed request (shown by the HTTP layer) does not end the refreshing; leaving the page does,
+ * also for a request still on its way.
+ */
 async function refresh() {
   window.clearTimeout(timer)
-  await loadDetail()
-  await Promise.all([loadLog(), loadMetrics()])
-  if (active.value) {
-    timer = window.setTimeout(refresh, 4000)
+  try {
+    await loadDetail()
+    await Promise.all([loadLog(), loadMetrics()])
+  } catch {
+    // already reported; try again on the next tick while the run is active
+  } finally {
+    if (!disposed && active.value) {
+      timer = window.setTimeout(refresh, 4000)
+    }
   }
 }
 
@@ -150,7 +169,10 @@ const logSourceText = computed(() => {
 })
 
 onMounted(refresh)
-onBeforeUnmount(() => window.clearTimeout(timer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearTimeout(timer)
+})
 </script>
 
 <template>

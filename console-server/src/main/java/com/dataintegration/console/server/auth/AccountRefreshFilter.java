@@ -18,6 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.time.ZoneId;
 
 /**
  * Applies account changes to sessions that are already logged in: a disabled (or vanished) user is
@@ -44,12 +45,14 @@ class AccountRefreshFilter extends OncePerRequestFilter {
             Instant refreshedAt = Instant.now();
             SysUser user = userMapper.selectById(current.id());
             if (user == null || !Boolean.TRUE.equals(user.getEnabled())) {
-                SecurityContextHolder.clearContext();
-                HttpSession session = request.getSession(false);
-                if (session != null) {
-                    session.invalidate();
-                }
-                SecurityConfig.writeError(response, 401, ErrorCodes.UNAUTHENTICATED, "账号已被禁用，请联系管理员");
+                endSession(request, response, "账号已被禁用，请联系管理员");
+                return;
+            }
+            // A password set after this session logged in (changed elsewhere or reset by an
+            // administrator) ends it; the session that changed it was renewed at that moment.
+            if (user.getPasswordChangedAt() != null && current.authenticatedAt() != null
+                    && user.getPasswordChangedAt().atZone(ZoneId.systemDefault()).toInstant().isAfter(current.authenticatedAt())) {
+                endSession(request, response, "密码已修改，请重新登录");
                 return;
             }
             ConsoleUser refreshed = new ConsoleUser(
@@ -67,5 +70,14 @@ class AccountRefreshFilter extends OncePerRequestFilter {
             contextRepository.saveContext(context, request, response);
         }
         chain.doFilter(request, response);
+    }
+
+    private static void endSession(HttpServletRequest request, HttpServletResponse response, String message) throws IOException {
+        SecurityContextHolder.clearContext();
+        HttpSession session = request.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        SecurityConfig.writeError(response, 401, ErrorCodes.UNAUTHENTICATED, message);
     }
 }

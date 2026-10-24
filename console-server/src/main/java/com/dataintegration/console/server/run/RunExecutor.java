@@ -186,16 +186,13 @@ public class RunExecutor {
             return finish(instance, RunStatus.CANCELED, signal.reason(), schedulerLog);
         }
         applyMetrics(instance, outcome.metrics());
-        // A job whose state is unknown (a stop that did not take effect, lost contact) is FAILED
-        // with the reason, never CANCELED: it may still be writing.
+        // CANCELED only when the engine says the job was canceled. A job that failed on its own
+        // just before a stop stays FAILED, and one whose state is unknown (a stop that did not take
+        // effect, lost contact) is FAILED with the reason: it may still be writing.
         RunStatus status =
                 outcome.succeeded()
                         ? RunStatus.SUCCESS
-                        : outcome.finalStatus() == EngineJobStatus.UNKNOWABLE
-                                ? RunStatus.FAILED
-                                : outcome.finalStatus() == EngineJobStatus.CANCELED || signal.isCancelled()
-                                        ? RunStatus.CANCELED
-                                        : RunStatus.FAILED;
+                        : outcome.finalStatus() == EngineJobStatus.CANCELED ? RunStatus.CANCELED : RunStatus.FAILED;
         String message;
         if (status == RunStatus.SUCCESS) {
             message = "engine job " + outcome.engineJobId() + " finished";

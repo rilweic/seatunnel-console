@@ -1,5 +1,7 @@
 package com.dataintegration.console.server.job;
 
+import com.dataintegration.console.common.ConsoleException;
+import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.project.ProjectService;
@@ -10,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -49,11 +52,27 @@ public class JobConfigRenderer {
         Map<String, String> variables = variables(job, jobParams, startupParams, scheduledTime, instanceId);
         String text = Variables.render(hocon, variables, scheduledTime);
         HoconTemplate template = HoconTemplate.parse(text);
+        requireCreatorsDatasources(job, template);
         String masked = template.renderMasked((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, true));
         String config = withSecrets
                 ? template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, false))
                 : null;
         return new Rendered(variables, config, masked, Variables.unresolved(text), template);
+    }
+
+    /**
+     * Checked on the rendered text, not only when saving: a {@code datasource_id = "${ds}"} saved
+     * with the creator's own id could otherwise be pointed at someone else's datasource by a
+     * startup parameter, and the run would carry that datasource's credentials.
+     */
+    private void requireCreatorsDatasources(JobDefinition job, HoconTemplate template) {
+        for (HoconTemplate.DatasourceRef ref : template.datasourceRefs()) {
+            var ds = datasourceService.require(ref.datasourceId());
+            if (!Objects.equals(ds.getCreatedBy(), job.getCreatedBy())) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                        ref.section() + "." + ref.connector() + "：数据源「" + ds.getName() + "」不属于任务的创建人，任务只能使用创建人自己的数据源");
+            }
+        }
     }
 
     public Map<String, String> variables(

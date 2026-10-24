@@ -35,4 +35,18 @@ class AccountRulesTest {
         attempts.clear("bob");
         assertThat(attempts.lockedFor("bob")).isNull();
     }
+
+    @Test
+    void madeUpUserNamesCannotGrowTheAttemptsWithoutBound() {
+        LoginAttempts attempts = new LoginAttempts();
+        for (int i = 0; i < LoginAttempts.MAX_FAILURES; i++) {
+            attempts.failed("admin");
+        }
+        for (int i = 0; i < LoginAttempts.MAX_ENTRIES * 2; i++) {
+            attempts.failed("random-" + i);
+        }
+
+        assertThat(attempts.size()).isLessThanOrEqualTo(LoginAttempts.MAX_ENTRIES);
+        assertThat(attempts.lockedFor("admin")).isNotNull();
+    }
 }

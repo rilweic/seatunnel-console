@@ -154,6 +154,13 @@ public class WizardService {
                 if (full && form.target().dataMode() == DataMode.KEEP) {
                     checks.add(new Check(Level.WARN, table.name() + "：没有主键又保留已有数据，每次全量运行都会再写入一遍，造成重复"));
                 }
+            } else if (form.target().writeMode() == WriteMode.UPSERT && !table.allColumns()
+                    && !table.columns().containsAll(meta.primaryKeys())) {
+                // The generated sink upserts by ${primary_key}; without the key columns the engine
+                // fails at start-up instead of here.
+                List<String> missingKeys = meta.primaryKeys().stream().filter(k -> !table.columns().contains(k)).toList();
+                checks.add(new Check(Level.ERROR, table.name() + "：按主键更新需要主键字段，请把 "
+                        + String.join(", ", missingKeys) + " 加入同步字段，或改为追加写入"));
             } else if (full && form.target().dataMode() == DataMode.KEEP && form.target().writeMode() == WriteMode.APPEND) {
                 checks.add(new Check(Level.WARN, table.name() + "：追加写入又保留已有数据，每次全量运行都会重复写入，建议改为 upsert"));
             }

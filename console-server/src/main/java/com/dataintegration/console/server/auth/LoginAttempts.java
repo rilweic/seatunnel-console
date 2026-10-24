@@ -17,7 +17,16 @@ public class LoginAttempts {
     static final int MAX_FAILURES = 5;
     static final Duration LOCK = Duration.ofMinutes(10);
 
-    private record State(int failures, Instant lockedUntil) {}
+    /** Failures older than this are forgotten, so an account is locked only by a burst of them. */
+    static final Duration WINDOW = Duration.ofMinutes(10);
+
+    /**
+     * Tries with made-up user names are recorded too (refusing them differently would tell which
+     * names exist), so the map is bounded: past this size, stale entries are dropped.
+     */
+    static final int MAX_ENTRIES = 10_000;
+
+    private record State(int failures, Instant lockedUntil, Instant lastFailure) {}
 
     private final Map<String, State> states = new ConcurrentHashMap<>();
 
@@ -36,10 +45,31 @@ public class LoginAttempts {
     }
 
     public void failed(String username) {
+        Instant now = Instant.now();
+        if (states.size() >= MAX_ENTRIES) {
+            prune(now);
+        }
         states.compute(key(username), (k, s) -> {
-            int failures = (s == null ? 0 : s.failures()) + 1;
-            return failures >= MAX_FAILURES ? new State(0, Instant.now().plus(LOCK)) : new State(failures, null);
+            boolean recent = s != null && s.lastFailure() != null && s.lastFailure().isAfter(now.minus(WINDOW));
+            int failures = (recent ? s.failures() : 0) + 1;
+            return failures >= MAX_FAILURES ? new State(0, now.plus(LOCK), now) : new State(failures, null, now);
         });
+    }
+
+    /** Drops entries that no longer lock anything; if that is not enough, all unlocked ones. */
+    private void prune(Instant now) {
+        states.entrySet().removeIf(e -> {
+            State s = e.getValue();
+            boolean locked = s.lockedUntil() != null && s.lockedUntil().isAfter(now);
+            return !locked && (s.lastFailure() == null || !s.lastFailure().isAfter(now.minus(WINDOW)));
+        });
+        if (states.size() >= MAX_ENTRIES) {
+            states.entrySet().removeIf(e -> e.getValue().lockedUntil() == null);
+        }
+    }
+
+    int size() {
+        return states.size();
     }
 
     public void succeeded(String username) {

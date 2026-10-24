@@ -11,6 +11,8 @@ import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
+import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
+import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.mapper.BackfillBatchMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 
@@ -72,6 +74,7 @@ public class BackfillService {
 
     private final BackfillBatchMapper batchMapper;
     private final JobInstanceMapper instanceMapper;
+    private final JobInstanceAttemptMapper attemptMapper;
     private final JobService jobService;
     private final ScheduleService scheduleService;
     private final RunService runService;
@@ -80,12 +83,14 @@ public class BackfillService {
     public BackfillService(
             BackfillBatchMapper batchMapper,
             JobInstanceMapper instanceMapper,
+            JobInstanceAttemptMapper attemptMapper,
             JobService jobService,
             ScheduleService scheduleService,
             RunService runService,
             ObjectMapper objectMapper) {
         this.batchMapper = batchMapper;
         this.instanceMapper = instanceMapper;
+        this.attemptMapper = attemptMapper;
         this.jobService = jobService;
         this.scheduleService = scheduleService;
         this.runService = runService;
@@ -203,6 +208,22 @@ public class BackfillService {
             return;
         }
         int index = batch.getNextIndex();
+        long created = instanceMapper.selectCount(
+                new LambdaQueryWrapper<JobInstance>().eq(JobInstance::getBackfillBatchId, batch.getId()));
+        if (created < index) {
+            // A slot was claimed but its run never recorded (the console stopped in between): hand
+            // it back, so that scheduled time is not skipped.
+            batchMapper.update(null, new LambdaUpdateWrapper<BackfillBatch>()
+                    .set(BackfillBatch::getNextIndex, (int) created)
+                    .eq(BackfillBatch::getId, batch.getId())
+                    .eq(BackfillBatch::getNextIndex, index));
+            return;
+        }
+        String unknown = unknownOutcome(batch);
+        if (unknown != null) {
+            transition(batch, Status.PAUSED, unknown);
+            return;
+        }
         if (index >= batch.getTotalRuns()) {
             transition(batch, Status.FINISHED, null);
             return;
@@ -229,7 +250,8 @@ public class BackfillService {
             return;
         }
         try {
-            runService.start(new RunService.NewRun(
+            runService.start(
+                    new RunService.NewRun(
                     job,
                     batch.getJobVersionId(),
                     RunService.TriggerType.BACKFILL,
@@ -238,7 +260,8 @@ public class BackfillService {
                     scheduleService.failRetryCount(job.getId()) + 1,
                     null,
                     batch.getId(),
-                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns()));
+                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns()),
+                    () -> Status.RUNNING.name().equals(batchMapper.selectById(batch.getId()).getStatus()));
         } catch (ConsoleException e) {
             // Hand the slot back so resuming retries this scheduled time.
             batchMapper.update(
@@ -248,6 +271,29 @@ public class BackfillService {
                             .eq(BackfillBatch::getId, batch.getId()));
             transition(batch, Status.PAUSED, "could not hand run " + (index + 1) + " to XXL-JOB: " + e.getMessage());
         }
+    }
+
+    /**
+     * Why the batch must wait for a person: its last run ended with the engine job's state unknown
+     * (it may still be writing), so starting the next scheduled time could run two at once. Only
+     * runs that ended after the batch last changed count, so resuming it lets it go on.
+     */
+    private String unknownOutcome(BackfillBatch batch) {
+        JobInstance last = instanceMapper.selectOne(new LambdaQueryWrapper<JobInstance>()
+                .eq(JobInstance::getBackfillBatchId, batch.getId())
+                .orderByDesc(JobInstance::getCreatedAt)
+                .last("limit 1"));
+        if (last == null || !RunStatus.FAILED.name().equals(last.getStatus())
+                || last.getFinishedAt() == null || batch.getUpdatedAt() == null || !last.getFinishedAt().isAfter(batch.getUpdatedAt())) {
+            return null;
+        }
+        boolean unknown = attemptMapper.selectCount(new LambdaQueryWrapper<JobInstanceAttempt>()
+                        .eq(JobInstanceAttempt::getInstanceId, last.getId())
+                        .eq(JobInstanceAttempt::getEngineStatus, "UNKNOWABLE"))
+                > 0;
+        return unknown
+                ? "上一次运行的引擎作业状态不明，可能还在集群上运行；确认它已经结束后点\"继续\""
+                : null;
     }
 
     private void transition(BackfillBatch batch, Status status, String error) {

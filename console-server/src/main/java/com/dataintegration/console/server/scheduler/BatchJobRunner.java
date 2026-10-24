@@ -7,6 +7,9 @@ import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.SubmitJobRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -24,6 +27,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * again.
  */
 public class BatchJobRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(BatchJobRunner.class);
 
     /** Receives progress; the XXL-JOB handler forwards it to the scheduler log. */
     public interface Listener {
@@ -51,6 +56,9 @@ public class BatchJobRunner {
 
     /** Consecutive failed status polls after which the job is stopped and the run given up. */
     static final int MAX_POLL_FAILURES = 30;
+
+    /** Lookups of a job whose submission got no answer, 5 seconds apart. */
+    static final int SUBMIT_LOOKUPS = 3;
 
     /** Status checks after a stop request before the stop counts as not taken effect. */
     static final int STOP_CHECKS = 6;
@@ -93,8 +101,59 @@ public class BatchJobRunner {
 
     /** On interrupt the thread's interrupt flag is restored before returning. */
     public Outcome run(SubmitJobRequest request, Listener listener, CancelSignal signal) {
-        long jobId = submit(request.jobId() == null ? request.withJobId(newJobId()) : request, listener);
-        listener.onSubmitted(jobId);
+        SubmitJobRequest withId = request.jobId() == null ? request.withJobId(newJobId()) : request;
+        long jobId;
+        try {
+            jobId = engineClient.submit(withId);
+        } catch (ConsoleException e) {
+            if (e.getCode() != ErrorCodes.ENGINE_RESPONSE_LOST) {
+                throw e; // the engine certainly did not get it, so the caller may report and retry
+            }
+            return afterLostSubmission(withId.jobId(), e, listener, signal);
+        }
+        submitted(listener, jobId);
+        return watch(jobId, listener, signal);
+    }
+
+    /**
+     * The submission may or may not have reached the engine. The job is looked up by its id a few
+     * times; found, it is watched (or stopped, if the thread was interrupted meanwhile). Not
+     * confirmed either way, the run ends UNKNOWABLE: retrying could run it twice, while giving up
+     * leaves the decision, with the id to look for, to whoever reads the run.
+     */
+    private Outcome afterLostSubmission(long jobId, ConsoleException failure, Listener listener, CancelSignal signal) {
+        // Cleared so the lookups can run; restored before returning.
+        boolean interrupted = Thread.interrupted();
+        submitted(listener, jobId);
+        warn(listener, "no answer to the submission of engine job " + jobId + " (" + failure.getMessage() + "), looking it up");
+        try {
+            for (int i = 0; i < SUBMIT_LOOKUPS; i++) {
+                if (i > 0) {
+                    pause.pause(Duration.ofSeconds(5));
+                }
+                try {
+                    if (engineClient.jobInfo(jobId).isPresent()) {
+                        warn(listener, "the engine has engine job " + jobId + "; watching it");
+                        return interrupted
+                                ? cancel(jobId, Map.of(), listener, INTERRUPTED)
+                                : watch(jobId, listener, signal);
+                    }
+                } catch (ConsoleException lookup) {
+                    warn(listener, "cannot look up engine job " + jobId + ": " + lookup.getMessage());
+                }
+            }
+            String message = "whether engine job " + jobId + " was started is unknown (" + failure.getMessage()
+                    + "); check the cluster for it before running this job again";
+            warn(listener, message);
+            return new Outcome(jobId, EngineJobStatus.UNKNOWABLE, Map.of(), message);
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private Outcome watch(long jobId, Listener listener, CancelSignal signal) {
         Map<String, String> lastMetrics = Map.of();
         int failedPolls = 0;
         while (true) {
@@ -117,7 +176,7 @@ public class BatchJobRunner {
                 // The job is on the cluster whatever went wrong here, so keep watching it; the
                 // XXL-JOB timeout bounds the wait, and so does this limit when there is none.
                 failedPolls++;
-                listener.onWarning("cannot read the status of engine job " + jobId + " (" + failedPolls + "/"
+                warn(listener, "cannot read the status of engine job " + jobId + " (" + failedPolls + "/"
                         + MAX_POLL_FAILURES + "), will retry: " + e.getMessage());
                 if (failedPolls >= MAX_POLL_FAILURES) {
                     return cancel(jobId, lastMetrics, listener,
@@ -139,33 +198,6 @@ public class BatchJobRunner {
     }
 
     /**
-     * Submits with a known job id. When the submission's response is lost (a timeout, a dropped
-     * connection) the engine may have the job anyway: it is looked up by that id before the
-     * failure is reported, so a retry never starts a second copy next to it.
-     */
-    private long submit(SubmitJobRequest request, Listener listener) {
-        try {
-            return engineClient.submit(request);
-        } catch (ConsoleException e) {
-            if (e.getCode() != ErrorCodes.ENGINE_UNAVAILABLE || request.jobId() == null) {
-                throw e;
-            }
-            try {
-                if (engineClient.jobInfo(request.jobId()).isPresent()) {
-                    listener.onWarning("submission response lost (" + e.getMessage() + "), but the engine has job "
-                            + request.jobId() + "; watching it");
-                    return request.jobId();
-                }
-            } catch (ConsoleException lookup) {
-                throw new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE,
-                        e.getMessage() + "; whether engine job " + request.jobId()
-                                + " was created is unknown, check the cluster before running again", e);
-            }
-            throw e;
-        }
-    }
-
-    /**
      * Stops the engine job and waits until the engine reports it ended. A job that finished just
      * before the stop keeps its real outcome. A stop that fails or does not take effect is reported
      * as UNKNOWABLE, never as CANCELED, since the job may still be writing.
@@ -173,16 +205,16 @@ public class BatchJobRunner {
     private Outcome cancel(long jobId, Map<String, String> lastMetrics, Listener listener, String reason) {
         Optional<Outcome> ended = endedOutcome(jobId, listener);
         if (ended.isPresent()) {
-            listener.onWarning(reason + ", but engine job " + jobId + " had already ended as " + ended.get().finalStatus());
+            warn(listener, reason + ", but engine job " + jobId + " had already ended as " + ended.get().finalStatus());
             return ended.get();
         }
         try {
             engineClient.stop(jobId, false, false);
-            listener.onWarning(reason + ", stop requested for engine job " + jobId);
+            warn(listener, reason + ", stop requested for engine job " + jobId);
         } catch (ConsoleException e) {
             String message = reason + "; stopping engine job " + jobId + " failed (" + e.getMessage()
                     + "), it may still be running on the cluster";
-            listener.onWarning(message);
+            warn(listener, message);
             return new Outcome(jobId, EngineJobStatus.UNKNOWABLE, lastMetrics, message);
         }
         for (int i = 0; i < STOP_CHECKS; i++) {
@@ -197,7 +229,7 @@ public class BatchJobRunner {
         }
         String message = reason + "; engine job " + jobId + " was asked to stop but had not stopped after "
                 + STOP_CHECKS * 5 + " seconds, it may still be running on the cluster";
-        listener.onWarning(message);
+        warn(listener, message);
         return new Outcome(jobId, EngineJobStatus.UNKNOWABLE, lastMetrics, message);
     }
 
@@ -216,12 +248,30 @@ public class BatchJobRunner {
         return Optional.empty();
     }
 
-    /** A failure to record progress (e.g. a database hiccup) must not end the watch over the job. */
+    // A failure to record something (e.g. a database hiccup) must never end the watch over a job
+    // that is already on the cluster: it would keep running with nobody stopping or recording it.
+
+    private static void submitted(Listener listener, long jobId) {
+        try {
+            listener.onSubmitted(jobId);
+        } catch (RuntimeException e) {
+            log.warn("Cannot record the submission of engine job {}", jobId, e);
+        }
+    }
+
     private static void progress(Listener listener, EngineJobInfo info) {
         try {
             listener.onProgress(info);
         } catch (RuntimeException e) {
-            listener.onWarning("cannot record progress of engine job " + info.jobId() + ": " + e.getMessage());
+            warn(listener, "cannot record progress of engine job " + info.jobId() + ": " + e.getMessage());
+        }
+    }
+
+    private static void warn(Listener listener, String message) {
+        try {
+            listener.onWarning(message);
+        } catch (RuntimeException e) {
+            log.warn("{} (and recording this warning failed: {})", message, e.getMessage());
         }
     }
 

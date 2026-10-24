@@ -17,7 +17,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -87,16 +86,17 @@ class ZetaRestClientTest {
     }
 
     @Test
-    void logTailKeepsOnlyTheLastBytes() throws Exception {
-        byte[] log = "0123456789abcdefghij".getBytes(StandardCharsets.UTF_8);
+    void logTailKeepsOnlyTheLastBytes() {
+        ZetaRestClient.TailBuffer tail = new ZetaRestClient.TailBuffer(7);
+        tail.write("0123456789".getBytes(StandardCharsets.UTF_8));
+        tail.write("abcdefghij".getBytes(StandardCharsets.UTF_8));
+        ZetaRestClient.TailBuffer whole = new ZetaRestClient.TailBuffer(64);
+        whole.write("0123456789".getBytes(StandardCharsets.UTF_8));
 
-        EngineClient.LogContent tail = ZetaRestClient.tail(new ByteArrayInputStream(log), 7);
-        EngineClient.LogContent whole = ZetaRestClient.tail(new ByteArrayInputStream(log), 64);
-
-        assertThat(tail.text()).isEqualTo("defghij");
-        assertThat(tail.truncated()).isTrue();
-        assertThat(whole.text()).isEqualTo("0123456789abcdefghij");
-        assertThat(whole.truncated()).isFalse();
+        assertThat(tail.result().text()).isEqualTo("defghij");
+        assertThat(tail.result().truncated()).isTrue();
+        assertThat(whole.result().text()).isEqualTo("0123456789");
+        assertThat(whole.result().truncated()).isFalse();
     }
 
     @Test

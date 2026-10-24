@@ -14,6 +14,11 @@ public final class ErrorCodes {
 
     public static final int ENGINE_UNAVAILABLE = 2000;
     public static final int ENGINE_REQUEST_FAILED = 2001;
+    /**
+     * A request may have reached the engine but no answer came back (a timeout after sending, an
+     * interrupt). Unlike {@link #ENGINE_UNAVAILABLE}, repeating a submission is not known to be safe.
+     */
+    public static final int ENGINE_RESPONSE_LOST = 2002;
 
     public static final int DATASOURCE_CONNECT_FAILED = 3000;
 

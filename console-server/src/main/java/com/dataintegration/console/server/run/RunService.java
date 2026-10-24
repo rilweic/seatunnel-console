@@ -26,6 +26,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 /**
  * Starts runs on user request (docs/schema.md §4.1): the instance is created first as PENDING, then
@@ -146,6 +147,15 @@ public class RunService {
      * disabled. If XXL-JOB cannot take it, the instance is marked FAILED and the error rethrown.
      */
     public String start(NewRun run) {
+        return start(run, () -> true);
+    }
+
+    /**
+     * @param stillWanted asked after the run is recorded and right before it is handed to XXL-JOB;
+     *     false cancels it there. A backfill uses it so a cancel that came in meanwhile, and so found
+     *     no run to stop yet, still prevents the run.
+     */
+    public String start(NewRun run, BooleanSupplier stillWanted) {
         if (run.startupParams() != null) {
             run.startupParams().keySet().forEach(Variables::validateName);
         }
@@ -171,6 +181,12 @@ public class RunService {
         instance.setCreatedBy(CurrentUser.idOrNull());
         recorder.insert(instance);
         recorder.event(instance.getId(), null, RunEventType.CREATED, Level.INFO, run.createdMessage());
+        if (!stillWanted.getAsBoolean()) {
+            if (recorder.cancelPending(instance.getId(), "no longer wanted before it was started")) {
+                recorder.event(instance.getId(), null, RunEventType.FINISHED, Level.WARN, RunStatus.CANCELED + ": no longer wanted");
+            }
+            return instance.getId();
+        }
 
         XxlJobAdminClient client = xxlJobAdminClient.getIfAvailable();
         if (client == null) {

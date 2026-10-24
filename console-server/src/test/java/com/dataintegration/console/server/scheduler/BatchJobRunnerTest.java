@@ -164,7 +164,7 @@ class BatchJobRunnerTest {
 
     @Test
     void lostSubmitResponseWatchesTheJobTheEngineAlreadyHas() {
-        engine.submitFailure = new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "request timed out");
+        engine.submitFailure = new ConsoleException(ErrorCodes.ENGINE_RESPONSE_LOST, "request timed out");
         engine.respond(() -> info(EngineJobStatus.RUNNING, "0"));
         engine.respond(() -> info(EngineJobStatus.FINISHED, "3"));
 
@@ -172,7 +172,58 @@ class BatchJobRunnerTest {
 
         assertThat(outcome.succeeded()).isTrue();
         assertThat(outcome.engineJobId()).isEqualTo(engine.submittedJobId);
-        assertThat(listener.warnings).anyMatch(w -> w.contains("submission response lost"));
+        assertThat(listener.submitted).containsExactly(engine.submittedJobId);
+        assertThat(listener.warnings).anyMatch(w -> w.contains("no answer to the submission"));
+    }
+
+    @Test
+    void unconfirmedSubmissionEndsUnknowableInsteadOfFailingSoItIsNotRetried() {
+        engine.submitFailure = new ConsoleException(ErrorCodes.ENGINE_RESPONSE_LOST, "request timed out");
+        for (int i = 0; i < BatchJobRunner.SUBMIT_LOOKUPS; i++) {
+            engine.respond(() -> {
+                throw new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "no Zeta master reachable");
+            });
+        }
+
+        BatchJobRunner.Outcome outcome = runner((d, s) -> false).run(request(), listener, new CancelSignal());
+
+        assertThat(outcome.finalStatus()).isEqualTo(EngineJobStatus.UNKNOWABLE);
+        assertThat(outcome.engineJobId()).isEqualTo(engine.submittedJobId);
+        assertThat(outcome.errorMessage()).contains("check the cluster");
+    }
+
+    @Test
+    void submissionThatNeverReachedTheEngineIsThrown() {
+        engine.submitFailure = new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "connection refused");
+
+        assertThatThrownBy(() -> runner((d, s) -> false).run(request(), listener, new CancelSignal()))
+                .isInstanceOf(ConsoleException.class)
+                .hasMessageContaining("connection refused");
+    }
+
+    @Test
+    void failingToRecordProgressDoesNotAbandonTheJob() {
+        engine.respond(() -> info(EngineJobStatus.FINISHED, "10"));
+        BatchJobRunner.Listener broken = new BatchJobRunner.Listener() {
+            @Override
+            public void onSubmitted(long engineJobId) {
+                throw new IllegalStateException("database down");
+            }
+
+            @Override
+            public void onProgress(EngineJobInfo info) {
+                throw new IllegalStateException("database down");
+            }
+
+            @Override
+            public void onWarning(String message) {
+                throw new IllegalStateException("database down");
+            }
+        };
+
+        BatchJobRunner.Outcome outcome = runner((d, s) -> false).run(request(), broken, new CancelSignal());
+
+        assertThat(outcome.succeeded()).isTrue();
     }
 
     @Test

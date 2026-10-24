@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.project;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -79,10 +80,14 @@ public class ProjectService {
     }
 
     public ProjectView update(String id, String name, String description) {
-        Project project = requireEditable(id);
-        project.setName(name.trim());
-        project.setDescription(description);
-        projectMapper.updateById(project);
+        requireEditable(id);
+        // Only the edited columns, so a concurrent ownership transfer is not undone.
+        Project update = new Project();
+        update.setId(id);
+        update.setName(name.trim());
+        projectMapper.update(update, new LambdaUpdateWrapper<Project>()
+                .set(Project::getDescription, description)
+                .eq(Project::getId, id));
         return get(id);
     }
 

@@ -28,12 +28,15 @@ public class AuthService {
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final LoginAttempts loginAttempts;
+    private final AccountChanges accountChanges;
     private final AuthenticationManager authenticationManager;
 
-    public AuthService(SysUserMapper userMapper, PasswordEncoder passwordEncoder, LoginAttempts loginAttempts) {
+    public AuthService(
+            SysUserMapper userMapper, PasswordEncoder passwordEncoder, LoginAttempts loginAttempts, AccountChanges accountChanges) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.loginAttempts = loginAttempts;
+        this.accountChanges = accountChanges;
         DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService());
         provider.setPasswordEncoder(passwordEncoder);
         this.authenticationManager = new ProviderManager(provider);
@@ -84,8 +87,18 @@ public class AuthService {
         update.setMustChangePassword(false);
         update.setPasswordChangedAt(LocalDateTime.now());
         userMapper.updateById(update);
+        // Other sessions of this account end: they logged in before the password changed.
+        accountChanges.changed(user.getId());
+        // This session goes on with the account as it is now, not as the session remembered it: an
+        // administrator may have changed its role or disabled it meanwhile. The time is taken before
+        // reading, so a change committed after the read still counts as newer than this session.
+        Instant refreshedAt = Instant.now();
+        SysUser fresh = userMapper.selectById(user.getId());
+        if (fresh == null || !Boolean.TRUE.equals(fresh.getEnabled())) {
+            throw new ConsoleException(ErrorCodes.UNAUTHENTICATED, "账号已被禁用，请联系管理员");
+        }
         return authenticated(new ConsoleUser(
-                current.id(), current.username(), current.displayName(), current.role(), null, current.enabled(), false, Instant.now()));
+                fresh.getId(), fresh.getUsername(), fresh.getDisplayName(), fresh.getRole(), null, true, false, refreshedAt));
     }
 
     private static Authentication authenticated(ConsoleUser user) {

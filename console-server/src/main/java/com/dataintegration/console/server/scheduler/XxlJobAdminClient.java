@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
@@ -36,6 +38,10 @@ public class XxlJobAdminClient {
      */
     private static final List<String> JOB_MISSING_MESSAGES = List.of(
             "任务ID不存在", "任務ID不存在", "Job IDnot exist", "任务ID非法", "任務ID非法", "Job ID is illegal");
+
+    private static String abbreviate(String text) {
+        return text == null ? "" : text.length() <= 300 ? text : text.substring(0, 300) + "...";
+    }
 
     private static final ParameterizedTypeReference<Response<String>> RESPONSE_TYPE =
             new ParameterizedTypeReference<>() {};
@@ -167,6 +173,13 @@ public class XxlJobAdminClient {
                 log.warn("xxl-job-admin {} unreachable: {}", properties.adminAddresses().get(i), e.toString());
                 lastFailure = e;
                 continue;
+            } catch (RestClientResponseException e) {
+                // An HTTP error status (wrong token, admin error page): a failed call like any other,
+                // so callers record it (run FAILED, backfill PAUSED, schedule FAILED) instead of crashing.
+                throw new ConsoleException(ErrorCodes.SCHEDULER_REQUEST_FAILED,
+                        "xxl-job " + uri + " returned HTTP " + e.getStatusCode().value() + ": " + abbreviate(e.getResponseBodyAsString()));
+            } catch (RestClientException e) {
+                throw new ConsoleException(ErrorCodes.SCHEDULER_REQUEST_FAILED, "xxl-job " + uri + " failed: " + e.getMessage());
             }
             if (response != null && !response.isSuccess() && response.getMsg() != null
                     && JOB_MISSING_MESSAGES.stream().anyMatch(response.getMsg()::contains)) {
