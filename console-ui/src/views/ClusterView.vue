@@ -51,9 +51,8 @@ const groups = computed(() => {
   return [...map.entries()]
 })
 
+/** The overview fields shown, in this order; the engine's version and commit are left out. */
 const OVERVIEW_LABELS: Record<string, string> = {
-  projectVersion: '版本',
-  gitCommitAbbrev: '提交',
   workers: 'Worker 数',
   runningJobs: '运行中作业',
   pendingJobs: '排队作业',
@@ -63,6 +62,12 @@ const OVERVIEW_LABELS: Record<string, string> = {
   totalSlot: '总 slot',
   unassignedSlot: '空闲 slot',
 }
+
+const overviewItems = computed(() =>
+  Object.entries(OVERVIEW_LABELS)
+    .filter(([key]) => health.value?.overview?.[key] != null)
+    .map(([key, label]) => ({ key, label, value: health.value!.overview![key] })),
+)
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 const statusIcon = { OK: CircleCheckFilled, WARN: WarningFilled, ERROR: CircleCloseFilled }
@@ -127,11 +132,11 @@ onMounted(load)
       </el-table>
     </el-card>
 
-    <el-card v-if="health && Object.keys(health.overview).length" shadow="never">
+    <el-card v-if="overviewItems.length" shadow="never">
       <PageHeader title="集群概览" />
       <el-descriptions :column="4">
-        <el-descriptions-item v-for="(value, key) in health.overview" :key="key" :label="OVERVIEW_LABELS[key] ?? String(key)">
-          {{ value }}
+        <el-descriptions-item v-for="item in overviewItems" :key="item.key" :label="item.label">
+          {{ item.value }}
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
