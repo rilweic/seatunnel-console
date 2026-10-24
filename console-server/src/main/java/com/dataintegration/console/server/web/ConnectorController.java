@@ -35,8 +35,8 @@ public class ConnectorController {
     @GetMapping("/api/connectors/{type}/{plugin}/options")
     public Result<List<ConnectorOption>> options(
             @PathVariable String type, @PathVariable String plugin, @RequestParam(defaultValue = "false") boolean refresh) {
-        if (!type.equals("source") && !type.equals("sink")) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "type must be source or sink");
+        if (!type.equals("source") && !type.equals("sink") && !type.equals("transform")) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "type must be source, sink or transform");
         }
         if (!NAME.matcher(plugin).matches()) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "invalid connector name: " + plugin);

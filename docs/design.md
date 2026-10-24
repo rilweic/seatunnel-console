@@ -308,6 +308,12 @@ updated_at >= '$[yyyy-MM-dd-1] 00:00:00' and updated_at < '$[yyyy-MM-dd] 00:00:0
 - 脚本模式里直接写 `FieldEncrypt { key = "..." }` 会被当成明文密钥拒绝保存（`key` 这个名字只在 FieldEncrypt 块里当密钥看待）
 - 2026-10-25 在 3.0 集群上实测：生成的配置加密后，用同一个密钥 `mode = decrypt` 解密，和源表逐行一致（含空值）
 
+### 7.12 脚本模式插入 transform（2026-10-25）
+
+- 脚本编辑器上方"插入 transform"：常用插件（Sql、FieldRename、TableRename、Filter、Replace、Copy、JsonPath、RegexExtract、Split、FieldEncrypt、TableFilter）各有一个带中文注释的模板，可以先改再插入；下方列出该插件的全部参数，说明是集群 `/option-rules?type=transform` 的原文
+- 脚本里还没有 `transform {}` 时，在 `sink` 前面新建一个；已有时插到光标处
+- FieldEncrypt 模板用 `encrypt_key_id`，不写 `key`（7.11）
+
 ## 8. 变量
 
 照搬 DolphinScheduler 的写法，方便以后迁移。

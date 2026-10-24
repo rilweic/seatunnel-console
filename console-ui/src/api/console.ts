@@ -267,7 +267,7 @@ export interface ConnectorOption {
 }
 
 export const connectorApi = {
-  options: (type: 'source' | 'sink', plugin: string) => get<ConnectorOption[]>(`/connectors/${type}/${plugin}/options`),
+  options: (type: 'source' | 'sink' | 'transform', plugin: string) => get<ConnectorOption[]>(`/connectors/${type}/${plugin}/options`),
 }
 
 export interface VersionSummary {

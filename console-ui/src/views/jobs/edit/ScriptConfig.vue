@@ -6,6 +6,8 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { datasourceApi, jobApi, type DatasourceView, type JobView, type ValidationResult, type ValidationSpec, type VersionDetail } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
+
+import TransformInsertDialog from './TransformInsertDialog.vue'
 import { nowText, paramsProblem, toMap, toRows } from '@/utils/params'
 
 const props = defineProps<{ job: JobView; version: VersionDetail | null }>()
@@ -83,6 +85,26 @@ const jdbcDatasources = computed(() => datasources.value.filter((d) => d.type !=
 const esDatasources = computed(() => datasources.value.filter((d) => d.type === 'ELASTICSEARCH'))
 const pickedDatasource = ref('')
 const editor = ref<{ textarea?: HTMLTextAreaElement } | null>(null)
+
+const transformOpen = ref(false)
+
+/**
+ * Inserts a transform template: at the cursor when the script has a transform block, else as a
+ * new block in front of the sink.
+ */
+async function insertTransform(snippet: string) {
+  const textarea = editor.value?.textarea
+  if (/^\s*transform\s*\{/m.test(hocon.value)) {
+    const at = textarea ? textarea.selectionStart : hocon.value.length
+    hocon.value = hocon.value.slice(0, at) + snippet + '\n' + hocon.value.slice(at)
+  } else {
+    const block = `transform {\n${snippet}\n}\n\n`
+    const sink = hocon.value.search(/^\s*sink\s*\{/m)
+    hocon.value = sink >= 0 ? hocon.value.slice(0, sink) + block + hocon.value.slice(sink) : hocon.value + '\n' + block
+  }
+  await nextTick()
+  textarea?.focus()
+}
 
 /** Inserts the datasource reference at the cursor, or fills an empty datasource_id = "". */
 async function insertDatasource() {
@@ -190,9 +212,11 @@ onMounted(async () => {
       <el-option v-for="d in datasources" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
     </el-select>
     <el-button :disabled="!pickedDatasource" @click="insertDatasource">插入数据源</el-button>
+    <el-button @click="transformOpen = true">插入 transform</el-button>
     <span class="tip">在 source / sink 的连接器里写 <code>datasource_id</code>，密码不会出现在配置中。目前支持 Jdbc 和 Elasticsearch 连接器。</span>
   </div>
   <el-input ref="editor" v-model="hocon" type="textarea" :rows="24" class="code" spellcheck="false" />
+  <TransformInsertDialog v-model="transformOpen" @insert="insertTransform" />
 
   <div class="section-title">
     任务参数
