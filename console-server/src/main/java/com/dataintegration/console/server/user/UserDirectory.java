@@ -6,6 +6,7 @@ import com.dataintegration.console.server.persistence.mapper.SysUserMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -24,7 +25,7 @@ public class UserDirectory {
     public Map<String, String> names(Collection<String> ids) {
         var distinct = ids.stream().filter(Objects::nonNull).distinct().toList();
         if (distinct.isEmpty()) {
-            return Map.of();
+            return new HashMap<>();
         }
         return userMapper.selectByIds(distinct).stream()
                 .collect(Collectors.toMap(SysUser::getId, u -> u.getDisplayName() == null || u.getDisplayName().isBlank()

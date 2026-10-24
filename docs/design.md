@@ -124,7 +124,7 @@
 7. console 里配置多个 master 地址，一个连不上就换下一个
 8. **每个节点都要开启按作业拆分日志**：在 `config/log4j2.properties` 里把 `rootLogger.appenderRef.file.ref` 改为 `routingAppender`（3.0.0 默认是 `fileAppender`）。否则 `/logs/{jobId}` 返回空列表，console 看不到 SeaTunnel 作业日志（2026-10-24 实测）
 9. 用到 Jdbc 连接器时，每个节点的 `lib/` 下都要放对应的 JDBC 驱动
-10. SeaTunnel 在**接收任务时**就会校验数据源，比如 Jdbc 的 query 引用了不存在的表。这类失败直接返回 HTTP 500，**响应里没有根因**，也不会生成作业日志；根因只写在 master 节点的 `logs/seatunnel-engine-server.log` 里。console 会把这类失败标记为"提交被拒绝"，并在页面上给出这个提示
+10. SeaTunnel 在**接收任务时**就会校验数据源，比如 Jdbc 的 query 引用了不存在的表。这类失败直接返回 HTTP 500，**响应里没有根因**，也不会生成作业日志；根因只写在 master 节点的 `logs/seatunnel-engine-server.log` 里。console 会把这类失败标记为"提交被拒绝"，并在页面上给出这个提示。（2026-10-24 补充）console 会自己找根因：被拒绝时，用任务引用的数据源把每个 Jdbc source 的查询（query、table_path、table_list 的每一项，带上 where_condition）以 `where 1 = 0` 执行一遍，把数据库的报错写进这次运行的失败原因；脚本编辑器的"检查配置"按钮在保存前做同样的检查
 
 健康检查（"集群健康"页，2026-10-24 实现）分两层：
 

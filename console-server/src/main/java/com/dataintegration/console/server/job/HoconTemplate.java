@@ -13,6 +13,7 @@ import com.typesafe.config.ConfigValueFactory;
 import com.typesafe.config.ConfigValueType;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,6 +82,26 @@ public final class HoconTemplate {
         public String string(String key) {
             ConfigValue value = options.get(key);
             return value != null && value.valueType() == ConfigValueType.STRING ? (String) value.unwrapped() : null;
+        }
+
+        /** String fields of each object in a list option, e.g. the entries of Jdbc's table_list. */
+        public List<Map<String, String>> objects(String key) {
+            ConfigValue value = options.get(key);
+            List<Map<String, String>> result = new ArrayList<>();
+            if (value instanceof ConfigList list) {
+                for (ConfigValue item : list) {
+                    if (item instanceof ConfigObject object) {
+                        Map<String, String> fields = new LinkedHashMap<>();
+                        object.forEach((k, v) -> {
+                            if (v.valueType() == ConfigValueType.STRING) {
+                                fields.put(k, (String) v.unwrapped());
+                            }
+                        });
+                        result.add(fields);
+                    }
+                }
+            }
+            return result;
         }
     }
 

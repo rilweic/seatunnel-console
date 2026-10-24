@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -214,7 +215,7 @@ public class InstanceService {
     private Map<String, JobDefinition> jobs(List<JobInstance> instances) {
         List<String> ids = instances.stream().map(JobInstance::getJobDefinitionId).distinct().toList();
         if (ids.isEmpty()) {
-            return Map.of();
+            return new HashMap<>();
         }
         // Deleted jobs keep their runs; the logic-delete filter would hide their names, so select directly.
         return jobMapper.selectNamesIncludingDeleted(ids).stream()
@@ -224,7 +225,7 @@ public class InstanceService {
     private Map<String, Integer> versionNos(List<JobInstance> instances) {
         List<String> ids = instances.stream().map(JobInstance::getJobVersionId).distinct().toList();
         if (ids.isEmpty()) {
-            return Map.of();
+            return new HashMap<>();
         }
         return versionMapper.selectByIds(ids).stream().collect(Collectors.toMap(JobVersion::getId, JobVersion::getVersionNo));
     }

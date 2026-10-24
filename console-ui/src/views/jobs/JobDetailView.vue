@@ -293,6 +293,21 @@ async function loadRuns() {
   runs.value = (await instanceApi.list({ jobId, size: 20 })).items
 }
 
+const scriptCheck = ref<{ loading: boolean; checks: { level: 'ERROR' | 'WARN' | 'INFO'; message: string }[] | null }>({
+  loading: false,
+  checks: null,
+})
+
+/** Runs every Jdbc source query of the editor's content once under where 1 = 0. */
+async function checkScript() {
+  scriptCheck.value = { loading: true, checks: null }
+  try {
+    scriptCheck.value.checks = await jobApi.checkScript(jobId, { hocon: hocon.value, params: toMap(jobParams.value) })
+  } finally {
+    scriptCheck.value.loading = false
+  }
+}
+
 async function save() {
   saving.value = true
   try {
@@ -587,8 +602,18 @@ onMounted(async () => {
           <el-input v-model="remark" placeholder="版本备注（可选）" maxlength="512" class="remark" />
           <el-button type="primary" :loading="saving" :disabled="!dirty || readonly" @click="save">保存为新版本</el-button>
           <el-button @click="openPreview">预览渲染结果</el-button>
+          <el-button :loading="scriptCheck.loading" :disabled="readonly" @click="checkScript">检查配置</el-button>
           <span v-if="dirty" class="unsaved">有未保存的修改</span>
         </div>
+        <ul v-if="scriptCheck.checks" class="script-checks">
+          <li v-for="(c, i) in scriptCheck.checks" :key="i">
+            <el-tag size="small" :type="c.level === 'ERROR' ? 'danger' : c.level === 'WARN' ? 'warning' : 'success'">
+              {{ c.level === 'ERROR' ? '错误' : c.level === 'WARN' ? '警告' : '通过' }}
+            </el-tag>
+            {{ c.message }}
+          </li>
+          <li class="tip">在数据源上用 <code>where 1 = 0</code> 执行一遍每个 Jdbc source 的查询，提前发现表名、字段、语法错误；不会读取数据。</li>
+        </ul>
         </template>
       </el-tab-pane>
 
@@ -903,6 +928,20 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.script-checks {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.script-checks li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 13px;
 }
 
 .readonly {

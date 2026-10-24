@@ -8,6 +8,8 @@ import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.SubmitJobRequest;
 import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.job.RowCountValidator;
+import com.dataintegration.console.server.job.ScriptChecker;
+import com.dataintegration.console.server.job.wizard.WizardService;
 import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
@@ -31,6 +33,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -66,6 +69,7 @@ public class RunExecutor {
     private final JobService jobService;
     private final JobConfigRenderer renderer;
     private final RowCountValidator validator;
+    private final ScriptChecker scriptChecker;
     private final JobScheduleMapper scheduleMapper;
     private final EngineClient engineClient;
     private final EngineLogService engineLogService;
@@ -81,6 +85,7 @@ public class RunExecutor {
             JobService jobService,
             JobConfigRenderer renderer,
             RowCountValidator validator,
+            ScriptChecker scriptChecker,
             JobScheduleMapper scheduleMapper,
             EngineClient engineClient,
             EngineLogService engineLogService,
@@ -91,6 +96,7 @@ public class RunExecutor {
         this.jobService = jobService;
         this.renderer = renderer;
         this.validator = validator;
+        this.scriptChecker = scriptChecker;
         this.scheduleMapper = scheduleMapper;
         this.engineClient = engineClient;
         this.engineLogService = engineLogService;
@@ -160,7 +166,7 @@ public class RunExecutor {
         int maxAttempts = Math.max(1, instance.getMaxAttempts() == null ? 1 : instance.getMaxAttempts());
         BatchJobRunner.Outcome outcome = null;
         for (int attemptNo = 1; attemptNo <= maxAttempts && !signal.isCancelled(); attemptNo++) {
-            outcome = runAttempt(instance, attemptNo, prepared.request(), signal, schedulerLog);
+            outcome = runAttempt(instance, attemptNo, prepared, signal, schedulerLog);
             if (outcome.succeeded() || outcome.finalStatus() == EngineJobStatus.CANCELED) {
                 break;
             }
@@ -204,7 +210,7 @@ public class RunExecutor {
     private BatchJobRunner.Outcome runAttempt(
             JobInstance instance,
             int attemptNo,
-            SubmitJobRequest request,
+            Prepared prepared,
             CancelSignal signal,
             Consumer<String> schedulerLog) {
         JobInstanceAttempt attempt = new JobInstanceAttempt();
@@ -217,14 +223,15 @@ public class RunExecutor {
 
         BatchJobRunner.Outcome outcome;
         try {
-            outcome = runner.run(request, new RecordingListener(instance.getId(), attempt, schedulerLog), signal);
+            outcome = runner.run(prepared.request(), new RecordingListener(instance.getId(), attempt, schedulerLog), signal);
         } catch (ConsoleException e) {
             attempt.setEngineStatus(EngineJobStatus.FAILED.name());
             attempt.setErrorMessage(RunRecorder.clip(e.getMessage()));
             attempt.setFinishedAt(LocalDateTime.now());
             recorder.update(attempt);
-            recorder.event(instance.getId(), attemptNo, RunEventType.ERROR, Level.ERROR, REJECTED + e.getMessage());
-            return new BatchJobRunner.Outcome(NOT_SUBMITTED, EngineJobStatus.FAILED, Map.of(), REJECTED + e.getMessage());
+            String message = REJECTED + e.getMessage() + rejectionCause(prepared);
+            recorder.event(instance.getId(), attemptNo, RunEventType.ERROR, Level.ERROR, message);
+            return new BatchJobRunner.Outcome(NOT_SUBMITTED, EngineJobStatus.FAILED, Map.of(), message);
         }
 
         if (Thread.interrupted()) {
@@ -269,6 +276,23 @@ public class RunExecutor {
      * submission and a masked copy for the record. From here on variables_json holds the final
      * value of every variable; the startup params stay in startup_params_json.
      */
+    /**
+     * SeaTunnel does not say why it rejected a job; most often a source query fails. Running the
+     * same queries here usually names the actual database error. Empty when nothing is found.
+     */
+    private String rejectionCause(Prepared prepared) {
+        try {
+            List<String> errors = scriptChecker.check(prepared.rendered().template()).stream()
+                    .filter(c -> c.level() == WizardService.Level.ERROR)
+                    .map(WizardService.Check::message)
+                    .toList();
+            return errors.isEmpty() ? "" : "\nconsole 检查发现：" + String.join("；", errors);
+        } catch (RuntimeException e) {
+            log.warn("Could not look for the rejection cause: {}", e.toString());
+            return "";
+        }
+    }
+
     /** What prepare() worked out for the run: the submission, plus what validation needs afterwards. */
     private record Prepared(SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation) {}
 

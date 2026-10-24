@@ -47,6 +47,8 @@ public class JobController {
 
     public record WizardRequest(WizardForm form, Map<String, String> params) {}
 
+    public record ScriptCheckRequest(@NotBlank String hocon, Map<String, String> params) {}
+
     public record ValidationTestRequest(
             @NotBlank String hocon, Map<String, String> params, ValidationSpec validation, LocalDateTime scheduledTime) {}
 
@@ -99,6 +101,12 @@ public class JobController {
     @PostMapping("/{id}/preview")
     public Result<JobService.PreviewResult> preview(@PathVariable String id, @Valid @RequestBody PreviewRequest body) {
         return Result.ok(jobService.preview(id, body.hocon(), body.params(), body.startupParams(), body.scheduledTime()));
+    }
+
+    /** Checks unsaved script content: every Jdbc source query is run once under where 1 = 0. */
+    @PostMapping("/{id}/check")
+    public Result<List<WizardService.Check>> checkScript(@PathVariable String id, @Valid @RequestBody ScriptCheckRequest body) {
+        return Result.ok(jobService.checkScript(id, body.hocon(), body.params()));
     }
 
     @PostMapping("/{id}/wizard/precheck")

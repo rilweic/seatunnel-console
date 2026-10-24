@@ -241,6 +241,8 @@ export const jobApi = {
   wizardPrecheck: (id: string, body: { form: WizardForm; params?: Record<string, string> }) =>
     post<PrecheckResult>(`/jobs/${id}/wizard/precheck`, body),
   switchToScript: (id: string) => post<JobView>(`/jobs/${id}/switch-to-script`),
+  checkScript: (id: string, body: { hocon: string; params?: Record<string, string> }) =>
+    post<PrecheckResult['checks']>(`/jobs/${id}/check`, body),
   testValidation: (
     id: string,
     body: { hocon: string; params?: Record<string, string>; validation: ValidationSpec; scheduledTime?: string },

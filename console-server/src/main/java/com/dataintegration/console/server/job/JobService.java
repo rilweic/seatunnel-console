@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -108,6 +109,7 @@ public class JobService {
     private final RowCountValidator validator;
     private final WizardService wizardService;
     private final UserDirectory users;
+    private final ScriptChecker scriptChecker;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -122,7 +124,8 @@ public class JobService {
             JobConfigRenderer renderer,
             RowCountValidator validator,
             WizardService wizardService,
-            UserDirectory users) {
+            UserDirectory users,
+            ScriptChecker scriptChecker) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -136,6 +139,7 @@ public class JobService {
         this.validator = validator;
         this.wizardService = wizardService;
         this.users = users;
+        this.scriptChecker = scriptChecker;
     }
 
     /** @param mine only the current user's jobs */
@@ -325,6 +329,16 @@ public class JobService {
                 "回滚到 v" + old.getVersionNo());
     }
 
+    /** Runs the Jdbc source queries of unsaved script content under where 1 = 0 (docs/design.md §4.3). */
+    public List<WizardService.Check> checkScript(String jobId, String hocon, Map<String, String> params) {
+        JobDefinition job = requireEditable(jobId);
+        LocalDateTime now = LocalDateTime.now();
+        HoconTemplate template = HoconTemplate.parse(
+                Variables.render(hocon, renderer.variables(job, params, Map.of(), now, PREVIEW_INSTANCE_ID), now));
+        requireOwnersDatasources(job, template.datasourceRefs().stream().map(DatasourceRef::datasourceId).toList());
+        return scriptChecker.check(template);
+    }
+
     /** Checks a wizard form against the live datasources and returns what saving it would generate. */
     public WizardService.PrecheckResult wizardPrecheck(String jobId, WizardForm form, Map<String, String> params) {
         JobDefinition job = requireEditable(jobId);
@@ -483,7 +497,7 @@ public class JobService {
     private Map<String, Integer> versionNos(List<JobDefinition> jobs) {
         List<String> ids = jobs.stream().map(JobDefinition::getCurrentVersionId).filter(v -> v != null).toList();
         if (ids.isEmpty()) {
-            return Map.of();
+            return new HashMap<>();
         }
         return versionMapper
                 .selectList(new LambdaQueryWrapper<JobVersion>()
@@ -516,7 +530,7 @@ public class JobService {
 
     private Map<String, String> projectNames(List<String> projectIds) {
         if (projectIds.isEmpty()) {
-            return Map.of();
+            return new HashMap<>();
         }
         return projectMapper.selectByIds(projectIds.stream().distinct().toList()).stream()
                 .collect(Collectors.toMap(p -> p.getId(), p -> p.getName()));
