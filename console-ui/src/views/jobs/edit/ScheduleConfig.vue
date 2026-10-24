@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { scheduleApi, type JobView, type ScheduleForm, type ScheduleView } from '@/api/console'
+import CronEditor from '@/components/CronEditor.vue'
 import { formatTime } from '@/utils/format'
 import { errorMessage } from '@/utils/params'
 
@@ -96,12 +97,15 @@ onMounted(async () => {
         <span v-if="!job.currentVersionNo" class="tip gap">先在「同步配置」保存一个版本才能启用</span>
         <span v-else class="tip gap">定时运行总是使用触发时的当前版本；任务详情页也可以直接启用或暂停</span>
       </el-form-item>
-      <el-form-item label="Cron 表达式">
-        <el-input v-model="form.cron" class="cron" placeholder="秒 分 时 日 月 周，如 0 0 2 * * ?" />
+      <el-form-item label="运行时间">
+        <CronEditor v-model="form.cron" />
         <div class="cron-help">
           <div v-if="cronError" class="cron-error">{{ cronError }}</div>
-          <div v-else-if="cronPreview.length" class="tip">接下来 {{ cronPreview.length }} 次：{{ cronPreview.map(formatTime).join('，') }}</div>
-          <div class="tip">格式：秒 分 时 日 月 周，日和周中必须有一个是 <code>?</code>。示例：每天 2 点 <code>0 0 2 * * ?</code>，每小时 <code>0 0 * * * ?</code>，每周一 1:30 <code>0 30 1 ? * MON</code></div>
+          <div v-else-if="cronPreview.length" class="next">
+            <span class="tip">接下来 {{ cronPreview.length }} 次：</span>
+            <el-tag v-for="t in cronPreview" :key="t" type="info" disable-transitions>{{ formatTime(t) }}</el-tag>
+          </div>
+          <div class="tip">对应 cron 表达式：<code>{{ form.cron }}</code></div>
         </div>
       </el-form-item>
       <el-form-item label="失败重试次数">
@@ -122,12 +126,11 @@ onMounted(async () => {
           <el-radio value="COVER_EARLY">停止上次，执行本次</el-radio>
         </el-radio-group>
       </el-form-item>
-      <el-form-item label="错过的触发">
+      <el-form-item label="错过的定时运行">
         <el-radio-group v-model="form.misfireStrategy">
           <el-radio value="DO_NOTHING">忽略</el-radio>
           <el-radio value="FIRE_ONCE_NOW">立即补一次</el-radio>
         </el-radio-group>
-        <span class="tip gap">XXL-JOB 停机期间错过的触发</span>
       </el-form-item>
     </el-form>
     <div class="save-bar">
@@ -151,13 +154,20 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
-.cron {
-  width: 260px;
+.cron-help {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 10px;
+  line-height: 1.6;
 }
 
-.cron-help {
-  width: 100%;
-  line-height: 1.6;
+.next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .cron-error {
