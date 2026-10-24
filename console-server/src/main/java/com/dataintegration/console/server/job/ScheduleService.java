@@ -127,6 +127,26 @@ public class ScheduleService {
         return view(schedule, jobService.require(jobId));
     }
 
+    /**
+     * Gives a copied job the source job's schedule settings, disabled. Best effort: false when the
+     * source has no schedule or it could not be saved (e.g. XXL-JOB is down); the copy stands.
+     */
+    public boolean copyDisabled(String fromJobId, String toJobId) {
+        JobSchedule from = scheduleMapper.selectById(fromJobId);
+        if (from == null) {
+            return false;
+        }
+        try {
+            save(toJobId, new ScheduleCommand(from.getCron(), false, from.getFailRetryCount(), from.getRetryIntervalSeconds(),
+                    from.getTimeoutSeconds(), ScheduleSpec.BlockStrategy.valueOf(from.getBlockStrategy()),
+                    ScheduleSpec.MisfireStrategy.valueOf(from.getMisfireStrategy())));
+            return true;
+        } catch (RuntimeException e) {
+            log.warn("Cannot copy the schedule of job {} to {}: {}", fromJobId, toJobId, e.getMessage());
+            return false;
+        }
+    }
+
     public List<String> preview(String cron) {
         CronSchedule.parseSchedule(cron, LocalDateTime.now());
         return CronSchedule.nextFireTimes(cron, LocalDateTime.now(), PREVIEW_COUNT).stream()

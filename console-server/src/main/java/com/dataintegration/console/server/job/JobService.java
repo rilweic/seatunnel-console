@@ -209,6 +209,54 @@ public class JobService {
     }
 
     /**
+     * A new job with the source job's current version as its v1 (docs/design.md §7.9): config,
+     * parameters and validation, copied as saved, without re-running the precheck. The copier owns
+     * the new job, so it may only use the copier's own datasources. Runs, backfills and older
+     * versions stay with the source job; the schedule is copied separately, disabled.
+     *
+     * @param projectId null for the source job's project
+     */
+    @Transactional
+    public JobView copy(String id, String name, String projectId) {
+        JobDefinition source = require(id);
+        JobView created = create(projectId == null ? source.getProjectId() : projectId, name, source.getJobType(),
+                source.getEditMode(), source.getDescription());
+        if (source.getCurrentVersionId() == null) {
+            return created;
+        }
+        JobDefinition job = require(created.id());
+        JobVersion from = requireVersion(source.getCurrentVersionId());
+        List<String> datasourceIds = versionDatasourceMapper.selectList(new LambdaQueryWrapper<JobVersionDatasource>()
+                        .eq(JobVersionDatasource::getJobVersionId, from.getId()))
+                .stream().map(JobVersionDatasource::getDatasourceId).toList();
+        for (String dsId : datasourceIds) {
+            var ds = datasourceService.requireLocked(dsId);
+            if (!Objects.equals(ds.getCreatedBy(), job.getCreatedBy())) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "不能复制：这个任务用到的数据源「" + ds.getName()
+                        + "」不是你的。复制出的任务归你所有，只能使用你自己的数据源；可以请数据源的创建人复制，或先建一个自己的数据源");
+            }
+        }
+
+        JobVersion version = new JobVersion();
+        version.setJobDefinitionId(job.getId());
+        version.setVersionNo(1);
+        version.setHoconTemplate(from.getHoconTemplate());
+        version.setParamsJson(from.getParamsJson());
+        version.setValidationJson(from.getValidationJson());
+        version.setFormJson(from.getFormJson());
+        version.setRemark("复制自 " + source.getName() + " v" + from.getVersionNo());
+        version.setCreatedBy(CurrentUser.idOrNull());
+        versionMapper.insert(version);
+        datasourceIds.forEach(dsId -> versionDatasourceMapper.insert(new JobVersionDatasource(version.getId(), dsId)));
+
+        JobDefinition current = new JobDefinition();
+        current.setId(job.getId());
+        current.setCurrentVersionId(version.getId());
+        jobMapper.updateById(current);
+        return view(require(job.getId()), 1);
+    }
+
+    /**
      * Name, description and project; none of them is part of a version. Moving a job needs edit
      * rights on the target project, and from then on its runs resolve that project's parameters.
      *

@@ -6,10 +6,14 @@ import { useRouter } from 'vue-router'
 
 import { jobApi, projectApi, type JobView, type ProjectView, type RunStatus } from '@/api/console'
 import { formatTime, statusTag, statusText } from '@/utils/format'
+import CopyJobDialog from '@/components/CopyJobDialog.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
 const router = useRouter()
+/** The job the copy dialog is open for. */
+const copying = ref<JobView | null>(null)
+const copyOpen = computed({ get: () => copying.value !== null, set: (open) => { if (!open) copying.value = null } })
 
 const rows = ref<JobView[]>([])
 const total = ref(0)
@@ -145,10 +149,11 @@ onMounted(() => {
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="190" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click.stop="router.push(`/jobs/${row.id}`)">详情</el-button>
           <el-button link type="primary" :disabled="!row.editable" @click.stop="router.push(`/jobs/${row.id}/edit`)">编辑</el-button>
+          <el-button link type="primary" @click.stop="copying = row">复制</el-button>
           <el-button link type="danger" :disabled="!row.editable" @click.stop="remove(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -190,6 +195,7 @@ onMounted(() => {
       <el-button type="primary" :loading="dialog.saving" @click="create">创建并编辑</el-button>
     </template>
   </el-dialog>
+  <CopyJobDialog v-model="copyOpen" :job="copying" />
 </template>
 
 <style scoped>

@@ -256,6 +256,8 @@ export const jobApi = {
   create: (body: { projectId: string; name: string; jobType: 'BATCH'; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
     post<JobView>('/jobs', body),
   update: (id: string, body: { name: string; description?: string | null; projectId?: string }) => put<JobView>(`/jobs/${id}`, body),
+  copy: (id: string, body: { name: string; projectId: string }) =>
+    post<{ job: JobView; scheduleCopied: boolean }>(`/jobs/${id}/copy`, body),
   overview: (id: string) => get<JobOverview>(`/jobs/${id}/overview`),
   remove: (id: string) => del<void>(`/jobs/${id}`),
   saveVersion: (

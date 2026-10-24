@@ -47,7 +47,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DuplicateKeyException.class)
     public ResponseEntity<Result<Void>> handleDuplicate(DuplicateKeyException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Result.fail(ErrorCodes.CONFLICT, "name already exists"));
+                .body(Result.fail(ErrorCodes.CONFLICT, "名称已存在"));
     }
 
     /** A request parameter of the wrong type, e.g. a page number that is not a number. */

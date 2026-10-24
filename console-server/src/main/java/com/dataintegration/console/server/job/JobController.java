@@ -39,6 +39,12 @@ public class JobController {
             String editMode,
             @Size(max = 512) String description) {}
 
+    /** @param projectId null for the source job's project */
+    public record CopyRequest(@NotBlank @Size(max = 128) String name, String projectId) {}
+
+    /** @param scheduleCopied whether the source job's schedule was copied (always disabled) */
+    public record CopyResult(JobView job, boolean scheduleCopied) {}
+
     /** @param projectId null keeps the job in its project */
     public record UpdateRequest(@NotBlank @Size(max = 128) String name, @Size(max = 512) String description, String projectId) {}
 
@@ -58,9 +64,11 @@ public class JobController {
             @NotBlank String hocon, Map<String, String> params, Map<String, String> startupParams, LocalDateTime scheduledTime) {}
 
     private final JobService jobService;
+    private final ScheduleService scheduleService;
 
-    public JobController(JobService jobService) {
+    public JobController(JobService jobService, ScheduleService scheduleService) {
         this.jobService = jobService;
+        this.scheduleService = scheduleService;
     }
 
     @GetMapping
@@ -81,6 +89,13 @@ public class JobController {
     @PostMapping
     public Result<JobView> create(@Valid @RequestBody CreateRequest body) {
         return Result.ok(jobService.create(body.projectId(), body.name(), body.jobType(), body.editMode(), body.description()));
+    }
+
+    @PostMapping("/{id}/copy")
+    public Result<CopyResult> copy(@PathVariable String id, @Valid @RequestBody CopyRequest body) {
+        JobView job = jobService.copy(id, body.name(), body.projectId());
+        // After the copy committed: the schedule goes through XXL-JOB, which must not hold up the copy.
+        return Result.ok(new CopyResult(job, scheduleService.copyDisabled(id, job.id())));
     }
 
     @PutMapping("/{id}")

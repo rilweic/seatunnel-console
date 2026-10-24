@@ -13,6 +13,7 @@ import BackButton from '@/components/BackButton.vue'
 import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { formatTime, statusTag, statusText } from '@/utils/format'
 import { textTooltip } from '@/utils/tooltip'
+import CopyJobDialog from '@/components/CopyJobDialog.vue'
 
 import BackfillDialog from './detail/BackfillDialog.vue'
 import JobBackfillsPane from './detail/JobBackfillsPane.vue'
@@ -23,6 +24,7 @@ import RunDialog from './detail/RunDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const copyOpen = ref(false)
 const jobId = route.params.id as string
 
 const job = ref<JobView | null>(null)
@@ -106,11 +108,12 @@ onMounted(load)
             <el-button type="primary" :disabled="!!runTip" @click="runDialog = true">立即运行</el-button>
           </span>
         </el-tooltip>
-        <el-dropdown trigger="click" :disabled="!job.editable">
+        <el-dropdown trigger="click">
           <el-button>更多<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item class="danger-item" @click="remove">删除任务</el-dropdown-item>
+              <el-dropdown-item @click="copyOpen = true">复制任务</el-dropdown-item>
+              <el-dropdown-item class="danger-item" :disabled="!job.editable" divided @click="remove">删除任务</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -135,6 +138,7 @@ onMounted(load)
 
   <RunDialog v-model="runDialog" :job-id="jobId" />
   <BackfillDialog v-model="backfillDialog" :job-id="jobId" :version-no="job?.currentVersionNo ?? null" @created="onBackfillCreated" />
+  <CopyJobDialog v-model="copyOpen" :job="job" />
 </template>
 
 <style scoped>
