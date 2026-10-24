@@ -180,9 +180,10 @@
 4. 不管是 XXL-JOB 处理器还是 console，日志里都不能打印渲染后的配置
 5. 和集群通信必须开启 HTTPS 和 Basic 认证
 6. 防止用户自己把密码写进可见的地方（2026-10-24 补充）：
-   - 整份配置（env、source、transform、sink，嵌套对象和数组都查）里选项名像凭据的（含 password、passwd、secret、token、credential、api_key、access_key），或者值里带密码的（URL 参数 `password=...`、`scheme://user:密码@host`），保存版本时直接拒绝，提示改用数据源；向导的高级选项同样适用
+   - 整份配置（env、source、transform、sink，嵌套对象和数组都查）里选项名像凭据的（含 password、passwd、secret、token、credential、api_key、access_key），或者值里带密码的（URL / 连接串里参数名像凭据的，按解码后的名字判断，如 `clientCertificateKeyStorePassword=`、`%70assword=`；以及 `scheme://user:密码@host`），保存版本时直接拒绝，提示改用数据源；向导的高级选项同样适用
    - 打码版本（预览、运行归档）把这类选项和 URL 里的密码一律替换成 `******`，包括配置里直接写的
-   - 数据源归属不只在保存时检查，每次渲染（运行、预览、检查）都按渲染后的配置再查一次：防止保存时写 `datasource_id = "${ds}"`，运行时用启动参数把它换成别人的数据源
+   - 选项名像凭据时，不管值是普通值、数组还是对象，只要有内容就算
+- 数据源归属不只在保存时检查，每次渲染（运行、预览、检查）都按渲染后的配置再查一次：防止保存时写 `datasource_id = "${ds}"`，运行时用启动参数把它换成别人的数据源
    - 数据源的"连接参数"（拼在 JDBC URL 后面、明文保存）里写 password / sslpassword 之类，保存和测试连接时拒绝
    - "测试校验"会用数据源的凭据执行计数，所以和保存版本一样，只能用任务创建人自己的数据源
 

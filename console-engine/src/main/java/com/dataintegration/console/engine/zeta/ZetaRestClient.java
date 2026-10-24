@@ -385,10 +385,13 @@ public class ZetaRestClient implements EngineClient {
                         ErrorCodes.ENGINE_RESPONSE_LOST, "interrupted while calling Zeta " + stripQuery(path), e);
             }
             if (response.statusCode() / 100 != 2) {
+                // After an earlier master may have taken the request, this answer does not tell
+                // whether it ran: still unknown, never a plain failure that would be retried.
                 throw new ConsoleException(
-                        ErrorCodes.ENGINE_REQUEST_FAILED,
+                        maybeDelivered ? ErrorCodes.ENGINE_RESPONSE_LOST : ErrorCodes.ENGINE_REQUEST_FAILED,
                         "Zeta " + stripQuery(path) + " returned HTTP " + response.statusCode()
-                                + ": " + abbreviate(response.body()));
+                                + ": " + abbreviate(response.body())
+                                + (maybeDelivered ? " (after an earlier master did not answer)" : ""));
             }
             String responseBody = response.body();
             return responseBody == null || responseBody.isBlank()

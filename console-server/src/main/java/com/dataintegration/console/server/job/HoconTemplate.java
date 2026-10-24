@@ -12,6 +12,8 @@ import com.typesafe.config.ConfigValue;
 import com.typesafe.config.ConfigValueFactory;
 import com.typesafe.config.ConfigValueType;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,11 +42,13 @@ public final class HoconTemplate {
     public static final String MASK = "******";
 
     /**
-     * A credential inside a string value: a {@code password=} style query parameter (JDBC URLs) or
-     * the password of {@code scheme://user:password@host}. Groups 1 and 3 are kept, 2 and 4 masked.
+     * Where a string value may carry a credential: every {@code key=value} parameter (JDBC URLs,
+     * connection strings; group 2 is the key) and the password of {@code scheme://user:password@host}
+     * (group 5). Which parameters are credentials is decided on the decoded key, see
+     * {@link #isSecretParam}.
      */
     private static final Pattern SECRET_IN_VALUE = Pattern.compile(
-            "(?i)((?:^|[?&;])(?:password|passwd|pwd|sslpassword|secret|token)=)([^&;\\s]+)|(://[^/:@\\s]+:)([^@/\\s]+)(?=@)");
+            "((?:^|[?&;])([^=&;?\\s]+)=)([^&;\\s]*)|(://[^/:@\\s]+:)([^@/\\s]+)(?=@)");
     private static final List<String> SECTIONS = List.of("source", "sink");
 
     public record DatasourceRef(String section, String connector, String datasourceId) {}
@@ -137,6 +141,31 @@ public final class HoconTemplate {
     }
 
     /**
+     * A URL or connection-string parameter that holds a credential, judged on the decoded name so
+     * {@code clientCertificateKeyStorePassword} or an encoded {@code %70assword} count as well.
+     */
+    static boolean isSecretParam(String rawKey) {
+        String key;
+        try {
+            key = URLDecoder.decode(rawKey, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            key = rawKey;
+        }
+        return isSecretKey(key) || key.equalsIgnoreCase("pwd");
+    }
+
+    /** Whether a string carries a credential: a secret parameter with a value, or a URL password. */
+    private static boolean carriesSecret(String text) {
+        Matcher m = SECRET_IN_VALUE.matcher(text);
+        while (m.find()) {
+            if (m.group(5) != null || (isSecretParam(m.group(2)) && !m.group(3).isEmpty())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Credentials written anywhere in the config (env, source, transform, sink; nested objects and
      * lists included), as paths like {@code source.Jdbc.password} or {@code source.Jdbc.url}: an
      * option named like a credential, or a value carrying one (a password in a URL). Saving a
@@ -164,7 +193,7 @@ public final class HoconTemplate {
             }
         } else {
             String text = text(value);
-            if (text != null && SECRET_IN_VALUE.matcher(text).find()) {
+            if (text != null && carriesSecret(text)) {
                 found.add(path);
             }
         }
@@ -269,11 +298,13 @@ public final class HoconTemplate {
             return ConfigValueFactory.fromIterable(items);
         }
         String text = text(value);
-        if (text != null && value.valueType() == ConfigValueType.STRING && SECRET_IN_VALUE.matcher(text).find()) {
+        if (text != null && value.valueType() == ConfigValueType.STRING && carriesSecret(text)) {
             Matcher m = SECRET_IN_VALUE.matcher(text);
             StringBuilder out = new StringBuilder();
             while (m.find()) {
-                String replacement = m.group(1) != null ? m.group(1) + MASK : m.group(3) + MASK;
+                String replacement = m.group(5) != null
+                        ? m.group(4) + MASK
+                        : isSecretParam(m.group(2)) ? m.group(1) + MASK : m.group();
                 m.appendReplacement(out, Matcher.quoteReplacement(replacement));
             }
             m.appendTail(out);

@@ -160,4 +160,24 @@ class HoconTemplateTest {
         assertThat(masked).doesNotContain("p@ss").doesNotContain("s3cret").doesNotContain("hunter2").doesNotContain("\"v\"")
                 .contains("sslmode=require").contains("u:******@api");
     }
+
+    @Test
+    void credentialParametersAreJudgedOnTheirDecodedName() {
+        HoconTemplate template = HoconTemplate.parse(
+                """
+                env { job.mode = "BATCH" }
+                source {
+                  Jdbc {
+                    url = "jdbc:mysql://db/shop?useSSL=true&clientCertificateKeyStorePassword=ks1&%70assword=enc2"
+                    query = "select * from t where a=1 and token_count > 0"
+                  }
+                }
+                sink { Console {} }
+                """);
+
+        assertThat(template.explicitSecrets()).containsExactly("source.Jdbc.url");
+        String masked = template.renderMasked((connector, id) -> Map.of());
+        assertThat(masked).doesNotContain("ks1").doesNotContain("enc2")
+                .contains("useSSL=true").contains("where a=1 and token_count > 0");
+    }
 }

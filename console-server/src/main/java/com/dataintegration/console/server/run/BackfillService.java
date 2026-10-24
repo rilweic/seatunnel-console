@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -208,8 +209,12 @@ public class BackfillService {
             return;
         }
         int index = batch.getNextIndex();
-        long created = instanceMapper.selectCount(
-                new LambdaQueryWrapper<JobInstance>().eq(JobInstance::getBackfillBatchId, batch.getId()));
+        // Scheduled times that got a run. Times, not runs: a time whose hand-over failed and was
+        // tried again has several runs, and counting those would hide a lost slot.
+        long created = instanceMapper.selectObjs(new QueryWrapper<JobInstance>()
+                        .select("count(distinct scheduled_time)")
+                        .eq("backfill_batch_id", batch.getId()))
+                .stream().findFirst().map(o -> ((Number) o).longValue()).orElse(0L);
         if (created < index) {
             // A slot was claimed but its run never recorded (the console stopped in between): hand
             // it back, so that scheduled time is not skipped.

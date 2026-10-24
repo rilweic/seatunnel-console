@@ -100,6 +100,33 @@ class ZetaRestClientTest {
     }
 
     @Test
+    void errorFromTheNextMasterAfterATimeoutStaysUnknown() throws Exception {
+        HttpServer silent = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        silent.createContext("/submit-job", exchange -> {
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.close();
+        });
+        silent.start();
+        try {
+            respond("/submit-job", 500, "{\"message\":\"boom\"}");
+            ZetaRestClient client = new ZetaRestClient(new ZetaClusterConfig(
+                    List.of("http://127.0.0.1:" + silent.getAddress().getPort(), baseUrl), null, null,
+                    Duration.ofSeconds(1), Duration.ofMillis(300)));
+
+            assertThatThrownBy(() -> client.submit(SubmitJobRequest.fresh("j", "cfg").withJobId(5000000000000000001L)))
+                    .isInstanceOf(ConsoleException.class)
+                    .extracting(e -> ((ConsoleException) e).getCode())
+                    .isEqualTo(ErrorCodes.ENGINE_RESPONSE_LOST);
+        } finally {
+            silent.stop(0);
+        }
+    }
+
+    @Test
     void stopPostsJsonBody() {
         respond("/stop-job", 200, "{\"jobId\": 7}");
 

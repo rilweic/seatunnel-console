@@ -97,8 +97,14 @@ public class AuthService {
         if (fresh == null || !Boolean.TRUE.equals(fresh.getEnabled())) {
             throw new ConsoleException(ErrorCodes.UNAUTHENTICATED, "账号已被禁用，请联系管理员");
         }
+        // An administrator reset the password right after this change: that reset wins, and this
+        // session must not outlive it with a newer time.
+        if (!update.getPasswordHash().equals(fresh.getPasswordHash())) {
+            throw new ConsoleException(ErrorCodes.UNAUTHENTICATED, "密码刚被管理员重置，请用新密码重新登录");
+        }
         return authenticated(new ConsoleUser(
-                fresh.getId(), fresh.getUsername(), fresh.getDisplayName(), fresh.getRole(), null, true, false, refreshedAt));
+                fresh.getId(), fresh.getUsername(), fresh.getDisplayName(), fresh.getRole(), null, true,
+                Boolean.TRUE.equals(fresh.getMustChangePassword()), refreshedAt));
     }
 
     private static Authentication authenticated(ConsoleUser user) {

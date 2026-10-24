@@ -266,6 +266,21 @@ class BatchJobRunnerTest {
     }
 
     @Test
+    void jobFoundCanceledAfterLosingContactIsStillAFailure() {
+        for (int i = 0; i < BatchJobRunner.MAX_POLL_FAILURES; i++) {
+            engine.respond(() -> {
+                throw new ConsoleException(ErrorCodes.ENGINE_REQUEST_FAILED, "job-info returned HTTP 500");
+            });
+        }
+        engine.respond(() -> info(EngineJobStatus.CANCELED, "5"));
+
+        BatchJobRunner.Outcome outcome = runner((d, s) -> false).run(request(), listener, new CancelSignal());
+
+        assertThat(outcome.finalStatus()).isEqualTo(EngineJobStatus.FAILED);
+        assertThat(engine.stopped).isEmpty();
+    }
+
+    @Test
     void failedStopIsNotReportedAsCanceled() {
         engine.respond(() -> info(EngineJobStatus.RUNNING, "5"));
         engine.stopFailure = new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "no Zeta master reachable");
