@@ -1,4 +1,5 @@
 import type { NameRule, WizardForm, WizardTable } from '@/api/console'
+import { newFieldNames } from '@/utils/fieldProcessing'
 
 /*
  * Target names of the job wizard (docs/design.md §7.8). The same rules run on the server
@@ -97,12 +98,18 @@ export function fieldNamesProblem(form: WizardForm, columns: Record<string, { na
   for (const t of form.source.tables) {
     const all = columns[t.name]?.map((c) => c.name)
     if (!all) continue
-    const fields = syncedFields(t, all)
+    const dropped = new Set((t.extracts ?? []).filter((e) => e.dropSource).map((e) => e.source))
+    const fields = syncedFields(t, all).filter((c) => !dropped.has(c))
     const names = fields.map((c) => targetFieldName(form, t, c))
-    const clashing = clashes(names)
+    const added = newFieldNames(t)
+    const clashing = clashes([...names, ...added])
     for (const [i, c] of fields.entries()) {
       const problem = nameProblem(names[i], clashing)
       if (problem) return `${t.name}.${c} 的目标字段名${problem}`
+    }
+    for (const n of added) {
+      const problem = nameProblem(n, clashing)
+      if (problem) return `${t.name} 的新字段 ${n || '（未命名）'}：${problem}`
     }
   }
   return null

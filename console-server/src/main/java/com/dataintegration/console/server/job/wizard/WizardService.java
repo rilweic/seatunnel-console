@@ -422,7 +422,8 @@ public class WizardService {
             Set<String> mappedLower = mapped.stream().map(f -> f.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
             List<String> missing = mapped.stream().filter(f -> !targetColumns.contains(f.toLowerCase(Locale.ROOT))).toList();
             if (!missing.isEmpty()) {
-                checks.add(new Check(Level.ERROR, "目标表 " + name + " 缺少字段：" + String.join(", ", missing)));
+                checks.add(new Check(Level.ERROR, "目标表 " + name + " 缺少字段：" + String.join(", ", missing)
+                        + "。已存在的目标表不会自动加字段，请先在目标库里加上这些字段，或者写到一张新表"));
             }
             List<String> extra = targetColumns.stream().filter(c -> !mappedLower.contains(c)).sorted().toList();
             if (!extra.isEmpty()) {

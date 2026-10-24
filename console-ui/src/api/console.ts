@@ -160,6 +160,57 @@ export interface WizardTable {
   fieldNames?: Record<string, string> | null
   /** this table's field rule; null uses the form's */
   fieldRule?: NameRule | null
+  /** value processing of synced fields, by source field */
+  processes?: Record<string, FieldProcess> | null
+  extracts?: Extract[] | null
+  addedFields?: AddedField[] | null
+  /** console key the encrypted fields of this table use */
+  encryptKeyId?: string | null
+}
+
+export type FieldType = 'STRING' | 'BIGINT' | 'DECIMAL' | 'DATE' | 'TIMESTAMP' | 'BOOLEAN'
+export type MaskPreset = 'PHONE' | 'ID_CARD' | 'EMAIL' | 'NAME' | 'BANK_CARD' | 'CUSTOM'
+
+/** Applied in this order: replace, mask, convert; then encrypt. */
+export interface FieldProcess {
+  replace?: { find: string; replacement?: string | null; regex: boolean } | null
+  mask?: { preset: MaskPreset; keepFirst?: number | null; keepLast?: number | null; maskChar?: string | null } | null
+  cast?: { type: FieldType; precision?: number | null; scale?: number | null } | null
+  encrypt?: boolean | null
+}
+
+export interface ExtractOutput {
+  name: string
+  /** JSON only */
+  path?: string | null
+  type?: FieldType | null
+  precision?: number | null
+  scale?: number | null
+}
+
+export interface Extract {
+  source: string
+  kind: 'JSON' | 'REGEX' | 'SPLIT'
+  /** regex or separator */
+  pattern?: string | null
+  outputs: ExtractOutput[]
+  dropSource: boolean
+}
+
+export type AddKind = 'CONSTANT' | 'CONCAT' | 'SUBSTRING' | 'CASE' | 'DATE_FORMAT' | 'ARITHMETIC' | 'DEFAULT' | 'UUID' | 'NOW' | 'EXPRESSION'
+
+export interface AddedField {
+  name: string
+  kind: AddKind
+  fields?: string[] | null
+  value?: string | null
+  op?: string | null
+  start?: number | null
+  length?: number | null
+  format?: string | null
+  type?: FieldType | null
+  precision?: number | null
+  scale?: number | null
 }
 
 export interface WizardForm {

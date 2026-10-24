@@ -1,16 +1,20 @@
 <script setup lang="ts">
 /**
- * Field mapping per table (docs/design.md §7.8): which source fields are synced, under which
- * target name, plus each table's fixed filter and incremental field. Tables on the left, the
- * chosen table's fields on the right.
+ * Field mapping per table (docs/design.md §7.8, §7.10): which source fields are synced, under
+ * which target name and with what processing, the new fields (added or extracted), plus each
+ * table's fixed filter and incremental field. Tables on the left, the chosen table on the right.
  */
-import { EditPen, Key, Right, Search } from '@element-plus/icons-vue'
+import { CirclePlus, EditPen, Key, Right, Scissor, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 
-import type { ColumnMeta, NameRule, WizardForm, WizardTable } from '@/api/console'
+import type { AddedField, ColumnMeta, Extract, FieldProcess, NameRule, WizardForm, WizardTable } from '@/api/console'
+import { describeAdded, describeExtract, hasProcess, newFieldNames, processTags, readableFields, typeLabel } from '@/utils/fieldProcessing'
 import { clashes, isEmptyRule, nameProblem, ruleFieldName, syncedFields, targetFieldName, targetTableName } from '@/utils/naming'
 
+import AddFieldDialog from './AddFieldDialog.vue'
+import ExtractDialog from './ExtractDialog.vue'
+import FieldProcessDialog from './FieldProcessDialog.vue'
 import NameRuleDialog, { type RuleScope } from './NameRuleDialog.vue'
 
 const props = defineProps<{
@@ -60,7 +64,8 @@ function synced(t: WizardTable) {
 function problems(t: WizardTable): Map<string, string> {
   const fields = synced(t)
   const names = fields.map((c) => targetFieldName(props.form, t, c))
-  const clashing = clashes(names)
+  // new fields share the target table, so they count for clashes too
+  const clashing = clashes([...names, ...newFieldNames(t)])
   const out = new Map<string, string>()
   fields.forEach((c, i) => {
     const p = nameProblem(names[i], clashing)
@@ -70,6 +75,20 @@ function problems(t: WizardTable): Map<string, string> {
 }
 
 const currentProblems = computed(() => (table.value ? problems(table.value) : new Map<string, string>()))
+
+/** Problems of a table's new fields, by name (clashes with any other target field). */
+function newProblems(t: WizardTable): Map<string, string> {
+  const out = new Map<string, string>()
+  const all = [...synced(t).map((c) => targetFieldName(props.form, t, c)), ...newFieldNames(t)]
+  const clashing = clashes(all)
+  newFieldNames(t).forEach((n) => {
+    const p = nameProblem(n, clashing)
+    if (p) out.set(n, p)
+  })
+  return out
+}
+
+const currentNewProblems = computed(() => (table.value ? newProblems(table.value) : new Map<string, string>()))
 
 const rows = computed(() => {
   const t = table.value
@@ -92,8 +111,24 @@ function lockedKey(c: ColumnMeta) {
   return upsert.value && c.primaryKey
 }
 
+/** Fields that processing, an extraction or a new field depends on; they must stay synced. */
+function inUse(t: WizardTable): Set<string> {
+  const used = new Set<string>()
+  Object.entries(t.processes ?? {}).forEach(([f, p]) => hasProcess(p) && used.add(f))
+  ;(t.extracts ?? []).forEach((e) => used.add(e.source))
+  ;(t.addedFields ?? []).forEach((a) => (a.fields ?? []).forEach((f) => used.add(f)))
+  return used
+}
+
 function mask(names: string[]) {
   const t = table.value!
+  const used = inUse(t)
+  const blocked = names.filter((n) => used.has(n))
+  if (blocked.length) {
+    ElMessage.warning(`${blocked.join('、')} 有处理，或被提取、新字段用到，先去掉这些再屏蔽`)
+    names = names.filter((n) => !used.has(n))
+    if (!names.length) return
+  }
   const meta = new Map((props.columns[t.name] ?? []).map((c) => [c.name, c]))
   const allowed = names.filter((n) => !lockedKey(meta.get(n)!))
   if (allowed.length < names.length) ElMessage.warning('按主键 upsert 需要主键字段，主键没有屏蔽')
@@ -159,6 +194,84 @@ function applyRule(rule: NameRule, clearByHand: boolean, scope: RuleScope) {
   }
 }
 
+// ---- processing, new and extracted fields ----
+
+const processing = ref<ColumnMeta | null>(null)
+const processOpen = computed({ get: () => processing.value !== null, set: (o) => { if (!o) processing.value = null } })
+
+function applyProcess(p: FieldProcess | null) {
+  const t = table.value!
+  const next = { ...(t.processes ?? {}) }
+  if (p) next[processing.value!.name] = p
+  else delete next[processing.value!.name]
+  t.processes = Object.keys(next).length ? next : null
+}
+
+const addOpen = ref(false)
+const editingAdded = ref<number | null>(null)
+const extractOpen = ref(false)
+const editingExtract = ref<number | null>(null)
+
+function openAdd(index: number | null) {
+  editingAdded.value = index
+  addOpen.value = true
+}
+
+function openExtract(index: number | null) {
+  editingExtract.value = index
+  extractOpen.value = true
+}
+
+function applyAdded(a: AddedField) {
+  const t = table.value!
+  const list = [...(t.addedFields ?? [])]
+  if (editingAdded.value == null) list.push(a)
+  else list[editingAdded.value] = a
+  t.addedFields = list
+}
+
+function applyExtract(e: Extract) {
+  const t = table.value!
+  const list = [...(t.extracts ?? [])]
+  if (editingExtract.value == null) list.push(e)
+  else list[editingExtract.value] = e
+  t.extracts = list
+}
+
+function removeAdded(i: number) {
+  const t = table.value!
+  const list = (t.addedFields ?? []).filter((_, k) => k !== i)
+  t.addedFields = list.length ? list : null
+}
+
+function removeExtract(i: number) {
+  const t = table.value!
+  const list = (t.extracts ?? []).filter((_, k) => k !== i)
+  t.extracts = list.length ? list : null
+}
+
+/** Target names in use besides those of the new field being edited. */
+function takenNames(t: WizardTable, except: { added?: number | null; extract?: number | null }) {
+  const own = synced(t)
+    .filter((c) => !(t.extracts ?? []).some((e, i) => i !== except.extract && e.dropSource && e.source === c))
+    .map((c) => targetFieldName(props.form, t, c))
+  const extracted = (t.extracts ?? []).filter((_, i) => i !== except.extract).flatMap((e) => e.outputs.map((o) => o.name))
+  const added = (t.addedFields ?? []).filter((_, i) => i !== except.added).map((a) => a.name)
+  return [...own, ...extracted, ...added]
+}
+
+/** One row per new field: the extracted ones, then the added ones. */
+const newRows = computed(() => {
+  const t = table.value
+  if (!t) return []
+  return [
+    ...(t.extracts ?? []).flatMap((e, i) =>
+      e.outputs.map((o) => ({ name: o.name, from: describeExtract(e) + (o.path ? `（${o.path}）` : ''), type: typeLabel(o.type), extract: i, added: null as number | null })),
+    ),
+    ...(t.addedFields ?? []).map((a, i) => ({ name: a.name, from: describeAdded(a), type: a.type ? typeLabel(a.type) : '按计算结果', extract: null as number | null, added: i })),
+  ]
+})
+
 function timeFields(t: WizardTable) {
   return (props.columns[t.name] ?? []).filter((c) => c.temporal)
 }
@@ -177,12 +290,14 @@ function timeFields(t: WizardTable) {
         >
           <div class="t-target">
             <span class="t-name">{{ targetTableName(form, t, es) }}</span>
-            <span v-if="problems(t).size" class="dot" title="有字段名冲突或不合法" />
+            <span v-if="problems(t).size || newProblems(t).size" class="dot" title="有字段名冲突或不合法" />
           </div>
           <div class="t-meta">
             <span class="t-source">{{ t.name }}</span>
             <span>已选 {{ synced(t).length }} / {{ allFields(t).length || '?' }}</span>
             <span v-if="byHandCount(t)">· 改名 {{ byHandCount(t) }}</span>
+            <span v-if="newFieldNames(t).length">· 新字段 {{ newFieldNames(t).length }}</span>
+            <span v-if="Object.keys(t.processes ?? {}).length">· 处理 {{ Object.keys(t.processes ?? {}).length }}</span>
           </div>
         </li>
       </ul>
@@ -194,6 +309,8 @@ function timeFields(t: WizardTable) {
           {{ table.name }} <el-icon class="arrow"><Right /></el-icon> <b>{{ targetTableName(form, table, es) }}</b>
         </div>
         <div class="bar-actions">
+          <el-button :icon="CirclePlus" @click="openAdd(null)">新增字段</el-button>
+          <el-button :icon="Scissor" @click="openExtract(null)">提取字段</el-button>
           <el-button :icon="EditPen" @click="ruleOpen = true">字段名规则</el-button>
           <el-button :disabled="!checked.length" @click="mask(checked)">屏蔽</el-button>
           <el-button :disabled="!checked.length" @click="restore(checked)">恢复</el-button>
@@ -252,11 +369,15 @@ function timeFields(t: WizardTable) {
                 @blur="onBlur(table!, row.name)"
               />
               <div v-if="currentProblems.has(row.name)" class="error">{{ currentProblems.get(row.name) }}</div>
+              <div v-if="processTags(table.processes?.[row.name]).length" class="tags">
+                <el-tag v-for="tag in processTags(table.processes?.[row.name])" :key="tag" size="small" type="warning" disable-transitions>{{ tag }}</el-tag>
+              </div>
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="170">
           <template #default="{ row }">
+            <el-button v-if="!row.masked" link type="primary" @click="processing = row">处理</el-button>
             <el-button v-if="row.masked" link type="primary" @click="restore([row.name])">恢复</el-button>
             <el-tooltip v-else-if="lockedKey(row)" content="按主键 upsert 需要主键字段" placement="top">
               <span><el-button link type="primary" disabled>屏蔽</el-button></span>
@@ -271,6 +392,44 @@ function timeFields(t: WizardTable) {
           </template>
         </el-table-column>
       </el-table>
+
+      <template v-if="newRows.length">
+        <div class="new-title">新字段 <span class="tip">按顺序写在目标表的最后</span></div>
+        <el-table :data="newRows" class="table-box">
+          <el-table-column label="字段名" prop="name" min-width="160">
+            <template #default="{ row }">
+              <span class="f-name">{{ row.name }}</span>
+              <el-tag size="small" type="success" disable-transitions class="new-tag">{{ row.extract != null ? '提取' : '新增' }}</el-tag>
+              <div v-if="currentNewProblems.get(row.name)" class="error">{{ currentNewProblems.get(row.name) }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="来源 / 算法" prop="from" min-width="260" show-overflow-tooltip />
+          <el-table-column label="类型" prop="type" width="110" />
+          <el-table-column label="操作" width="120">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="row.extract != null ? openExtract(row.extract) : openAdd(row.added)">编辑</el-button>
+              <el-button link type="danger" @click="row.extract != null ? removeExtract(row.extract) : removeAdded(row.added)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+
+      <FieldProcessDialog v-model="processOpen" :column="processing" :process="processing ? table.processes?.[processing.name] : null" @apply="applyProcess" />
+      <AddFieldDialog
+        v-model="addOpen"
+        :field="editingAdded == null ? null : (table.addedFields ?? [])[editingAdded] ?? null"
+        :fields="readableFields(table, synced(table))"
+        :taken="takenNames(table, { added: editingAdded })"
+        @apply="applyAdded"
+      />
+      <ExtractDialog
+        v-model="extractOpen"
+        :extract="editingExtract == null ? null : (table.extracts ?? [])[editingExtract] ?? null"
+        :fields="synced(table)"
+        :keys="(columns[table.name] ?? []).filter((c) => c.primaryKey).map((c) => c.name)"
+        :taken="takenNames(table, { extract: editingExtract })"
+        @apply="applyExtract"
+      />
 
       <NameRuleDialog
         v-model="ruleOpen"
@@ -469,6 +628,22 @@ function timeFields(t: WizardTable) {
   margin-left: 4px;
   color: var(--el-color-warning);
   vertical-align: -2px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.new-title {
+  margin: 16px 0 8px;
+  font-weight: 500;
+}
+
+.new-tag {
+  margin-left: 6px;
 }
 
 .f-type {

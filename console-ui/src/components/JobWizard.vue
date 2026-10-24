@@ -294,6 +294,10 @@ function payload(): WizardForm {
         targetName: clean(t.targetName),
         fieldNames: cleanFieldNames(t),
         fieldRule: t.fieldRule ? trimRule(t.fieldRule) : null,
+        processes: t.processes && Object.keys(t.processes).length ? t.processes : null,
+        extracts: t.extracts?.length ? t.extracts : null,
+        addedFields: t.addedFields?.length ? t.addedFields : null,
+        encryptKeyId: t.encryptKeyId || null,
       })),
     },
     target: {
