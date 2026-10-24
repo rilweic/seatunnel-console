@@ -133,6 +133,11 @@ public class ScheduleService {
                 .toList();
     }
 
+    /** The next {@code count} fire times of a cron after {@code from}. */
+    public static List<LocalDateTime> nextFireTimes(String cron, LocalDateTime from, int count) {
+        return CronSchedule.nextFireTimes(cron, from, count);
+    }
+
     /** The cron of the job's schedule, enabled or not; null when it has none. */
     public String cronOf(String jobId) {
         JobSchedule schedule = scheduleMapper.selectById(jobId);

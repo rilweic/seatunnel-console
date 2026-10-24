@@ -12,8 +12,9 @@ const router = createRouter({
     {
       path: '/',
       component: MainLayout,
-      redirect: '/jobs',
+      redirect: '/dashboard',
       children: [
+        { path: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '概览' } },
         { path: 'projects', component: () => import('@/views/ProjectsView.vue'), meta: { title: '项目', list: true } },
         { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源', list: true } },
         { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务', list: true } },
@@ -55,7 +56,7 @@ router.beforeEach(async (to) => {
     return { path: '/change-password', query: { redirect: to.fullPath } }
   }
   if (to.meta.admin && !store.isAdmin) {
-    return '/jobs'
+    return '/dashboard'
   }
   return true
 })

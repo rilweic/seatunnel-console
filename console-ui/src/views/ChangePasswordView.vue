@@ -29,7 +29,7 @@ async function submit() {
   try {
     store.set(await authApi.changePassword(form.oldPassword, form.newPassword))
     ElMessage.success('密码已修改')
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect !== '/change-password' ? route.query.redirect : '/jobs'
+    const redirect = typeof route.query.redirect === 'string' && route.query.redirect !== '/change-password' ? route.query.redirect : '/dashboard'
     router.replace(redirect)
   } finally {
     saving.value = false

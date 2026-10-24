@@ -508,3 +508,43 @@ export const clusterApi = {
   health: () => get<ClusterHealth>('/cluster/health'),
   diagnose: () => post<HealthCheck[]>('/cluster/diagnose', undefined, LONG_TIMEOUT.diagnose),
 }
+
+export interface DashboardDay {
+  date: string
+  success: number
+  failed: number
+  canceled: number
+  running: number
+  writeRows: number
+}
+
+export interface DashboardJobStat {
+  jobId: string
+  jobName: string
+  runs: number
+  writeRows: number
+  avgDurationMillis: number | null
+}
+
+export interface Dashboard {
+  jobs: number
+  scheduledJobs: number
+  runningRuns: number
+  pendingRuns: number
+  today: DashboardDay
+  /** success ÷ (success + failed) over the last 7 days; null without such runs */
+  successRate7d: number | null
+  writeRows7d: number
+  trend: DashboardDay[]
+  active: InstanceView[]
+  recentFailures: InstanceView[]
+  upcoming: { jobId: string; jobName: string; time: string; cron: string }[]
+  topByRows: DashboardJobStat[]
+  slowest: DashboardJobStat[]
+  /** the engine's overview; empty when the cluster cannot be reached */
+  cluster: Record<string, string>
+}
+
+export const dashboardApi = {
+  get: (mine: boolean) => get<Dashboard>('/dashboard', { mine }),
+}

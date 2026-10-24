@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, Folder, Monitor, Tickets, User } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, DataBoard, Folder, Monitor, Tickets, User } from '@element-plus/icons-vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -42,6 +42,7 @@ function toggle() {
 }
 
 const menus = computed(() => [
+  { path: '/dashboard', title: '概览', icon: DataBoard },
   { path: '/projects', title: '项目', icon: Folder },
   { path: '/datasources', title: '数据源', icon: Coin },
   { path: '/jobs', title: '任务', icon: Tickets },
