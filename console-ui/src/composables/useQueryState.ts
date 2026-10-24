@@ -10,11 +10,17 @@ type Value = string | number | boolean
  * The URL is the single source: change `state`, call `apply()`, and `onChange` runs once the URL
  * has changed. It also runs when the page is opened again with another query (the side menu, a
  * link from another page), since the layout keeps the page mounted across query changes.
+ *
+ * @param active whether the current URL belongs to this list. By default: the same route and
+ *     record as when it was set up. A list inside a tab passes its own check, because the tab's
+ *     pane can mount before the URL has switched to that tab.
  */
-export function useQueryState<T extends Record<string, Value>>(defaults: T, onChange: () => void) {
+export function useQueryState<T extends Record<string, Value>>(defaults: T, onChange: () => void, active?: () => boolean) {
   const route = useRoute()
   const router = useRouter()
-  const path = route.path
+  const record = route.matched[route.matched.length - 1]
+  const id = route.params.id
+  const isActive = active ?? (() => route.matched[route.matched.length - 1] === record && route.params.id === id)
   const state = reactive({ ...defaults }) as T
   const values = state as Record<string, Value>
 
@@ -56,8 +62,8 @@ export function useQueryState<T extends Record<string, Value>>(defaults: T, onCh
   watch(
     () => route.query,
     (query) => {
-      // Leaving the page also changes the query; the page is about to unmount then.
-      if (route.path !== path) return
+      // Leaving the page (or its tab) also changes the query.
+      if (!isActive()) return
       read(query)
       onChange()
     },

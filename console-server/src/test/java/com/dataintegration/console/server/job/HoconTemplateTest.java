@@ -108,4 +108,32 @@ class HoconTemplateTest {
         assertThat(masked).doesNotContain("p@ss").contains("******");
         assertThat(List.of(masked)).isNotEmpty();
     }
+
+    @Test
+    void findsAndMasksCredentialsWrittenIntoTheConfig() {
+        HoconTemplate template = HoconTemplate.parse(
+                """
+                env { job.mode = "BATCH" }
+                source {
+                  Jdbc {
+                    url = "jdbc:mysql://db/shop"
+                    user = "etl"
+                    password = "p@ss"
+                    query = "select 1"
+                  }
+                }
+                sink {
+                  Elasticsearch {
+                    datasource_id = "ds-es"
+                    tls { keystore_password = "k" }
+                  }
+                }
+                """);
+
+        assertThat(template.explicitSecrets())
+                .containsExactlyInAnyOrder("source.Jdbc.password", "sink.Elasticsearch.tls.keystore_password");
+
+        String masked = template.renderMasked((connector, id) -> Map.of("hosts", List.of("http://es:9200"), "password", "******"));
+        assertThat(masked).doesNotContain("p@ss").doesNotContain("\"k\"").contains("******").contains("select 1");
+    }
 }

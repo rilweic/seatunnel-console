@@ -169,10 +169,15 @@ public class UserService {
         return new Transferred(projects, datasources, jobs);
     }
 
+    /**
+     * Locks the enabled administrators' rows until the transaction ends, so two concurrent demotions
+     * cannot both see "another admin is left" and remove the last two together.
+     */
     private long enabledAdmins() {
         return userMapper.selectCount(new LambdaQueryWrapper<SysUser>()
                 .eq(SysUser::getRole, ConsoleUser.ROLE_ADMIN)
-                .eq(SysUser::getEnabled, true));
+                .eq(SysUser::getEnabled, true)
+                .last("for update"));
     }
 
     private SysUser require(String id) {

@@ -7,6 +7,7 @@ import com.dataintegration.console.common.ConsoleException;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -88,5 +89,24 @@ class DataSourcePluginsTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).isNotBlank();
+    }
+
+    @Test
+    void passwordsInJdbcParamsAreRejectedBecauseParamsAreStoredInPlainText() {
+        Map<String, String> base = Map.of("host", "db1", "database", "shop", "username", "etl");
+        DataSourcePlugin mysql = plugins.get(DataSourceType.MYSQL);
+
+        mysql.validate(withParams(base, "useSSL=false&serverTimezone=Asia/Shanghai"));
+        assertThatThrownBy(() -> mysql.validate(withParams(base, "useSSL=false&password=p@ss")))
+                .isInstanceOf(ConsoleException.class)
+                .hasMessageContaining("password");
+        assertThatThrownBy(() -> plugins.get(DataSourceType.POSTGRESQL).validate(withParams(base, "?sslmode=require&sslpassword=x")))
+                .isInstanceOf(ConsoleException.class);
+    }
+
+    private static Map<String, String> withParams(Map<String, String> props, String params) {
+        Map<String, String> copy = new HashMap<>(props);
+        copy.put("params", params);
+        return copy;
     }
 }

@@ -49,7 +49,7 @@ public class JobConfigRenderer {
         Map<String, String> variables = variables(job, jobParams, startupParams, scheduledTime, instanceId);
         String text = Variables.render(hocon, variables, scheduledTime);
         HoconTemplate template = HoconTemplate.parse(text);
-        String masked = template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, true));
+        String masked = template.renderMasked((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, true));
         String config = withSecrets
                 ? template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, false))
                 : null;

@@ -1,6 +1,8 @@
 package com.dataintegration.console.server.auth;
 
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.Map;
@@ -16,8 +18,21 @@ public class AccountChanges {
 
     private final Map<String, Instant> changedAt = new ConcurrentHashMap<>();
 
+    /**
+     * Inside a transaction the change is recorded only after it commits: recorded earlier, a
+     * request could refresh its session from the old row in between and then count as up to date.
+     */
     public void changed(String userId) {
-        changedAt.put(userId, Instant.now());
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    changedAt.put(userId, Instant.now());
+                }
+            });
+        } else {
+            changedAt.put(userId, Instant.now());
+        }
     }
 
     /** Whether the account changed after a session authenticated at {@code authenticatedAt}. */

@@ -17,6 +17,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -68,11 +69,34 @@ class ZetaRestClientTest {
         ZetaRestClient client = client(List.of(baseUrl), null, null);
 
         client.submit(
-                new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, 1L));
+                new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, 1L, null));
 
         assertThat(lastExchange.get().getRequestURI().getRawQuery())
                 .isEqualTo("format=hocon&jobName=j&restoreMode=SAVEPOINT&restoreSourceJobId=1");
         assertThat(lastExchange.get().getRequestHeaders().containsKey("Authorization")).isFalse();
+    }
+
+    @Test
+    void freshSubmitCarriesTheCallersJobId() {
+        respond("/submit-job", 200, "{\"jobId\": \"5000000000000000001\"}");
+
+        long jobId = client(List.of(baseUrl), null, null).submit(SubmitJobRequest.fresh("j", "cfg").withJobId(5000000000000000001L));
+
+        assertThat(jobId).isEqualTo(5000000000000000001L);
+        assertThat(lastExchange.get().getRequestURI().getRawQuery()).isEqualTo("format=hocon&jobName=j&jobId=5000000000000000001");
+    }
+
+    @Test
+    void logTailKeepsOnlyTheLastBytes() throws Exception {
+        byte[] log = "0123456789abcdefghij".getBytes(StandardCharsets.UTF_8);
+
+        EngineClient.LogContent tail = ZetaRestClient.tail(new ByteArrayInputStream(log), 7);
+        EngineClient.LogContent whole = ZetaRestClient.tail(new ByteArrayInputStream(log), 64);
+
+        assertThat(tail.text()).isEqualTo("defghij");
+        assertThat(tail.truncated()).isTrue();
+        assertThat(whole.text()).isEqualTo("0123456789abcdefghij");
+        assertThat(whole.truncated()).isFalse();
     }
 
     @Test

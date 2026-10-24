@@ -56,7 +56,7 @@ public class ProjectService {
                 projectMapper.selectPage(
                         Pages.of(page, size),
                         new LambdaQueryWrapper<Project>()
-                                .like(keyword != null && !keyword.isBlank(), Project::getName, keyword)
+                                .like(keyword != null && !keyword.isBlank(), Project::getName, Pages.literal(keyword))
                                 .eq(mine, Project::getCreatedBy, CurrentUser.idOrNull())
                                 .orderByDesc(Project::getCreatedAt));
         Map<String, Long> jobCounts = jobCounts(result.getRecords().stream().map(Project::getId).toList());

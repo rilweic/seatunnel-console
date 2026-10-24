@@ -2,7 +2,7 @@
 /** All runs of one job, filterable by status; refreshes itself while any run on the page is active. */
 import { Refresh } from '@element-plus/icons-vue'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { instanceApi, type InstanceView, type RunStatus } from '@/api/console'
 import ValidationTag from '@/components/ValidationTag.vue'
@@ -11,11 +11,16 @@ import { formatDuration, formatNumber, formatTime, isActive, statusTag, statusTe
 
 const props = defineProps<{ jobId: string }>()
 
+const route = useRoute()
 const router = useRouter()
 const rows = ref<InstanceView[]>([])
 const total = ref(0)
 const loading = ref(false)
-const { state: query, apply } = useQueryState({ status: '', page: 1, size: 20 }, () => load())
+const { state: query, apply } = useQueryState(
+  { status: '', page: 1, size: 20 },
+  () => load(),
+  () => route.params.id === props.jobId && route.params.tab === 'runs',
+)
 let timer: number | undefined
 
 async function load(silent = false) {

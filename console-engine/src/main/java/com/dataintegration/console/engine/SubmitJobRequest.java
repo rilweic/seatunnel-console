@@ -10,9 +10,11 @@ import java.util.Objects;
  * @param config rendered HOCON
  * @param restoreMode how to restore state; {@link RestoreMode#NONE} for a fresh start
  * @param restoreSourceJobId engine job id to restore from, required unless restoreMode is NONE
+ * @param jobId the engine job id to use for a fresh start, chosen by the caller so a submission
+ *     whose response was lost can be looked up and is not submitted twice; null lets the engine pick
  */
 public record SubmitJobRequest(
-        String jobName, String config, RestoreMode restoreMode, Long restoreSourceJobId) {
+        String jobName, String config, RestoreMode restoreMode, Long restoreSourceJobId, Long jobId) {
 
     public SubmitJobRequest {
         Objects.requireNonNull(config, "config");
@@ -23,13 +25,17 @@ public record SubmitJobRequest(
     }
 
     public static SubmitJobRequest fresh(String jobName, String config) {
-        return new SubmitJobRequest(jobName, config, RestoreMode.NONE, null);
+        return new SubmitJobRequest(jobName, config, RestoreMode.NONE, null, null);
+    }
+
+    public SubmitJobRequest withJobId(long id) {
+        return new SubmitJobRequest(jobName, config, restoreMode, restoreSourceJobId, id);
     }
 
     @Override
     public String toString() {
         return "SubmitJobRequest[jobName=" + jobName + ", restoreMode=" + restoreMode
-                + ", restoreSourceJobId=" + restoreSourceJobId + ", config=<redacted>]";
+                + ", restoreSourceJobId=" + restoreSourceJobId + ", jobId=" + jobId + ", config=<redacted>]";
     }
 
     public enum RestoreMode {

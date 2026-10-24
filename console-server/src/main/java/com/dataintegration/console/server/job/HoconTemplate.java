@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * A job's HOCON as saved in {@code job_version.hocon_template}: plain SeaTunnel config whose
@@ -30,6 +31,12 @@ import java.util.Map;
 public final class HoconTemplate {
 
     public static final String DATASOURCE_KEY = "datasource_id";
+
+    /** Option names that hold credentials; they belong in a datasource, never in a saved config. */
+    private static final Pattern SECRET_KEY =
+            Pattern.compile("(?i).*(password|passwd|secret|token|credential|api_?key|access_?key).*");
+
+    public static final String MASK = "******";
     private static final List<String> SECTIONS = List.of("source", "sink");
 
     public record DatasourceRef(String section, String connector, String datasourceId) {}
@@ -117,6 +124,33 @@ public final class HoconTemplate {
         return blocks;
     }
 
+    public static boolean isSecretKey(String key) {
+        return SECRET_KEY.matcher(key).matches();
+    }
+
+    /**
+     * Credentials written directly into source or sink blocks, as {@code section.Connector.key},
+     * nested options included. Saving a script that has any is refused (docs/design.md §6).
+     */
+    public List<String> explicitSecrets() {
+        List<String> found = new ArrayList<>();
+        forEachBlock((section, connector, block) -> {
+            collectSecrets(section + "." + connector, block, found);
+            return block;
+        });
+        return found;
+    }
+
+    private static void collectSecrets(String path, ConfigObject object, List<String> found) {
+        object.forEach((key, value) -> {
+            if (value instanceof ConfigObject nested) {
+                collectSecrets(path + "." + key, nested, found);
+            } else if (isSecretKey(key) && value.unwrapped() != null && !String.valueOf(value.unwrapped()).isBlank()) {
+                found.add(path + "." + key);
+            }
+        });
+    }
+
     /** {@code env.job.mode}, or null when not set (SeaTunnel then defaults to BATCH). */
     public String jobMode() {
         return config.hasPath("env.job.mode") ? config.getString("env.job.mode") : null;
@@ -143,6 +177,18 @@ public final class HoconTemplate {
      * over the datasource's options.
      */
     public String render(OptionsResolver resolver) {
+        return render(resolver, false);
+    }
+
+    /**
+     * Like {@link #render(OptionsResolver)}, then replaces every credential-like option with
+     * {@code ******}, including ones written into the config itself (older versions may have them).
+     */
+    public String renderMasked(OptionsResolver resolver) {
+        return render(resolver, true);
+    }
+
+    private String render(OptionsResolver resolver, boolean mask) {
         ConfigObject root = config.root();
         for (String section : SECTIONS) {
             ConfigValue value = root.get(section);
@@ -152,9 +198,30 @@ public final class HoconTemplate {
                         case LIST -> rewriteList(section, (ConfigList) value, resolver);
                         default -> value;
                     };
-            root = root.withValue(section, rewritten);
+            root = root.withValue(section, mask ? maskSecrets(rewritten) : rewritten);
         }
         return root.render(ConfigRenderOptions.concise());
+    }
+
+    private static ConfigValue maskSecrets(ConfigValue value) {
+        if (value instanceof ConfigObject object) {
+            ConfigObject result = object;
+            for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
+                ConfigValue masked = entry.getValue() instanceof ConfigObject || entry.getValue() instanceof ConfigList
+                        ? maskSecrets(entry.getValue())
+                        : isSecretKey(entry.getKey()) && entry.getValue().unwrapped() != null
+                                ? ConfigValueFactory.fromAnyRef(MASK)
+                                : entry.getValue();
+                result = result.withValue(entry.getKey(), masked);
+            }
+            return result;
+        }
+        if (value instanceof ConfigList list) {
+            List<ConfigValue> items = new ArrayList<>();
+            list.forEach(item -> items.add(maskSecrets(item)));
+            return ConfigValueFactory.fromIterable(items);
+        }
+        return value;
     }
 
     private static ConfigObject rewriteKeyed(String section, ConfigObject sectionObject, OptionsResolver resolver) {

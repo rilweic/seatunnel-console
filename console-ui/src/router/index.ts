@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import MainLayout from '@/layouts/MainLayout.vue'
+import { trackListUrls } from '@/composables/useBreadcrumb'
 import { useUserStore } from '@/stores/user'
 
 const router = createRouter({
@@ -13,9 +14,9 @@ const router = createRouter({
       component: MainLayout,
       redirect: '/jobs',
       children: [
-        { path: 'projects', component: () => import('@/views/ProjectsView.vue'), meta: { title: '项目' } },
-        { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源' } },
-        { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务' } },
+        { path: 'projects', component: () => import('@/views/ProjectsView.vue'), meta: { title: '项目', list: true } },
+        { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源', list: true } },
+        { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务', list: true } },
         {
           // Tabs and sections are part of the path (the first one has none), so refresh and links keep them.
           path: 'jobs/:id/edit/:section(schedule|basic)?',
@@ -27,7 +28,7 @@ const router = createRouter({
           component: () => import('@/views/jobs/JobDetailView.vue'),
           meta: { title: '任务详情', menu: '/jobs' },
         },
-        { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行实例' } },
+        { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行实例', list: true } },
         {
           path: 'instances/:id',
           component: () => import('@/views/instances/InstanceDetailView.vue'),
@@ -58,5 +59,7 @@ router.beforeEach(async (to) => {
   }
   return true
 })
+
+trackListUrls(router)
 
 export default router

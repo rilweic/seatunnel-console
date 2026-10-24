@@ -129,7 +129,7 @@ onMounted(load)
 
     <el-card v-if="health && Object.keys(health.overview).length" shadow="never">
       <PageHeader title="集群概览" />
-      <el-descriptions :column="4" border>
+      <el-descriptions :column="4">
         <el-descriptions-item v-for="(value, key) in health.overview" :key="key" :label="OVERVIEW_LABELS[key] ?? String(key)">
           {{ value }}
         </el-descriptions-item>

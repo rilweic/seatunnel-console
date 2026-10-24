@@ -40,6 +40,8 @@ class AccountRefreshFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         ConsoleUser current = CurrentUser.get().orElse(null);
         if (current != null && changes.changedSince(current.id(), current.authenticatedAt())) {
+            // Taken before reading, so a change committed after the read is still newer than the session.
+            Instant refreshedAt = Instant.now();
             SysUser user = userMapper.selectById(current.id());
             if (user == null || !Boolean.TRUE.equals(user.getEnabled())) {
                 SecurityContextHolder.clearContext();
@@ -58,7 +60,7 @@ class AccountRefreshFilter extends OncePerRequestFilter {
                     null,
                     true,
                     Boolean.TRUE.equals(user.getMustChangePassword()),
-                    Instant.now());
+                    refreshedAt);
             SecurityContext context = SecurityContextHolder.createEmptyContext();
             context.setAuthentication(UsernamePasswordAuthenticationToken.authenticated(refreshed, null, refreshed.getAuthorities()));
             SecurityContextHolder.setContext(context);

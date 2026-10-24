@@ -20,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URLEncoder;
@@ -191,6 +192,10 @@ public class ZetaRestClient implements EngineClient {
         if (request.restoreMode() != SubmitJobRequest.RestoreMode.NONE) {
             query.add("restoreMode=" + request.restoreMode().name());
             query.add("restoreSourceJobId=" + request.restoreSourceJobId());
+        } else if (request.jobId() != null) {
+            // Zeta accepts a caller-chosen id and ignores a second submission of a job that is
+            // already running, so trying the next master after a timeout cannot start it twice.
+            query.add("jobId=" + request.jobId());
         }
         JsonNode body =
                 send(
@@ -288,9 +293,16 @@ public class ZetaRestClient implements EngineClient {
     @Override
     public LogContent readLog(EngineLogFile file, long maxBytes) {
         HttpRequest request = decorate(HttpRequest.newBuilder().GET(), file.location(), "text/plain");
-        HttpResponse<byte[]> response;
         try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream body = response.body()) {
+                if (response.statusCode() / 100 != 2) {
+                    throw new ConsoleException(
+                            ErrorCodes.ENGINE_REQUEST_FAILED,
+                            "reading log " + file.name() + " returned HTTP " + response.statusCode());
+                }
+                return tail(body, (int) Math.min(maxBytes, Integer.MAX_VALUE - 8));
+            }
         } catch (IOException e) {
             throw new ConsoleException(
                     ErrorCodes.ENGINE_UNAVAILABLE, "cannot read log " + file.name() + " from " + file.node() + ": " + e);
@@ -298,15 +310,35 @@ public class ZetaRestClient implements EngineClient {
             Thread.currentThread().interrupt();
             throw new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "interrupted while reading log", e);
         }
-        if (response.statusCode() / 100 != 2) {
-            throw new ConsoleException(
-                    ErrorCodes.ENGINE_REQUEST_FAILED,
-                    "reading log " + file.name() + " returned HTTP " + response.statusCode());
+    }
+
+    /**
+     * The last {@code maxBytes} of a stream, holding no more than that in memory however long the
+     * log is (Zeta serves whole files and cannot be asked for a range).
+     */
+    static LogContent tail(InputStream in, int maxBytes) throws IOException {
+        byte[] ring = new byte[Math.max(1, maxBytes)];
+        byte[] chunk = new byte[64 * 1024];
+        long total = 0;
+        int n;
+        while ((n = in.read(chunk)) != -1) {
+            int offset = 0;
+            while (offset < n) {
+                int pos = (int) (total % ring.length);
+                int len = Math.min(n - offset, ring.length - pos);
+                System.arraycopy(chunk, offset, ring, pos, len);
+                offset += len;
+                total += len;
+            }
         }
-        byte[] bytes = response.body();
-        boolean truncated = bytes.length > maxBytes;
-        int from = truncated ? (int) (bytes.length - maxBytes) : 0;
-        return new LogContent(new String(bytes, from, bytes.length - from, StandardCharsets.UTF_8), truncated);
+        if (total <= ring.length) {
+            return new LogContent(new String(ring, 0, (int) total, StandardCharsets.UTF_8), false);
+        }
+        int start = (int) (total % ring.length);
+        byte[] ordered = new byte[ring.length];
+        System.arraycopy(ring, start, ordered, 0, ring.length - start);
+        System.arraycopy(ring, 0, ordered, ring.length - start, start);
+        return new LogContent(new String(ordered, StandardCharsets.UTF_8), true);
     }
 
     private JsonNode send(String path, HttpRequest.Builder builder, String contentType) {

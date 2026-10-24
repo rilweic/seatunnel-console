@@ -98,17 +98,17 @@ public class RowCountValidator {
                 targetTotal += r.targetCount();
             }
             if (r.status() == Status.MISMATCH) {
-                mismatches.add(check.name() + ": " + r.message());
+                mismatches.add(check.name() + "：" + r.message());
             } else if (r.status() == Status.ERROR) {
-                errors.add(check.name() + ": " + r.message());
+                errors.add(check.name() + "：" + r.message());
             }
             sourceQueries.append(sourceQueries.isEmpty() ? "" : "; ").append(r.sourceQuery());
             targetQueries.append(targetQueries.isEmpty() ? "" : "; ").append(r.targetQuery());
         }
         Status status = !mismatches.isEmpty() ? Status.MISMATCH : !errors.isEmpty() ? Status.ERROR : Status.PASSED;
         String message = status == Status.PASSED
-                ? checks.size() + " table(s) match, " + sourceTotal + " rows in total"
-                : String.join("; ", mismatches.isEmpty() ? errors : concat(mismatches, errors));
+                ? checks.size() + " 张表一致，共 " + sourceTotal + " 行"
+                : String.join("；", mismatches.isEmpty() ? errors : concat(mismatches, errors));
         return new Result(status, sourceTotal, targetTotal, message, sourceQueries.toString(), targetQueries.toString());
     }
 
@@ -122,17 +122,17 @@ public class RowCountValidator {
         Counted source = count(sourceSide, template, variables, scheduledTime);
         Counted target = count(targetSide, template, variables, scheduledTime);
         if (source.error != null || target.error != null) {
-            String message = (source.error == null ? "" : "source count failed: " + source.error)
-                    + (source.error != null && target.error != null ? "; " : "")
-                    + (target.error == null ? "" : "target count failed: " + target.error);
+            String message = (source.error == null ? "" : "源端计数失败：" + source.error)
+                    + (source.error != null && target.error != null ? "；" : "")
+                    + (target.error == null ? "" : "目标端计数失败：" + target.error);
             return new Result(Status.ERROR, source.count, target.count, message, source.query, target.query);
         }
         long diff = target.count - source.count;
         return diff == 0
-                ? new Result(Status.PASSED, source.count, target.count, "source and target both have " + source.count + " rows",
+                ? new Result(Status.PASSED, source.count, target.count, "源端和目标端都是 " + source.count + " 行",
                         source.query, target.query)
                 : new Result(Status.MISMATCH, source.count, target.count,
-                        "source " + source.count + " rows, target " + target.count + " rows, difference " + (diff > 0 ? "+" : "") + diff,
+                        "源端 " + source.count + " 行，目标端 " + target.count + " 行，相差 " + (diff > 0 ? "+" : "") + diff,
                         source.query, target.query);
     }
 

@@ -4,8 +4,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { instanceApi, type InstanceDetail, type LogView, type RunMetrics, type RunStatus } from '@/api/console'
+import BackButton from '@/components/BackButton.vue'
 import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
 import ValidationTag from '@/components/ValidationTag.vue'
+import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { formatDuration, formatNumber, formatTime, isActive, statusTag, statusText, triggerText } from '@/utils/format'
 
 const route = useRoute()
@@ -13,8 +15,11 @@ const router = useRouter()
 const id = route.params.id as string
 
 const detail = ref<InstanceDetail | null>(null)
-/** The attempt whose log is shown; kept in the URL (?attempt=) so a refresh stays on it. */
-const activeAttempt = ref<number>(Number(route.query.attempt) || 1)
+/**
+ * The attempt whose log and metrics are shown; 0 until the attempts are known, then the latest.
+ * An earlier one is kept in the URL (?attempt=), the latest needs nothing.
+ */
+const activeAttempt = ref<number>(Number(route.query.attempt) || 0)
 const log = ref<LogView | null>(null)
 const metrics = ref<RunMetrics | null>(null)
 const logLoading = ref(false)
@@ -36,7 +41,16 @@ const variables = computed(() => {
 const levelColor: Record<string, string> = { INFO: 'primary', WARN: 'warning', ERROR: 'danger' }
 
 async function loadDetail() {
+  const first = detail.value === null
   detail.value = await instanceApi.detail(id)
+  if (first) {
+    const i = detail.value.instance
+    setBreadcrumb([
+      { title: '运行实例', to: listUrl('/instances') },
+      { title: i.jobName ?? '已删除的任务', to: `/jobs/${i.jobDefinitionId}` },
+      { title: `${triggerText[i.triggerType]}运行 · ${formatTime(i.scheduledTime).slice(5, 16)}` },
+    ])
+  }
   const attempts = detail.value.attempts
   if (attempts.length > 0 && !attempts.some((a) => a.attemptNo === activeAttempt.value)) {
     activeAttempt.value = attempts[attempts.length - 1]!.attemptNo
@@ -144,6 +158,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
     <el-card shadow="never">
       <div class="head">
         <div class="title">
+          <BackButton :fallback="`/jobs/${instance.jobDefinitionId}/runs`" />
           <el-tag :type="statusTag[instance.status as RunStatus]" size="large">{{ statusText[instance.status as RunStatus] }}</el-tag>
           <router-link :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
           <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
@@ -156,7 +171,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
           <el-button @click="refresh">刷新</el-button>
         </div>
       </div>
-      <el-descriptions :column="3" border class="summary">
+      <el-descriptions :column="3" class="summary">
         <el-descriptions-item label="开始时间">{{ formatTime(instance.startedAt) }}</el-descriptions-item>
         <el-descriptions-item label="结束时间">{{ formatTime(instance.finishedAt) }}</el-descriptions-item>
         <el-descriptions-item label="耗时">{{ formatDuration(instance.durationMillis) }}</el-descriptions-item>
@@ -269,6 +284,7 @@ onBeforeUnmount(() => window.clearTimeout(timer))
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  margin-left: -6px;
 }
 
 .job {

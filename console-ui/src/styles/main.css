@@ -201,6 +201,27 @@ code {
   justify-content: flex-end;
 }
 
+/*
+ * descriptions: Ant Design's borderless layout - muted label, plain value, no grey label column -
+ * so key/value blocks read like the tables around them.
+ */
+.el-descriptions {
+  --el-descriptions-item-bordered-label-background: transparent;
+}
+
+.el-descriptions__body .el-descriptions__table:not(.is-bordered) .el-descriptions__cell {
+  padding-bottom: 12px;
+  font-size: 14px;
+}
+
+.el-descriptions__label:not(.is-bordered-label) {
+  color: var(--el-text-color-secondary);
+}
+
+.el-descriptions__content:not(.is-bordered-label) {
+  color: var(--el-text-color-primary);
+}
+
 /* tags: Ant Design tag metrics */
 .el-tag {
   --el-tag-border-radius: 4px;

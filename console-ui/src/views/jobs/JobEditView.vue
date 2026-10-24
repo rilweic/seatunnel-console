@@ -3,14 +3,15 @@
  * Editing a job: sync config (wizard or script, saved as a new version), schedule and basic info.
  * Each section saves on its own; leaving with unsaved changes asks first.
  */
-import { ArrowLeft } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 
 import { jobApi, type JobView, type VersionDetail } from '@/api/console'
+import BackButton from '@/components/BackButton.vue'
 import JobWizard from '@/components/JobWizard.vue'
 import type { ParamRow } from '@/components/ParamsEditor.vue'
+import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { toRows } from '@/utils/params'
 
 import BasicInfo from './edit/BasicInfo.vue'
@@ -52,6 +53,7 @@ async function load() {
   }
   job.value = detail.job
   version.value = detail.currentVersion
+  crumbs()
   wizardParams.value = toRows(detail.currentVersion?.params)
 }
 
@@ -61,8 +63,17 @@ async function onConfigSaved() {
   configKey.value++
 }
 
+function crumbs() {
+  setBreadcrumb([
+    { title: '任务', to: listUrl('/jobs') },
+    { title: job.value!.name, to: `/jobs/${jobId}` },
+    { title: '编辑' },
+  ])
+}
+
 function onBasicSaved(updated: JobView) {
   job.value = updated
+  crumbs()
 }
 
 async function switchToScript() {
@@ -113,8 +124,7 @@ onMounted(load)
   <el-card v-if="job" shadow="never">
     <div class="head">
       <div>
-        <el-button link :icon="ArrowLeft" class="back" @click="router.push(`/jobs/${jobId}`)">返回任务详情</el-button>
-        <div class="name">编辑任务：{{ job.name }}</div>
+        <div class="name"><BackButton :fallback="`/jobs/${jobId}`" />编辑任务：{{ job.name }}</div>
         <div class="meta">
           {{ job.projectName }} · {{ isWizard ? '向导配置' : '脚本配置' }} · 当前版本 {{ job.currentVersionNo ? `v${job.currentVersionNo}` : '未保存' }}
           · 同步配置每次保存生成一个新版本，调度和基本信息单独保存
@@ -170,19 +180,18 @@ onMounted(load)
   margin-bottom: 8px;
 }
 
-.back {
-  margin-bottom: 6px;
-  padding: 0;
-  color: var(--el-text-color-secondary);
-}
-
 .name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: -6px;
   font-size: 20px;
   font-weight: 600;
 }
 
 .meta {
   margin-top: 6px;
+  padding-left: 30px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }

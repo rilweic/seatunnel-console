@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ArrowDown, Coin, Connection, DArrowLeft, DArrowRight, Folder, Monitor, Tickets, User } from '@element-plus/icons-vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { useBreadcrumbState } from '@/composables/useBreadcrumb'
 import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
@@ -16,6 +17,10 @@ const activeMenu = computed(() => (route.meta.menu as string | undefined) ?? rou
  * filters and the page number live in the URL too, and a page reacts to those itself.
  */
 const viewKey = computed(() => `${route.matched[route.matched.length - 1]?.path}|${route.params.id ?? ''}`)
+
+const crumbs = useBreadcrumbState()
+// A page sets its breadcrumb after loading; until then, and on pages without one, the title shows.
+watch(viewKey, () => (crumbs.value = []))
 
 function readCollapsed(): boolean {
   try {
@@ -67,7 +72,14 @@ async function logout() {
         </span>
         <span class="brand-name">SeaTunnel Console</span>
         <span v-if="title" class="divider" />
-        <span v-if="title" class="page-title">{{ title }}</span>
+        <nav v-if="crumbs.length" class="crumbs" aria-label="当前位置">
+          <template v-for="(c, i) in crumbs" :key="i">
+            <span v-if="i > 0" class="sep">/</span>
+            <router-link v-if="c.to && i < crumbs.length - 1" :to="c.to" class="crumb link">{{ c.title }}</router-link>
+            <span v-else class="crumb current">{{ c.title }}</span>
+          </template>
+        </nav>
+        <span v-else-if="title" class="page-title">{{ title }}</span>
       </div>
       <el-dropdown v-if="userStore.user" trigger="click">
         <span class="user">
@@ -159,6 +171,38 @@ async function logout() {
 .page-title {
   color: var(--el-text-color-regular);
   white-space: nowrap;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.crumb {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+
+.crumb.link {
+  color: var(--el-text-color-secondary);
+  text-decoration: none;
+}
+
+.crumb.link:hover {
+  color: var(--el-color-primary);
+}
+
+.crumb.current {
+  color: var(--el-text-color-primary);
+}
+
+.sep {
+  color: var(--el-text-color-placeholder);
 }
 
 .user {

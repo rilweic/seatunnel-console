@@ -167,7 +167,11 @@ public class RunExecutor {
         BatchJobRunner.Outcome outcome = null;
         for (int attemptNo = 1; attemptNo <= maxAttempts && !signal.isCancelled(); attemptNo++) {
             outcome = runAttempt(instance, attemptNo, prepared, signal, schedulerLog);
-            if (outcome.succeeded() || outcome.finalStatus() == EngineJobStatus.CANCELED) {
+            // UNKNOWABLE: the console lost track of a submitted job that may still be running, so a
+            // retry could run it twice.
+            if (outcome.succeeded()
+                    || outcome.finalStatus() == EngineJobStatus.CANCELED
+                    || outcome.finalStatus() == EngineJobStatus.UNKNOWABLE) {
                 break;
             }
             if (attemptNo < maxAttempts) {
@@ -182,23 +186,27 @@ public class RunExecutor {
             return finish(instance, RunStatus.CANCELED, signal.reason(), schedulerLog);
         }
         applyMetrics(instance, outcome.metrics());
+        // A job whose state is unknown (a stop that did not take effect, lost contact) is FAILED
+        // with the reason, never CANCELED: it may still be writing.
         RunStatus status =
                 outcome.succeeded()
                         ? RunStatus.SUCCESS
-                        : outcome.finalStatus() == EngineJobStatus.CANCELED || signal.isCancelled()
-                                ? RunStatus.CANCELED
-                                : RunStatus.FAILED;
+                        : outcome.finalStatus() == EngineJobStatus.UNKNOWABLE
+                                ? RunStatus.FAILED
+                                : outcome.finalStatus() == EngineJobStatus.CANCELED || signal.isCancelled()
+                                        ? RunStatus.CANCELED
+                                        : RunStatus.FAILED;
         String message;
         if (status == RunStatus.SUCCESS) {
             message = "engine job " + outcome.engineJobId() + " finished";
             RowCountValidator.Result validation = validate(instance, prepared, schedulerLog);
             if (validation != null && validation.status() == RowCountValidator.Status.MISMATCH && prepared.validation().failOnMismatch()) {
                 status = RunStatus.FAILED;
-                message = "row count validation failed: " + validation.message();
+                message = "行数校验不一致：" + validation.message();
             }
         } else if (status == RunStatus.CANCELED) {
             message = signal.isCancelled() ? signal.reason() : outcome.errorMessage();
-        } else if (outcome.engineJobId() == NOT_SUBMITTED) {
+        } else if (outcome.engineJobId() == NOT_SUBMITTED || outcome.finalStatus() == EngineJobStatus.UNKNOWABLE) {
             message = outcome.errorMessage();
         } else {
             message = "engine job " + outcome.engineJobId() + " " + outcome.finalStatus()

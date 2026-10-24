@@ -45,6 +45,16 @@ const savedValidation = ref('null')
 const remark = ref('')
 const saving = ref(false)
 
+/**
+ * A wizard job turned into a script keeps the wizard's per-table validation, which has no single
+ * source and target; it is kept as is (or replaced) rather than edited here.
+ */
+const perTable = computed(() => !!validation.value.tables?.length)
+
+function replacePerTable() {
+  validation.value = { ...emptyValidation(), enabled: true }
+}
+
 /** Saved only when enabled, so turning it off removes it from the next version. */
 function validationPayload(): ValidationSpec | null {
   return validation.value.enabled ? validation.value : null
@@ -193,7 +203,16 @@ onMounted(async () => {
     <span class="tip">运行成功后，console 分别在源端和目标端执行一次计数并比较。SQL 里可以使用变量。
       只有能单独统计出这次写入的数据时才准确，比如目标表按 <code>${dt}</code> 分区，或者写入前会清空目标表。</span>
   </div>
-  <div v-if="validation.enabled" class="validation">
+  <div v-if="validation.enabled && perTable" class="per-table">
+    <div>
+      按表校验，由向导生成：{{ validation.tables!.map((t) => t.name).join('、') }}。每张表分别在源端和目标端计数比较，保存时原样保留。
+    </div>
+    <div class="per-table-bar">
+      <el-checkbox v-model="validation.failOnMismatch">不一致时把运行标记为失败</el-checkbox>
+      <el-button size="small" @click="replacePerTable">改为自定义校验</el-button>
+    </div>
+  </div>
+  <div v-else-if="validation.enabled" class="validation">
     <div class="side">
       <div class="side-title">源端</div>
       <el-radio-group v-model="validation.source.mode" size="small">
@@ -296,6 +315,21 @@ onMounted(async () => {
   .validation {
     grid-template-columns: 1fr;
   }
+}
+
+.per-table {
+  padding: 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.per-table-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .side {

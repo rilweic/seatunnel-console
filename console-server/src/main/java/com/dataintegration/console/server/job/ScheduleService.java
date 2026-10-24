@@ -222,8 +222,10 @@ public class ScheduleService {
         JobSchedule schedule = scheduleMapper.selectById(job.getId());
         if (schedule != null) {
             Integer before = job.getXxlJobId();
-            sync(job, schedule, client);
-            scheduleMapper.updateById(schedule);
+            schedule = syncAndRecord(job, schedule, client);
+            if (schedule == null) {
+                return Reconciled.UNCHANGED;
+            }
             if (!"SYNCED".equals(schedule.getSyncStatus())) {
                 return Reconciled.FAILED;
             }
@@ -256,10 +258,36 @@ public class ScheduleService {
         }
         JobSchedule schedule = scheduleMapper.selectById(job.getId());
         if (schedule != null) {
-            sync(job, schedule, client);
-            scheduleMapper.updateById(schedule);
+            syncAndRecord(job, schedule, client);
         }
         return ensureXxlJob(job, client);
+    }
+
+    /**
+     * Pushes a schedule read in the background and records only the sync result, and only if the
+     * schedule was not saved meanwhile: a user's save must never be overwritten with what was read
+     * before it. When it was saved meanwhile, XXL-JOB may now hold the older values, so the new
+     * schedule is pushed once more. Returns the schedule as recorded, null if it was deleted.
+     */
+    private JobSchedule syncAndRecord(JobDefinition job, JobSchedule schedule, XxlJobAdminClient client) {
+        for (int round = 0; round < 2 && schedule != null; round++) {
+            LocalDateTime readAt = schedule.getUpdatedAt();
+            sync(job, schedule, client);
+            boolean recorded = scheduleMapper.update(
+                            null,
+                            new LambdaUpdateWrapper<JobSchedule>()
+                                    .set(JobSchedule::getSyncStatus, schedule.getSyncStatus())
+                                    .set(JobSchedule::getSyncError, schedule.getSyncError())
+                                    .set(JobSchedule::getSyncedAt, schedule.getSyncedAt())
+                                    .eq(JobSchedule::getJobDefinitionId, schedule.getJobDefinitionId())
+                                    .eq(JobSchedule::getUpdatedAt, readAt))
+                    > 0;
+            if (recorded) {
+                return schedule;
+            }
+            schedule = scheduleMapper.selectById(job.getId());
+        }
+        return schedule;
     }
 
     private void sync(JobDefinition job, JobSchedule schedule, XxlJobAdminClient client) {

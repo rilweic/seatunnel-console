@@ -16,6 +16,14 @@ public final class Pages {
         return Page.of(p, s);
     }
 
+    /**
+     * A search text for {@code like}, matched literally: without escaping, "t_" would match any
+     * name with a "t" followed by one more character, since {@code _} and {@code %} are wildcards.
+     */
+    public static String literal(String keyword) {
+        return keyword == null ? null : keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
     public static <T> PageResult<T> result(Page<T> page) {
         return new PageResult<>(page.getRecords(), page.getTotal(), page.getCurrent(), page.getSize());
     }

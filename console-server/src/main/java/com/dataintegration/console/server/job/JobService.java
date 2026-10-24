@@ -164,7 +164,7 @@ public class JobService {
                         Pages.of(page, size),
                         new LambdaQueryWrapper<JobDefinition>()
                                 .eq(projectId != null && !projectId.isBlank(), JobDefinition::getProjectId, projectId)
-                                .like(keyword != null && !keyword.isBlank(), JobDefinition::getName, keyword)
+                                .like(keyword != null && !keyword.isBlank(), JobDefinition::getName, Pages.literal(keyword))
                                 .eq(mine, JobDefinition::getCreatedBy, CurrentUser.idOrNull())
                                 .orderByDesc(JobDefinition::getUpdatedAt));
         Map<String, Integer> versionNos = versionNos(result.getRecords());
@@ -273,6 +273,12 @@ public class JobService {
         LocalDateTime now = LocalDateTime.now();
         HoconTemplate template = HoconTemplate.parse(
                 Variables.render(hocon, renderer.variables(job, params, Map.of(), now, null), now));
+        List<String> secrets = template.explicitSecrets();
+        if (!secrets.isEmpty()) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                    "配置里不能直接写密码或密钥（" + String.join("、", secrets)
+                            + "）：请建一个数据源，用 datasource_id 引用，连接信息会在运行时注入");
+        }
         String mode = template.jobMode();
         if (TYPE_BATCH.equals(job.getJobType()) && mode != null && !TYPE_BATCH.equalsIgnoreCase(mode)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "env.job.mode must be BATCH for a batch job, got " + mode);
@@ -288,24 +294,8 @@ public class JobService {
             datasourceIds.add(ref.datasourceId());
         }
         validator.check(validation, template);
-        if (validation != null && validation.enabled()) {
-            // Recorded with the version's datasources so they cannot be deleted while in use.
-            List<ValidationSpec.Side> sides = new ArrayList<>();
-            if (validation.perTable()) {
-                validation.tables().forEach(t -> {
-                    sides.add(t.source());
-                    sides.add(t.target());
-                });
-            } else {
-                sides.add(validation.source());
-                sides.add(validation.target());
-            }
-            for (ValidationSpec.Side side : sides) {
-                if (side.mode() != ValidationSpec.Mode.AUTO) {
-                    datasourceIds.add(side.datasourceId());
-                }
-            }
-        }
+        // Recorded with the version's datasources so they cannot be deleted while in use.
+        datasourceIds.addAll(validationDatasources(validation));
 
         requireOwnersDatasources(job, datasourceIds);
 
@@ -403,6 +393,10 @@ public class JobService {
         }
         LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
         JobConfigRenderer.Rendered rendered = renderer.render(job, hocon, params, Map.of(), time, PREVIEW_INSTANCE_ID, false);
+        // The counts run with the datasources' credentials, so the same ownership rule as saving applies.
+        List<String> used = new ArrayList<>(validationDatasources(validation));
+        rendered.template().datasourceRefs().forEach(ref -> used.add(ref.datasourceId()));
+        requireOwnersDatasources(job, used);
         validator.check(validation, rendered.template());
         return new ValidationTest(validator.validate(validation, rendered.template(), rendered.variables(), time), rendered.variables());
     }
@@ -463,6 +457,30 @@ public class JobService {
                         "数据源「" + ds.getName() + "」不属于任务的创建人，任务只能使用创建人自己的数据源");
             }
         }
+    }
+
+    /** Datasources a validation counts on by itself (custom SQL or ES); AUTO uses the job's source. */
+    private static List<String> validationDatasources(ValidationSpec validation) {
+        List<String> ids = new ArrayList<>();
+        if (validation == null || !validation.enabled()) {
+            return ids;
+        }
+        List<ValidationSpec.Side> sides = new ArrayList<>();
+        if (validation.perTable()) {
+            validation.tables().forEach(t -> {
+                sides.add(t.source());
+                sides.add(t.target());
+            });
+        } else {
+            sides.add(validation.source());
+            sides.add(validation.target());
+        }
+        for (ValidationSpec.Side side : sides) {
+            if (side != null && side.mode() != ValidationSpec.Mode.AUTO) {
+                ids.add(side.datasourceId());
+            }
+        }
+        return ids;
     }
 
     private static List<String> wizardDatasources(WizardForm form) {

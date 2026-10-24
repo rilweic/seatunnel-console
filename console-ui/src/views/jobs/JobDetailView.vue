@@ -9,6 +9,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { jobApi, type JobView } from '@/api/console'
+import BackButton from '@/components/BackButton.vue'
+import { listUrl, setBreadcrumb } from '@/composables/useBreadcrumb'
 import { formatTime, statusTag, statusText } from '@/utils/format'
 
 import BackfillDialog from './detail/BackfillDialog.vue'
@@ -41,6 +43,7 @@ const runTip = computed(() => (!job.value?.editable ? NOT_EDITABLE : !job.value.
 
 async function load() {
   job.value = (await jobApi.get(jobId)).job
+  setBreadcrumb([{ title: '任务', to: listUrl('/jobs') }, { title: job.value.name }])
 }
 
 function onBackfillCreated() {
@@ -76,6 +79,7 @@ onMounted(load)
     <div class="head">
       <div class="title">
         <div class="name">
+          <BackButton :fallback="listUrl('/jobs')" />
           {{ job.name }}
           <el-tag v-if="job.activity?.lastRunStatus" :type="statusTag[job.activity.lastRunStatus]" class="status">
             最近运行：{{ statusText[job.activity.lastRunStatus] }}
@@ -148,13 +152,19 @@ onMounted(load)
 .name {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  margin-left: -6px;
   font-size: 20px;
   font-weight: 600;
 }
 
 .status {
   font-weight: normal;
+}
+
+.meta,
+.description {
+  padding-left: 30px;
 }
 
 .meta {

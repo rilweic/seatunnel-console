@@ -71,12 +71,13 @@ project ─┬─< project_param
 
 ```
 PENDING ──提交──> RUNNING ──┬── SUCCESS
-                            ├── FAILED    （重试次数用完）
+                            ├── FAILED    （重试次数用完；或 console 失去对作业的掌握，此时不重试）
                             └── CANCELED  （超时、XXL-JOB 终止或在 console 上停止）
               ↑    │ 失败且还有重试次数
               └────┘ 新增一条 attempt，attempt_count + 1，记录 RETRY 事件
 ```
 
+- PENDING 超过 `console.run.pending-grace`（默认 10 分钟）仍没开始的实例记为 FAILED，但只在这段时间里该任务**没有别的运行在进行**时：排在另一次运行后面的（XXL-JOB 对同一个任务逐个执行）不算卡住
 - **重试由 console 处理器在同一个实例内完成**，XXL-JOB 的失败重试次数固定为 0。原因是 XXL-JOB 每次重试都会生成一条新的调度日志，处理器无法把它和上一次失败关联起来，同一次运行会被拆成多条互不相关的记录。
 - 次数和间隔由 `job_schedule.fail_retry_count` 和 `retry_interval_seconds` 控制。
 - 超时和"上一次还没跑完怎么办"仍然交给 XXL-JOB 处理。

@@ -20,6 +20,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -44,6 +45,24 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
     public void validate(Map<String, String> props) {
         buildUrl(props);
         Props.required(props, "username");
+        rejectSecretParams(props.get("params"));
+    }
+
+    /**
+     * The params are stored and shown in plain text, so a password written there (e.g.
+     * {@code password=...} or {@code sslpassword=...}) would leak; it belongs in the password field.
+     */
+    static void rejectSecretParams(String params) {
+        if (params == null || params.isBlank()) {
+            return;
+        }
+        for (String pair : params.trim().replaceFirst("^\\?", "").split("[&;]")) {
+            String key = pair.split("=", 2)[0].trim().toLowerCase(Locale.ROOT);
+            if (key.contains("password") || key.contains("passwd") || key.contains("secret") || key.equals("pwd")) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                        "连接参数里不能写密码（" + key + "）：连接参数明文保存，密码请填在密码栏，会加密保存");
+            }
+        }
     }
 
     @Override

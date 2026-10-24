@@ -95,7 +95,7 @@ public class DatasourceService {
                 datasourceMapper.selectPage(
                         Pages.of(page, size),
                         new LambdaQueryWrapper<DatasourceEntity>()
-                                .like(keyword != null && !keyword.isBlank(), DatasourceEntity::getName, keyword)
+                                .like(keyword != null && !keyword.isBlank(), DatasourceEntity::getName, Pages.literal(keyword))
                                 .eq(type != null && !type.isBlank(), DatasourceEntity::getType, type)
                                 .eq(ownerId != null && !ownerId.isBlank(), DatasourceEntity::getCreatedBy, ownerId)
                                 .orderByDesc(DatasourceEntity::getCreatedAt));

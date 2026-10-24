@@ -23,7 +23,9 @@ import java.util.List;
  * <ul>
  *   <li>at startup, RUNNING runs belonged to the previous process (the console is single-instance)
  *       and are marked FAILED; the engine job may still be running and is named in the message
- *   <li>PENDING runs that XXL-JOB never started within the grace period are marked FAILED
+ *   <li>PENDING runs that XXL-JOB never started within the grace period are marked FAILED. A run
+ *       queued behind another run of its job (XXL-JOB runs one job's triggers one at a time) is not
+ *       stale: the grace period counts from when the job last had a run going
  * </ul>
  */
 @Component
@@ -63,10 +65,14 @@ public class RunReconciler {
         List<JobInstance> stale = instanceMapper.selectList(
                 new LambdaQueryWrapper<JobInstance>()
                         .eq(JobInstance::getStatus, RunStatus.PENDING.name())
-                        .lt(JobInstance::getCreatedAt, cutoff));
+                        .lt(JobInstance::getCreatedAt, cutoff)
+                        .notExists("select 1 from job_instance busy"
+                                + " where busy.job_definition_id = job_instance.job_definition_id"
+                                + " and (busy.status = 'RUNNING' or busy.finished_at > {0})", cutoff));
         for (JobInstance instance : stale) {
             fail(instance, "XXL-JOB did not start this run within " + pendingGrace.toMinutes()
-                    + " minutes; check the XXL-JOB scheduling log and that the executor is online");
+                    + " minutes although no other run of the job was going; check the XXL-JOB scheduling log"
+                    + " and that the executor is online");
         }
     }
 
