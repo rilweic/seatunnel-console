@@ -20,3 +20,4 @@ dev.env
 data/
 logs/
 *.tsbuildinfo
+docker/.env

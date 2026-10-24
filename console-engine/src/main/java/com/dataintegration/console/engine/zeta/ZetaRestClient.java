@@ -21,6 +21,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -32,6 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.StringJoiner;
 
 /**
@@ -254,10 +256,32 @@ public class ZetaRestClient implements EngineClient {
         for (JsonNode node : body) {
             String link = textOrNull(node, "logLink");
             if (link != null) {
-                files.add(new EngineLogFile(textOrNull(node, "node"), textOrNull(node, "logName"), link));
+                files.add(new EngineLogFile(
+                        textOrNull(node, "node"), textOrNull(node, "logName"), rebaseLoopback(link, config.masterUrls().get(0))));
             }
         }
         return files;
+    }
+
+    private static final Set<String> LOOPBACK = Set.of("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "::1");
+
+    /**
+     * A node started with its default address advertises log links on localhost, which the console
+     * cannot reach when it runs elsewhere (e.g. in a container). Such links are read through the
+     * configured master instead; real node addresses of a multi-node cluster are kept.
+     */
+    static String rebaseLoopback(String link, String master) {
+        try {
+            URI uri = URI.create(link);
+            URI base = URI.create(master);
+            if (uri.getHost() == null || !LOOPBACK.contains(uri.getHost()) || LOOPBACK.contains(base.getHost())) {
+                return link;
+            }
+            return new URI(base.getScheme(), uri.getUserInfo(), base.getHost(), base.getPort(), uri.getPath(), uri.getQuery(), null)
+                    .toString();
+        } catch (IllegalArgumentException | URISyntaxException e) {
+            return link;
+        }
     }
 
     /** {@code file.location()} is the absolute logLink reported by the node that owns the file. */

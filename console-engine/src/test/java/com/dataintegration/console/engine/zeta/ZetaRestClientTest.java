@@ -157,6 +157,19 @@ class ZetaRestClientTest {
     }
 
     @Test
+    void loopbackLogLinksAreReadThroughTheConfiguredMaster() {
+        assertThat(ZetaRestClient.rebaseLoopback("http://localhost:8080/logs/job-1.log", "http://seatunnel-master:8080"))
+                .isEqualTo("http://seatunnel-master:8080/logs/job-1.log");
+        assertThat(ZetaRestClient.rebaseLoopback("http://127.0.0.1:8080/logs/job-1.log?x=1", "https://10.0.0.5:18080"))
+                .isEqualTo("https://10.0.0.5:18080/logs/job-1.log?x=1");
+        // a real node address, or a master that is itself local, stays as it is
+        assertThat(ZetaRestClient.rebaseLoopback("http://worker-2:8080/logs/job-1.log", "http://seatunnel-master:8080"))
+                .isEqualTo("http://worker-2:8080/logs/job-1.log");
+        assertThat(ZetaRestClient.rebaseLoopback("http://localhost:8080/logs/job-1.log", "http://localhost:8080"))
+                .isEqualTo("http://localhost:8080/logs/job-1.log");
+    }
+
+    @Test
     void readLogKeepsOnlyTheTail() {
         respond("/logs/job-7.log", 200, "0123456789");
 

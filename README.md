@@ -135,8 +135,20 @@ mvn test
 - 用 `/job-info/{id}` 查询不存在或已过期的任务时，只返回 `{"jobId": "..."}`，没有 `jobStatus` 字段。
 - 开启 Basic 认证后，不带认证信息的请求返回 401。
 
-## 打包镜像
+## Docker 部署
+
+`docker/docker-compose.yml` 一次启动 MySQL、xxl-job-admin 和 console（前端已打包进 console 的 jar）。**SeaTunnel 集群不在里面**，要事先按"启动 SeaTunnel 集群"一节准备好。
 
 ```bash
-docker compose -f docker/docker-compose.yml up -d --build
+cd docker
+cp .env.example .env      # 填写密码、CONSOLE_SECRET_KEY、XXL_JOB_ACCESS_TOKEN、SeaTunnel 地址
+docker compose up -d --build
 ```
+
+- 打开 `http://<主机>:8088`，用 `admin` 和 `.env` 里的 `CONSOLE_ADMIN_PASSWORD` 登录
+- `CONSOLE_SECRET_KEY` 要另外备份，丢了已保存的数据源密码就解不开
+- MySQL 首次初始化时会自动创建 console 的库和账号，以及 XXL-JOB 的执行器分组 `seatunnel-console`（id 10，带上 `XXL_JOB_ACCESS_TOKEN`），不需要再到 xxl-job-admin 里手动建
+- xxl-job-admin 的界面在 8081 端口，默认账号 `admin/123456`，登录后立刻改密码
+- **网络**：console 容器要能访问 SeaTunnel 的 REST 端口和各个数据源；SeaTunnel 的 worker 也要能访问数据源。数据源地址要从这两边都能连通，不要写 `127.0.0.1`
+- console 的作业日志归档和 XXL-JOB 执行器日志在数据卷 `console-data`、`console-logs` 里
+- 部署后打开"集群健康"页检查一遍，再点"运行诊断"
