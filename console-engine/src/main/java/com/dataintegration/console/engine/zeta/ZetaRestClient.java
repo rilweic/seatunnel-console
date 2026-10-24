@@ -291,7 +291,9 @@ public class ZetaRestClient implements EngineClient {
             if (uri.getHost() == null || !LOOPBACK.contains(uri.getHost()) || LOOPBACK.contains(base.getHost())) {
                 return link;
             }
-            return new URI(base.getScheme(), uri.getUserInfo(), base.getHost(), base.getPort(), uri.getPath(), uri.getQuery(), null)
+            // A master behind a reverse proxy may have a path prefix (https://host/seatunnel): keep it.
+            String prefix = base.getPath() == null ? "" : base.getPath().replaceAll("/+$", "");
+            return new URI(base.getScheme(), uri.getUserInfo(), base.getHost(), base.getPort(), prefix + uri.getPath(), uri.getQuery(), null)
                     .toString();
         } catch (IllegalArgumentException | URISyntaxException e) {
             return link;

@@ -1,7 +1,6 @@
 package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -21,6 +20,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import tools.jackson.databind.ObjectMapper;
 
@@ -80,6 +82,7 @@ public class BackfillService {
     private final ScheduleService scheduleService;
     private final RunService runService;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactions;
 
     public BackfillService(
             BackfillBatchMapper batchMapper,
@@ -88,7 +91,9 @@ public class BackfillService {
             JobService jobService,
             ScheduleService scheduleService,
             RunService runService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            PlatformTransactionManager transactionManager) {
+        this.transactions = new TransactionTemplate(transactionManager);
         this.batchMapper = batchMapper;
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
@@ -105,7 +110,10 @@ public class BackfillService {
         return new Plan(times.size(), cron, times.get(0), times.get(times.size() - 1));
     }
 
+    @Transactional
     public BatchView create(String jobId, LocalDate start, LocalDate end, Map<String, String> startupParams) {
+        // Same lock as deleting the job takes, so a batch is never created for a job deleted meanwhile.
+        jobService.lockJob(jobId);
         JobDefinition job = jobService.requireEditable(jobId);
         if (job.getCurrentVersionId() == null) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "save a version of the job before backfilling it");
@@ -209,21 +217,6 @@ public class BackfillService {
             return;
         }
         int index = batch.getNextIndex();
-        // Scheduled times that got a run. Times, not runs: a time whose hand-over failed and was
-        // tried again has several runs, and counting those would hide a lost slot.
-        long created = instanceMapper.selectObjs(new QueryWrapper<JobInstance>()
-                        .select("count(distinct scheduled_time)")
-                        .eq("backfill_batch_id", batch.getId()))
-                .stream().findFirst().map(o -> ((Number) o).longValue()).orElse(0L);
-        if (created < index) {
-            // A slot was claimed but its run never recorded (the console stopped in between): hand
-            // it back, so that scheduled time is not skipped.
-            batchMapper.update(null, new LambdaUpdateWrapper<BackfillBatch>()
-                    .set(BackfillBatch::getNextIndex, (int) created)
-                    .eq(BackfillBatch::getId, batch.getId())
-                    .eq(BackfillBatch::getNextIndex, index));
-            return;
-        }
         String unknown = unknownOutcome(batch);
         if (unknown != null) {
             transition(batch, Status.PAUSED, unknown);
@@ -243,20 +236,7 @@ public class BackfillService {
             transition(batch, Status.PAUSED, e.getMessage());
             return;
         }
-        // Claim the slot first, so a slow trigger can never be followed by a second one for it.
-        int claimed = batchMapper.update(
-                null,
-                new LambdaUpdateWrapper<BackfillBatch>()
-                        .set(BackfillBatch::getNextIndex, index + 1)
-                        .eq(BackfillBatch::getId, batch.getId())
-                        .eq(BackfillBatch::getStatus, Status.RUNNING.name())
-                        .eq(BackfillBatch::getNextIndex, index));
-        if (claimed == 0) {
-            return;
-        }
-        try {
-            runService.start(
-                    new RunService.NewRun(
+        RunService.NewRun newRun = new RunService.NewRun(
                     job,
                     batch.getJobVersionId(),
                     RunService.TriggerType.BACKFILL,
@@ -265,7 +245,30 @@ public class BackfillService {
                     scheduleService.failRetryCount(job.getId()) + 1,
                     null,
                     batch.getId(),
-                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns()),
+                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns());
+        // Claiming the slot and recording its run commit together: the console stopping in between
+        // can neither skip the scheduled time nor leave it claimed without a run.
+        JobInstance recorded;
+        try {
+            recorded = transactions.execute(status -> {
+                int claimed = batchMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<BackfillBatch>()
+                                .set(BackfillBatch::getNextIndex, index + 1)
+                                .eq(BackfillBatch::getId, batch.getId())
+                                .eq(BackfillBatch::getStatus, Status.RUNNING.name())
+                                .eq(BackfillBatch::getNextIndex, index));
+                return claimed == 0 ? null : runService.record(newRun);
+            });
+        } catch (ConsoleException e) {
+            transition(batch, Status.PAUSED, "could not record run " + (index + 1) + ": " + e.getMessage());
+            return;
+        }
+        if (recorded == null) {
+            return;
+        }
+        try {
+            runService.handOver(recorded, newRun,
                     () -> Status.RUNNING.name().equals(batchMapper.selectById(batch.getId()).getStatus()));
         } catch (ConsoleException e) {
             // Hand the slot back so resuming retries this scheduled time.

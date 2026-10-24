@@ -469,7 +469,11 @@ public class JobService {
         return versionDetail(version);
     }
 
-    private void lockJob(String id) {
+    /**
+     * Takes the job's row lock until the surrounding transaction ends; it orders deleting a job
+     * against creating its runs and backfills. Call it before reading anything else in the transaction.
+     */
+    public void lockJob(String id) {
         if (jobMapper.selectOne(new LambdaQueryWrapper<JobDefinition>().eq(JobDefinition::getId, id).last("for update")) == null) {
             throw new ConsoleException(ErrorCodes.NOT_FOUND, "job not found: " + id);
         }

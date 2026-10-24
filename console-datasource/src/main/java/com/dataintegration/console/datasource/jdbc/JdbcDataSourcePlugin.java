@@ -9,6 +9,9 @@ import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.datasource.DataSourcePlugin;
 import com.dataintegration.console.datasource.Props;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -52,13 +55,24 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
      * The params are stored and shown in plain text, so a password written there (e.g.
      * {@code password=...} or {@code sslpassword=...}) would leak; it belongs in the password field.
      */
+    /** The same names counted as credentials in job configs (HoconTemplate). */
+    private static final Pattern SECRET_PARAM =
+            Pattern.compile(".*(password|passwd|secret|token|credential|api_?key|access_?key).*");
+
     static void rejectSecretParams(String params) {
         if (params == null || params.isBlank()) {
             return;
         }
         for (String pair : params.trim().replaceFirst("^\\?", "").split("[&;]")) {
-            String key = pair.split("=", 2)[0].trim().toLowerCase(Locale.ROOT);
-            if (key.contains("password") || key.contains("passwd") || key.contains("secret") || key.equals("pwd")) {
+            String raw = pair.split("=", 2)[0].trim();
+            // Judged on the decoded name, so "%70assword" is caught like "password".
+            String key;
+            try {
+                key = URLDecoder.decode(raw, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            } catch (IllegalArgumentException e) {
+                key = raw.toLowerCase(Locale.ROOT);
+            }
+            if (SECRET_PARAM.matcher(key).matches() || key.equals("pwd")) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
                         "连接参数里不能写密码（" + key + "）：连接参数明文保存，密码请填在密码栏，会加密保存");
             }

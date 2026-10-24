@@ -26,6 +26,9 @@ function done(b: BackfillView): number {
   return b.triggered - (b.statusCounts.RUNNING ?? 0) - (b.statusCounts.PENDING ?? 0)
 }
 
+/** Set when the pane goes away, so a request still on its way does not start refreshing again. */
+let disposed = false
+
 async function load() {
   window.clearTimeout(timer)
   loading.value = backfills.value.length === 0
@@ -34,6 +37,7 @@ async function load() {
   } finally {
     loading.value = false
   }
+  if (disposed) return
   for (const id of Object.keys(backfillRuns.value)) {
     loadRuns(id, runsPage[id] ?? 1)
   }
@@ -69,7 +73,10 @@ async function resume(b: BackfillView) {
 }
 
 onMounted(load)
-onBeforeUnmount(() => window.clearTimeout(timer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearTimeout(timer)
+})
 defineExpose({ load })
 </script>
 

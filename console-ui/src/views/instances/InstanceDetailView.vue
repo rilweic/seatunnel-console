@@ -74,7 +74,8 @@ async function loadLog() {
     if (seq !== logSeq) return
     log.value = loaded
   } finally {
-    logLoading.value = false
+    // Only the latest request ends the loading state; an older one finishing does not.
+    if (seq === logSeq) logLoading.value = false
   }
   if (followTail.value) {
     await nextTick()

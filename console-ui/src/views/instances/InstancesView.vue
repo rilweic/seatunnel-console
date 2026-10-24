@@ -16,6 +16,7 @@ const total = ref(0)
 const { state: query, apply } = useQueryState({ status: '', mine: true, page: 1, size: 20 }, () => load())
 const loading = ref(false)
 let timer: number | undefined
+let disposed = false
 
 async function load(silent = false) {
   if (!silent) loading.value = true
@@ -28,13 +29,17 @@ async function load(silent = false) {
   }
   // Keep the list fresh while anything on this page is still running.
   window.clearTimeout(timer)
-  if (rows.value.some((r) => isActive(r.status))) {
+  // Gone meanwhile: a request that was still on its way must not start refreshing again.
+  if (!disposed && rows.value.some((r) => isActive(r.status))) {
     timer = window.setTimeout(() => load(true), 5000)
   }
 }
 
 onMounted(() => load())
-onBeforeUnmount(() => window.clearTimeout(timer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearTimeout(timer)
+})
 </script>
 
 <template>

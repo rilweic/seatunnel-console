@@ -30,6 +30,7 @@ const overview = ref<JobOverview | null>(null)
 const live = ref<RunMetrics | null>(null)
 const togglingSchedule = ref(false)
 let timer: number | undefined
+let disposed = false
 
 const activeRun = computed(() => overview.value?.active[0] ?? null)
 
@@ -37,7 +38,8 @@ async function load() {
   window.clearTimeout(timer)
   overview.value = await jobApi.overview(props.job.id)
   live.value = activeRun.value ? await instanceApi.metrics(activeRun.value.id) : null
-  if (activeRun.value) {
+  // Gone meanwhile: a request that was still on its way must not start refreshing again.
+  if (!disposed && activeRun.value) {
     timer = window.setTimeout(load, 5000)
   }
 }
@@ -168,7 +170,10 @@ async function toggleSchedule() {
 }
 
 onMounted(load)
-onBeforeUnmount(() => window.clearTimeout(timer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearTimeout(timer)
+})
 defineExpose({ load })
 </script>
 

@@ -102,6 +102,10 @@ class DataSourcePluginsTest {
                 .hasMessageContaining("password");
         assertThatThrownBy(() -> plugins.get(DataSourceType.POSTGRESQL).validate(withParams(base, "?sslmode=require&sslpassword=x")))
                 .isInstanceOf(ConsoleException.class);
+        assertThatThrownBy(() -> mysql.validate(withParams(base, "%70assword=Secret123")))
+                .isInstanceOf(ConsoleException.class);
+        assertThatThrownBy(() -> mysql.validate(withParams(base, "clientCertificateKeyStorePassword=ks")))
+                .isInstanceOf(ConsoleException.class);
     }
 
     private static Map<String, String> withParams(Map<String, String> props, String params) {

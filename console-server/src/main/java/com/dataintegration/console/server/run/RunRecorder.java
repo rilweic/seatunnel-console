@@ -116,6 +116,33 @@ public class RunRecorder {
                 > 0;
     }
 
+    /**
+     * Fails a run left RUNNING by a console that stopped, and marks its open attempt UNKNOWABLE (its
+     * engine job may still be running), in one transaction: seen apart, a backfill could take the
+     * run for finished and start the next one next to it. Returns false if the run moved on meanwhile.
+     */
+    @Transactional
+    public boolean failOrphaned(JobInstance instance, String message) {
+        boolean failed = instanceMapper.update(
+                        null,
+                        new LambdaUpdateWrapper<JobInstance>()
+                                .set(JobInstance::getStatus, RunStatus.FAILED.name())
+                                .set(JobInstance::getFinishedAt, LocalDateTime.now())
+                                .set(JobInstance::getErrorMessage, clip(message))
+                                .eq(JobInstance::getId, instance.getId())
+                                .eq(JobInstance::getStatus, instance.getStatus()))
+                > 0;
+        if (failed) {
+            attemptMapper.update(null, new LambdaUpdateWrapper<JobInstanceAttempt>()
+                    .set(JobInstanceAttempt::getEngineStatus, "UNKNOWABLE")
+                    .set(JobInstanceAttempt::getFinishedAt, LocalDateTime.now())
+                    .eq(JobInstanceAttempt::getInstanceId, instance.getId())
+                    .isNull(JobInstanceAttempt::getFinishedAt));
+            event(instance.getId(), instance.getAttemptCount(), RunEventType.ERROR, Level.ERROR, message);
+        }
+        return failed;
+    }
+
     public void insert(JobInstanceAttempt attempt) {
         attemptMapper.insert(attempt);
     }

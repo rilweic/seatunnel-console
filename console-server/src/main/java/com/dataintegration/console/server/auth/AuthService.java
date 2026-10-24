@@ -82,11 +82,17 @@ public class AuthService {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "新密码不能和原密码相同");
         }
         SysUser update = new SysUser();
-        update.setId(user.getId());
         update.setPasswordHash(passwordEncoder.encode(newPassword));
         update.setMustChangePassword(false);
         update.setPasswordChangedAt(LocalDateTime.now());
-        userMapper.updateById(update);
+        // Only over the password that was just checked: if an administrator reset it in between,
+        // the reset stands (with its must-change flag) and this change is refused.
+        int written = userMapper.update(update, new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getId, user.getId())
+                .eq(SysUser::getPasswordHash, user.getPasswordHash()));
+        if (written == 0) {
+            throw new ConsoleException(ErrorCodes.UNAUTHENTICATED, "密码刚被管理员重置，请用新密码重新登录");
+        }
         // Other sessions of this account end: they logged in before the password changed.
         accountChanges.changed(user.getId());
         // This session goes on with the account as it is now, not as the session remembered it: an

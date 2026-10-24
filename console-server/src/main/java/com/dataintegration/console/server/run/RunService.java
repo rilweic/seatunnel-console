@@ -156,6 +156,15 @@ public class RunService {
      *     no run to stop yet, still prevents the run.
      */
     public String start(NewRun run, BooleanSupplier stillWanted) {
+        return handOver(record(run), run, stillWanted);
+    }
+
+    /**
+     * Records the run as PENDING (under the job's row lock, see RunRecorder.insert) without starting
+     * it. Joins the caller's transaction, so a backfill can claim its slot and record the run
+     * together; {@link #handOver} then starts it.
+     */
+    public JobInstance record(NewRun run) {
         if (run.startupParams() != null) {
             run.startupParams().keySet().forEach(Variables::validateName);
         }
@@ -181,6 +190,12 @@ public class RunService {
         instance.setCreatedBy(CurrentUser.idOrNull());
         recorder.insert(instance);
         recorder.event(instance.getId(), null, RunEventType.CREATED, Level.INFO, run.createdMessage());
+        return instance;
+    }
+
+    /** Starts a recorded run: hands it to XXL-JOB (or runs it locally without XXL-JOB). */
+    public String handOver(JobInstance instance, NewRun run, BooleanSupplier stillWanted) {
+        JobDefinition job = run.job();
         if (!stillWanted.getAsBoolean()) {
             if (recorder.cancelPending(instance.getId(), "no longer wanted before it was started")) {
                 recorder.event(instance.getId(), null, RunEventType.FINISHED, Level.WARN, RunStatus.CANCELED + ": no longer wanted");

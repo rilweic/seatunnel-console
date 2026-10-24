@@ -22,6 +22,7 @@ const { state: query, apply } = useQueryState(
   () => route.params.id === props.jobId && route.params.tab === 'runs',
 )
 let timer: number | undefined
+let disposed = false
 
 async function load(silent = false) {
   if (!silent) loading.value = true
@@ -33,13 +34,17 @@ async function load(silent = false) {
     loading.value = false
   }
   window.clearTimeout(timer)
-  if (rows.value.some((r) => isActive(r.status))) {
+  // Gone meanwhile: a request that was still on its way must not start refreshing again.
+  if (!disposed && rows.value.some((r) => isActive(r.status))) {
     timer = window.setTimeout(() => load(true), 5000)
   }
 }
 
 onMounted(() => load())
-onBeforeUnmount(() => window.clearTimeout(timer))
+onBeforeUnmount(() => {
+  disposed = true
+  window.clearTimeout(timer)
+})
 defineExpose({ load })
 </script>
 

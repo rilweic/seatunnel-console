@@ -3,8 +3,6 @@ package com.dataintegration.console.server.run;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
-import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
-import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.run.RunRecorder.Level;
 
@@ -37,17 +35,14 @@ public class RunReconciler {
     private static final Logger log = LoggerFactory.getLogger(RunReconciler.class);
 
     private final JobInstanceMapper instanceMapper;
-    private final JobInstanceAttemptMapper attemptMapper;
     private final RunRecorder recorder;
     private final Duration pendingGrace;
 
     public RunReconciler(
             JobInstanceMapper instanceMapper,
-            JobInstanceAttemptMapper attemptMapper,
             RunRecorder recorder,
             @Value("${console.run.pending-grace:10m}") Duration pendingGrace) {
         this.instanceMapper = instanceMapper;
-        this.attemptMapper = attemptMapper;
         this.recorder = recorder;
         this.pendingGrace = pendingGrace;
     }
@@ -57,16 +52,8 @@ public class RunReconciler {
         List<JobInstance> running = instanceMapper.selectList(
                 new LambdaQueryWrapper<JobInstance>().eq(JobInstance::getStatus, RunStatus.RUNNING.name()));
         for (JobInstance instance : running) {
-            if (fail(instance, "console restarted while this run was being monitored; "
-                    + "check the SeaTunnel cluster for the engine job of the last attempt")) {
-                // Its engine job may still be running: recorded as such, so a backfill pauses
-                // instead of starting the next scheduled time next to it.
-                attemptMapper.update(null, new LambdaUpdateWrapper<JobInstanceAttempt>()
-                        .set(JobInstanceAttempt::getEngineStatus, "UNKNOWABLE")
-                        .set(JobInstanceAttempt::getFinishedAt, LocalDateTime.now())
-                        .eq(JobInstanceAttempt::getInstanceId, instance.getId())
-                        .isNull(JobInstanceAttempt::getFinishedAt));
-            }
+            recorder.failOrphaned(instance, "console restarted while this run was being monitored; "
+                    + "check the SeaTunnel cluster for the engine job of the last attempt");
         }
         if (!running.isEmpty()) {
             log.warn("Marked {} run(s) interrupted by a console restart as FAILED", running.size());
