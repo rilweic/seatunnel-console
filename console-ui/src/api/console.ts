@@ -599,7 +599,36 @@ export interface FlowEndpoint {
   datasourceId: string | null
   datasourceName: string | null
   datasourceType: DatasourceType | null
+  /** Database / schema, endpoint path, index, or a short form of the query. */
   location: string | null
+  /** One more line, e.g. "8 张表" or "目标不存在时自动创建". */
+  note: string | null
+}
+
+/** How a wizard job writes and checks, with what the source can do already applied. */
+export interface FlowSettings {
+  mode: 'FULL' | 'INCREMENTAL' | null
+  window: 'DAY' | 'HOUR' | 'CUSTOM' | null
+  incrementalField: string | null
+  writeMode: 'UPSERT' | 'APPEND'
+  dataMode: 'KEEP' | 'CLEAR' | null
+  schemaMode: 'CREATE' | 'ERROR' | null
+  parallelism: number
+  validation: boolean
+}
+
+/** What the current version syncs (JobOverviewService.Flow). */
+export interface JobFlow {
+  sources: FlowEndpoint[]
+  sinks: FlowEndpoint[]
+  /** What the wizard does to the data, summed over tables, e.g. "改名 3 个字段"; empty when nothing. */
+  processing: string[]
+  /** Transform plugins of a script job, in order. */
+  transforms: string[]
+  /** Null for script jobs. */
+  settings: FlowSettings | null
+  /** Source → target of each table, for wizard jobs; notes like "过滤 status = 1". */
+  tables: { source: string; target: string; notes: string[] }[]
 }
 
 export interface JobOverview {
@@ -610,14 +639,7 @@ export interface JobOverview {
   trend: RunPoint[]
   metricsInstanceId: string | null
   metrics: EngineMetrics
-  flow: {
-    sources: FlowEndpoint[]
-    sinks: FlowEndpoint[]
-    tables: string[]
-    mode: 'FULL' | 'INCREMENTAL' | null
-    window: string | null
-    detail: string | null
-  }
+  flow: JobFlow
   schedule: ScheduleView | null
 }
 

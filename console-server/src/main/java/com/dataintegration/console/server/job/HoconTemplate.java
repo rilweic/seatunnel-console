@@ -155,6 +155,22 @@ public final class HoconTemplate {
         return blocks;
     }
 
+    /** The transform plugins in order, e.g. Sql, FieldRename; empty when there is no transform. */
+    public List<String> transformPlugins() {
+        List<String> plugins = new ArrayList<>();
+        ConfigValue transform = config.root().get("transform");
+        if (transform instanceof ConfigObject keyed) {
+            plugins.addAll(keyed.keySet());
+        } else if (transform instanceof ConfigList list) {
+            for (ConfigValue item : list) {
+                if (item instanceof ConfigObject block && block.get("plugin_name") != null) {
+                    plugins.add(String.valueOf(block.get("plugin_name").unwrapped()));
+                }
+            }
+        }
+        return plugins;
+    }
+
     public static boolean isSecretKey(String key) {
         return SecretRules.isSecretKey(key);
     }

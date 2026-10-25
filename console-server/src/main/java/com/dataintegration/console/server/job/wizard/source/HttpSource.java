@@ -372,10 +372,11 @@ public final class HttpSource implements WizardSource {
         return columns;
     }
 
+    /** The request, e.g. {@code GET /orders}. */
     @Override
     public String location(WizardForm form) {
         HttpSpec http = spec(form);
-        return http == null ? null : http.path();
+        return http == null ? null : (http.method() == null ? "" : http.method().name() + " ") + http.path();
     }
 
     /** Without primary keys rows can only be appended, whatever the form says. */

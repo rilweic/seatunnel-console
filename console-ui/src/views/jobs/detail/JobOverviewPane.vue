@@ -3,7 +3,7 @@
  * How a job is doing (docs/design.md §10.4): key numbers, the run going on now with its live
  * metrics, what it syncs, the trend of the last runs and per-table metrics of the latest one.
  */
-import { ArrowRight, Right } from '@element-plus/icons-vue'
+import { ArrowRight } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -12,7 +12,6 @@ import {
   instanceApi,
   jobApi,
   scheduleApi,
-  type FlowEndpoint,
   type JobOverview,
   type JobView,
   type RunMetrics,
@@ -20,8 +19,8 @@ import {
 } from '@/api/console'
 import EChart from '@/components/EChart.vue'
 import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
+import JobFlowCard from '@/components/JobFlowCard.vue'
 import { formatCompact, formatDuration, formatNumber, formatTime, statusTag, statusText, triggerText } from '@/utils/format'
-import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 
 const props = defineProps<{ job: JobView }>()
 const emit = defineEmits<{ showRuns: [] }>()
@@ -124,13 +123,6 @@ const trendOption = computed(() => {
 function openTrendRun(index: number) {
   const point = overview.value?.trend[index]
   if (point) router.push(`/instances/${point.id}`)
-}
-
-const WINDOW_TEXT: Record<string, string> = { DAY: '每次同步前一天的数据', HOUR: '每次同步前一小时的数据', CUSTOM: '自定义增量条件' }
-const { label: typeLabel } = useDatasourceTypes()
-
-function endpointType(e: FlowEndpoint): string {
-  return (e.datasourceType && typeLabel(e.datasourceType)) || e.connector || '-'
 }
 
 async function toggleSchedule() {
@@ -259,49 +251,13 @@ defineExpose({ load })
       <div v-else class="muted">等待提交到 SeaTunnel…</div>
     </el-card>
 
-    <div class="row">
-      <el-card shadow="never" class="block flow-card">
-        <template #header>同步链路<span class="head-meta">当前版本 {{ job.currentVersionNo ? `v${job.currentVersionNo}` : '未保存' }}</span></template>
-        <div v-if="overview.flow.sources.length === 0 && overview.flow.sinks.length === 0" class="muted">
-          {{ job.currentVersionNo ? '无法从脚本中识别来源和目标' : '还没有保存配置' }}
-        </div>
-        <template v-else>
-          <div class="flow">
-            <div class="ends">
-              <div v-for="(e, i) in overview.flow.sources" :key="'s' + i" class="end">
-                <div class="end-type">来源 · {{ endpointType(e) }}</div>
-                <div class="end-name">{{ e.datasourceName ?? e.datasourceId ?? e.connector }}</div>
-                <div class="end-loc">{{ e.location ?? '-' }}</div>
-              </div>
-            </div>
-            <el-icon class="arrow"><Right /></el-icon>
-            <div class="ends">
-              <div v-for="(e, i) in overview.flow.sinks" :key="'t' + i" class="end">
-                <div class="end-type">目标 · {{ endpointType(e) }}</div>
-                <div class="end-name">{{ e.datasourceName ?? e.datasourceId ?? e.connector }}</div>
-                <div class="end-loc">{{ e.location ?? '-' }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-if="overview.flow.mode" class="flow-meta">
-            <el-tag :type="overview.flow.mode === 'FULL' ? 'info' : 'primary'">{{ overview.flow.mode === 'FULL' ? '全量' : '增量' }}</el-tag>
-            <span v-if="overview.flow.mode === 'INCREMENTAL' && overview.flow.window">{{ WINDOW_TEXT[overview.flow.window] ?? overview.flow.window }}</span>
-            <span v-if="overview.flow.detail" class="muted">{{ overview.flow.detail }}</span>
-          </div>
-          <div v-if="overview.flow.tables.length" class="tables">
-            <span class="muted">{{ overview.flow.tables.length }} 张表：</span>
-            <el-tag v-for="t in overview.flow.tables.slice(0, 12)" :key="t" type="info" class="table-tag">{{ t }}</el-tag>
-            <span v-if="overview.flow.tables.length > 12" class="muted">等</span>
-          </div>
-        </template>
-      </el-card>
+    <JobFlowCard :flow="overview.flow" :version-no="job.currentVersionNo ?? null" class="block" />
 
-      <el-card shadow="never" class="block trend-card">
-        <template #header>最近 {{ overview.trend.length }} 次运行<span class="head-meta">柱子颜色表示结果，点击柱子查看那次运行</span></template>
-        <EChart v-if="overview.trend.length" :option="trendOption" height="240px" @click="(i: number) => openTrendRun(i)" />
-        <div v-else class="muted empty">还没有结束的运行</div>
-      </el-card>
-    </div>
+    <el-card shadow="never" class="block trend-card">
+      <template #header>最近 {{ overview.trend.length }} 次运行<span class="head-meta">柱子颜色表示结果，点击柱子查看那次运行</span></template>
+      <EChart v-if="overview.trend.length" :option="trendOption" height="240px" @click="(i: number) => openTrendRun(i)" />
+      <div v-else class="muted empty">还没有结束的运行</div>
+    </el-card>
 
     <el-card v-if="overview.metricsInstanceId && overview.metricsInstanceId !== activeRun?.id" shadow="never" class="block">
       <template #header>
@@ -440,79 +396,17 @@ defineExpose({ load })
   color: var(--el-text-color-secondary);
 }
 
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
-  gap: 16px;
-}
 
-@media (max-width: 1100px) {
-  .row {
-    grid-template-columns: 1fr;
-  }
-}
 
-.flow {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
 
-.ends {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
 
-.end {
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  background: var(--el-fill-color-lighter);
-}
 
-.end-type {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
 
-.end-name {
-  margin-top: 2px;
-  font-weight: 500;
-}
 
-.end-loc {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  word-break: break-all;
-}
 
-.arrow {
-  font-size: 20px;
-  color: var(--el-text-color-placeholder);
-}
 
-.flow-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
-  font-size: 13px;
-}
 
-.tables {
-  margin-top: 12px;
-  line-height: 28px;
-  font-size: 13px;
-}
 
-.table-tag {
-  margin-right: 6px;
-}
 
 .muted {
   color: var(--el-text-color-secondary);
