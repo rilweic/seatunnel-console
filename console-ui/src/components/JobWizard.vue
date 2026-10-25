@@ -83,7 +83,7 @@ const previewStatus = ref<number | null>(null)
 const previewElapsed = ref<number | null>(null)
 const previewLoading = ref(false)
 
-function defaultHttp(): NonNullable<WizardForm['source']['http']> {
+function defaultHttp(): NonNullable<WizardForm['source']['spec']> {
   return {
     path: '/',
     method: 'GET',
@@ -97,7 +97,7 @@ function defaultHttp(): NonNullable<WizardForm['source']['http']> {
 }
 
 async function previewHttp() {
-  if (!form.source.http) return
+  if (!form.source.spec) return
   previewLoading.value = true
   try {
     const result = await jobApi.httpPreview(props.jobId, { form: payload(), params: toMap(params.value) })
@@ -110,7 +110,7 @@ async function previewHttp() {
 }
 
 watch(
-  () => [form.source.datasourceId, form.source.http?.path, form.source.http?.method, form.source.http?.params, form.source.http?.body, form.source.http?.paging],
+  () => [form.source.datasourceId, form.source.spec?.path, form.source.spec?.method, form.source.spec?.params, form.source.spec?.body, form.source.spec?.paging],
   () => {
     previewText.value = ''
     previewStatus.value = null
@@ -120,15 +120,15 @@ watch(
 )
 
 watch(
-  () => [form.source.http?.fields, form.source.http?.path, form.source.http?.primaryKeys] as const,
+  () => [form.source.spec?.fields, form.source.spec?.path, form.source.spec?.primaryKeys] as const,
   (_current, previous) => {
-    if (!sourceIsHttp.value || !form.source.http) return
-    const name = form.source.http.path.split('/').filter(Boolean).pop() || 'http_data'
+    if (!sourceIsHttp.value || !form.source.spec) return
+    const name = form.source.spec.path.split('/').filter(Boolean).pop() || 'http_data'
     // An HTTP job has exactly one table, so its settings (blocked fields, renames, processing) stay
     // when the path and with it the table name changes, even while the path is being typed.
     const old = form.source.tables[0]
     const previousColumns = old ? old.columns : undefined
-    const available = form.source.http.fields.map((f) => f.name)
+    const available = form.source.spec.fields.map((f) => f.name)
     const oldFieldNames = new Set((previous?.[0] ?? []).map((field) => field.name))
     const added = available.filter((field) => !oldFieldNames.has(field))
     const columns = old && previousColumns == null
@@ -165,7 +165,7 @@ const filteredTables = computed(() => {
 })
 const tableMeta = computed(() => new Map(sourceTables.value.map((t) => [t.name, t])))
 const tablesWithoutPk = computed(() => sourceIsHttp.value
-  ? ((form.source.http?.primaryKeys?.length ?? 0) === 0 ? selected.value : [])
+  ? ((form.source.spec?.primaryKeys?.length ?? 0) === 0 ? selected.value : [])
   : selected.value.filter((n) => (tableMeta.value.get(n)?.primaryKeys.length ?? 1) === 0))
 
 async function loadSourceNamespaces() {
@@ -233,11 +233,11 @@ async function onSourceDatasource() {
   // advanced options belong to the connector (Jdbc or Http); the server refuses the other's
   form.sourceOptions = {}
   if (sourceIsHttp.value) {
-    form.source.http = defaultHttp()
+    form.source.spec = defaultHttp()
     form.parallelism = 1
     form.validation = false
   } else {
-    form.source.http = null
+    form.source.spec = null
     await loadSourceNamespaces()
   }
 }
@@ -291,8 +291,8 @@ async function loadColumns() {
   loadingColumns.value = true
   try {
     if (sourceIsHttp.value) {
-      const fields = form.source.http?.fields ?? []
-      const primaryKeys = form.source.http?.primaryKeys ?? []
+      const fields = form.source.spec?.fields ?? []
+      const primaryKeys = form.source.spec?.primaryKeys ?? []
       columns.value = Object.fromEntries(form.source.tables.map((t) => [t.name, fields.map((f) => ({
         name: f.name,
         type: f.type,
@@ -406,14 +406,14 @@ function payload(): WizardForm {
         addedFields: t.addedFields?.length ? t.addedFields : null,
         encryptKeyId: t.encryptKeyId || null,
       })),
-      http: form.source.http ? {
-        ...form.source.http,
-        path: clean(form.source.http.path) ?? '/',
-        params: opts(form.source.http.params),
-        body: form.source.http.body || null,
-        contentField: clean(form.source.http.contentField),
-        fields: form.source.http.fields.map((f) => ({ ...f, name: f.name.trim(), jsonPath: clean(f.jsonPath) })),
-        primaryKeys: form.source.http.primaryKeys ?? [],
+      spec: form.source.spec ? {
+        ...form.source.spec,
+        path: clean(form.source.spec.path) ?? '/',
+        params: opts(form.source.spec.params),
+        body: form.source.spec.body || null,
+        contentField: clean(form.source.spec.contentField),
+        fields: form.source.spec.fields.map((f) => ({ ...f, name: f.name.trim(), jsonPath: clean(f.jsonPath) })),
+        primaryKeys: form.source.spec.primaryKeys ?? [],
       } : null,
     },
     target: {
@@ -495,8 +495,8 @@ function stepError(i: number): string | null {
   if (i === 0) {
     if (!form.source.datasourceId) return '请选择源数据源'
     if (sourceIsHttp.value) {
-      if (!form.source.http?.path.trim()) return '请填写 HTTP 请求路径'
-      if (!form.source.http.fields.length) return '请发送请求预览并选择数据数组和字段'
+      if (!form.source.spec?.path.trim()) return '请填写 HTTP 请求路径'
+      if (!form.source.spec.fields.length) return '请发送请求预览并选择数据数组和字段'
     } else {
       if (!form.source.namespace) return '请选择库或 schema'
       if (form.source.tables.length === 0) return '请至少勾选一张表'
@@ -557,7 +557,7 @@ onMounted(async () => {
     await loadSourceNamespaces()
     await loadSourceTables()
   } else if (sourceIsHttp.value) {
-    form.source.http ??= defaultHttp()
+    form.source.spec ??= defaultHttp()
     form.parallelism = 1
     form.validation = false
   }
@@ -600,8 +600,8 @@ onMounted(async () => {
         </el-form-item>
       </el-form>
       <HttpSourcePanel
-        v-if="sourceIsHttp && form.source.http"
-        v-model="form.source.http"
+        v-if="sourceIsHttp && form.source.spec"
+        v-model="form.source.spec"
         :loading="previewLoading"
         :preview-text="previewText"
         :preview-status="previewStatus"

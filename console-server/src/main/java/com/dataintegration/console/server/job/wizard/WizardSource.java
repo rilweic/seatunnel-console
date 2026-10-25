@@ -46,6 +46,11 @@ public interface WizardSource {
     /** Column names the generator needs from the live datasource, by table (see {@link Endpoints#sourceColumns()}). */
     Map<String, List<String>> knownColumns(WizardForm form, DatasourceService datasources);
 
+    /** Where the rows come from, for the job overview: the database or schema, the endpoint path. */
+    default String location(WizardForm form) {
+        return form.source().namespace();
+    }
+
     /** The value of {@link Endpoints#sourceDatabase()}: the datasource's database where table paths need it. */
     default String database(WizardForm form, DatasourceService datasources) {
         return null;

@@ -15,11 +15,6 @@ import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.job.wizard.Hocon;
 import com.dataintegration.console.server.job.wizard.WizardConnectors;
 import com.dataintegration.console.server.job.wizard.WizardForm;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpField;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPageLocation;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPaging;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPagingMode;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpSpec;
 import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
 import com.dataintegration.console.server.job.wizard.WizardGenerator;
 import com.dataintegration.console.server.job.wizard.WizardGenerator.Endpoints;
@@ -60,12 +55,17 @@ public final class HttpSource implements WizardSource {
     /** The params and body of a request, paging applied. */
     public record RequestParts(Map<String, String> params, String body) {}
 
+    /** The form's HTTP settings ({@code source.spec}), or null when they are missing. */
+    public static HttpSpec spec(WizardForm form) {
+        return form.source().spec(HttpSpec.class);
+    }
+
     @Override
     public void requireShape(WizardForm form) {
         if (form.source().tables().size() != 1) {
             throw invalid("HTTP 任务只能配置一个接口");
         }
-        HttpSpec http = form.source().http();
+        HttpSpec http = spec(form);
         if (http == null || !notBlank(http.path()) || http.method() == null) {
             throw invalid("请填写 HTTP 接口路径并选择请求方法");
         }
@@ -79,8 +79,8 @@ public final class HttpSource implements WizardSource {
         if (http.fields() == null || http.fields().isEmpty()) {
             throw invalid("请至少选择一个 HTTP 响应字段");
         }
-        Map<String, HttpField> fields = new LinkedHashMap<>();
-        for (HttpField field : http.fields()) {
+        Map<String, HttpSpec.Field> fields = new LinkedHashMap<>();
+        for (HttpSpec.Field field : http.fields()) {
             if (field == null || !notBlank(field.name()) || !notBlank(field.type())) {
                 throw invalid("HTTP 字段名和类型不能为空");
             }
@@ -109,7 +109,7 @@ public final class HttpSource implements WizardSource {
         requirePaging(http.paging());
     }
 
-    private static void requirePaging(HttpPaging paging) {
+    private static void requirePaging(HttpSpec.Paging paging) {
         if (paging == null) {
             return;
         }
@@ -131,7 +131,7 @@ public final class HttpSource implements WizardSource {
                 }
             }
             case CURSOR -> {
-                if (paging.pageLocation() == HttpPageLocation.BODY) {
+                if (paging.pageLocation() == HttpSpec.PageLocation.BODY) {
                     throw invalid("HTTP 游标分页只支持 PARAMS");
                 }
                 if (!notBlank(paging.cursorField()) || !notBlank(paging.cursorResponseField())) {
@@ -150,8 +150,8 @@ public final class HttpSource implements WizardSource {
     @Override
     public void append(StringBuilder hocon, WizardForm form, Endpoints endpoints) {
         TableSpec table = form.source().tables().get(0);
-        HttpSpec http = form.source().http();
-        HttpPaging paging = http.paging();
+        HttpSpec http = spec(form);
+        HttpSpec.Paging paging = http.paging();
         RequestParts request = requestParts(http.params(), http.body(), paging, null);
 
         hocon.append("source {\n  Http {\n");
@@ -168,7 +168,7 @@ public final class HttpSource implements WizardSource {
         if (form.sourceOptions() == null || !form.sourceOptions().containsKey("json_filed_missed_return_null")) {
             hocon.append("    json_filed_missed_return_null = true\n");
         }
-        List<HttpField> fields = fields(http, table);
+        List<HttpSpec.Field> fields = fields(http, table);
         boolean extractRows = fields.stream().anyMatch(f -> notBlank(f.jsonPath()))
                 || notBlank(http.contentField()) && !"$".equals(http.contentField().trim());
         if (extractRows) {
@@ -177,8 +177,8 @@ public final class HttpSource implements WizardSource {
             Hocon.appendStringMap(hocon, "json_field", jsonFields);
         }
         appendSchema(hocon, tablePath(form, endpoints, table), fields, http.primaryKeys());
-        if (paging != null && (paging.mode() == HttpPagingMode.CURSOR
-                || paging.mode() == HttpPagingMode.PAGE_NUMBER && paging.pageLocation() != HttpPageLocation.BODY)) {
+        if (paging != null && (paging.mode() == HttpSpec.PagingMode.CURSOR
+                || paging.mode() == HttpSpec.PagingMode.PAGE_NUMBER && paging.pageLocation() != HttpSpec.PageLocation.BODY)) {
             hocon.append("    keep_page_param_as_http_param = true\n");
         }
         appendPaging(hocon, paging);
@@ -186,7 +186,7 @@ public final class HttpSource implements WizardSource {
         hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
     }
 
-    private static void appendSchema(StringBuilder hocon, String table, List<HttpField> fields, List<String> keys) {
+    private static void appendSchema(StringBuilder hocon, String table, List<HttpSpec.Field> fields, List<String> keys) {
         hocon.append("    schema = {\n");
         hocon.append("      table = ").append(str(table)).append('\n');
         List<String> primaryKeys = keys == null ? List.of() : keys.stream().map(String::trim).toList();
@@ -215,8 +215,8 @@ public final class HttpSource implements WizardSource {
         hocon.append("    }\n");
     }
 
-    private static void appendPaging(StringBuilder hocon, HttpPaging paging) {
-        if (paging == null || paging.mode() == HttpPagingMode.NONE) {
+    private static void appendPaging(StringBuilder hocon, HttpSpec.Paging paging) {
+        if (paging == null || paging.mode() == HttpSpec.PagingMode.NONE) {
             return;
         }
         hocon.append("    pageing = {\n");
@@ -253,7 +253,7 @@ public final class HttpSource implements WizardSource {
         Hocon.appendOptions(hocon, options);
     }
 
-    private static String fieldType(HttpField field) {
+    private static String fieldType(HttpSpec.Field field) {
         String type = field.type().trim().toUpperCase(Locale.ROOT);
         if (!FIELD_TYPES.contains(type)) {
             throw invalid("HTTP 字段 " + field.name() + " 的类型不支持：" + field.type());
@@ -269,7 +269,7 @@ public final class HttpSource implements WizardSource {
         return str("decimal(" + precision + "," + scale + ")");
     }
 
-    private static String jsonPath(String contentField, HttpField field) {
+    private static String jsonPath(String contentField, HttpSpec.Field field) {
         if (notBlank(field.jsonPath()) && field.jsonPath().contains("[*]")) {
             return field.jsonPath().trim();
         }
@@ -284,11 +284,11 @@ public final class HttpSource implements WizardSource {
         return prefix + "[*]" + (relative.startsWith("[") ? relative : "." + relative);
     }
 
-    private static List<HttpField> fields(HttpSpec http, TableSpec table) {
+    private static List<HttpSpec.Field> fields(HttpSpec http, TableSpec table) {
         if (table.allColumns()) {
             return http.fields();
         }
-        Map<String, HttpField> byName = new LinkedHashMap<>();
+        Map<String, HttpSpec.Field> byName = new LinkedHashMap<>();
         http.fields().forEach(f -> byName.put(f.name(), f));
         return table.columns().stream().map(byName::get).toList();
     }
@@ -300,14 +300,14 @@ public final class HttpSource implements WizardSource {
      * @param page value of the page field: null writes the connector's {@code ${page}} placeholder,
      *     the preview passes the first page number
      */
-    public static RequestParts requestParts(Map<String, String> params, String body, HttpPaging paging, String page) {
+    public static RequestParts requestParts(Map<String, String> params, String body, HttpSpec.Paging paging, String page) {
         Map<String, String> result = params == null ? new LinkedHashMap<>() : new LinkedHashMap<>(params);
         String resultBody = body;
         if (paging != null && paging.mode() != null) {
             switch (paging.mode()) {
                 case PAGE_NUMBER -> {
                     String pageValue = page == null ? "${page}" : page;
-                    if (paging.pageLocation() == HttpPageLocation.BODY) {
+                    if (paging.pageLocation() == HttpSpec.PageLocation.BODY) {
                         resultBody = pagedBody(body, paging, pageValue);
                     } else {
                         result.put(paging.pageField().trim(), pageValue);
@@ -331,7 +331,7 @@ public final class HttpSource implements WizardSource {
         return text.startsWith("$") ? text : "$." + text;
     }
 
-    private static String pagedBody(String body, HttpPaging paging, String page) {
+    private static String pagedBody(String body, HttpSpec.Paging paging, String page) {
         JsonNode parsed;
         try {
             parsed = JSON.readTree(notBlank(body) ? body : "{}");
@@ -359,23 +359,29 @@ public final class HttpSource implements WizardSource {
 
     @Override
     public List<String> syncedColumns(WizardForm form, Endpoints endpoints, TableSpec table) {
-        return table.allColumns() ? form.source().http().fields().stream().map(HttpField::name).toList() : table.columns();
+        return table.allColumns() ? spec(form).fields().stream().map(HttpSpec.Field::name).toList() : table.columns();
     }
 
     @Override
     public Map<String, List<String>> knownColumns(WizardForm form, DatasourceService datasources) {
         Map<String, List<String>> columns = new LinkedHashMap<>();
-        if (form.source().tables() != null && form.source().http() != null && form.source().http().fields() != null) {
-            List<String> names = form.source().http().fields().stream().map(HttpField::name).toList();
+        if (form.source().tables() != null && spec(form) != null && spec(form).fields() != null) {
+            List<String> names = spec(form).fields().stream().map(HttpSpec.Field::name).toList();
             form.source().tables().forEach(table -> columns.put(table.name(), names));
         }
         return columns;
     }
 
+    @Override
+    public String location(WizardForm form) {
+        HttpSpec http = spec(form);
+        return http == null ? null : http.path();
+    }
+
     /** Without primary keys rows can only be appended, whatever the form says. */
     @Override
     public boolean upsertPossible(WizardForm form) {
-        List<String> keys = form.source().http().primaryKeys();
+        List<String> keys = spec(form).primaryKeys();
         return keys != null && !keys.isEmpty();
     }
 
@@ -386,10 +392,10 @@ public final class HttpSource implements WizardSource {
 
     /** Sends the first page exactly as the wizard is configured, variables rendered. */
     public HttpPreviewResponse preview(WizardForm form, Live live) {
-        if (form.source() == null || form.source().http() == null) {
+        if (form.source() == null || spec(form) == null) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "请选择 HTTP 来源并填写请求");
         }
-        HttpSpec http = form.source().http();
+        HttpSpec http = spec(form);
         LocalDateTime now = LocalDateTime.now();
         Map<String, String> values = live.variables() == null ? Map.of() : live.variables();
         Map<String, String> params = new LinkedHashMap<>();
@@ -401,9 +407,9 @@ public final class HttpSource implements WizardSource {
             });
         }
         String body = http.body() == null ? null : Variables.render(http.body(), values, now);
-        HttpPaging paging = http.paging();
+        HttpSpec.Paging paging = http.paging();
         String firstPage = null;
-        if (paging != null && paging.mode() == HttpPagingMode.PAGE_NUMBER) {
+        if (paging != null && paging.mode() == HttpSpec.PagingMode.PAGE_NUMBER) {
             if (!notBlank(paging.pageField()) || !notBlank(paging.pageSizeField()) || paging.pageSize() == null) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "请完整填写页码和每页条数字段");
             }
@@ -423,7 +429,7 @@ public final class HttpSource implements WizardSource {
      */
     @Override
     public Map<String, SourceTable> inspect(WizardForm form, Endpoints endpoints, Live live, List<Check> checks) {
-        HttpSpec http = form.source().http();
+        HttpSpec http = spec(form);
         JsonNode root;
         try {
             HttpPreviewResponse response = preview(form, live);
@@ -451,7 +457,7 @@ public final class HttpSource implements WizardSource {
             if (records.isEmpty()) {
                 checks.add(new Check(Level.WARN, "第一页的数据数组为空，只按已确认字段生成配置"));
             }
-            for (HttpField field : http.fields()) {
+            for (HttpSpec.Field field : http.fields()) {
                 boolean implicitPath = !notBlank(field.jsonPath());
                 if (implicitPath && !BARE_FIELD.matcher(field.name()).matches()) {
                     throw invalid("HTTP 字段 " + field.name() + " 含特殊字符，请填写明确的 jsonPath");
@@ -462,8 +468,8 @@ public final class HttpSource implements WizardSource {
                     checks.add(new Check(Level.ERROR, "前几条记录里找不到字段 " + field.name() + "（" + path + "）"));
                 }
             }
-            HttpPaging paging = http.paging();
-            if (paging != null && paging.mode() == HttpPagingMode.CURSOR) {
+            HttpSpec.Paging paging = http.paging();
+            if (paging != null && paging.mode() == HttpSpec.PagingMode.CURSOR) {
                 JsonNode cursor = HttpJsonPath.read(root, cursorPath(paging.cursorResponseField()));
                 if (cursor == null || cursor.isNull() || cursor.isContainer() || cursor.asString().isBlank()) {
                     checks.add(new Check(Level.WARN, "第一页的响应里没有取到游标（" + paging.cursorResponseField()

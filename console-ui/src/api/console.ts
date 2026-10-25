@@ -268,7 +268,7 @@ export interface HttpPreviewResult {
 }
 
 export interface WizardForm {
-  source: { datasourceId: string; namespace: string; tables: WizardTable[]; http?: HttpSourceSpec | null }
+  source: { datasourceId: string; namespace: string; tables: WizardTable[]; spec?: HttpSourceSpec | null }
   target: {
     datasourceId: string
     namespace?: string | null

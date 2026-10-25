@@ -2,12 +2,14 @@ package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dataintegration.console.common.ConsoleException;
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.HoconTemplate;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.JobService.VersionDetail;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.ScheduleService.ScheduleView;
+import com.dataintegration.console.server.job.wizard.WizardConnectors;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardGenerator;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
@@ -208,14 +210,20 @@ public class JobOverviewService {
 
     private Flow wizardFlow(WizardForm form) {
         List<String> tables = form.source().tables().stream().map(WizardForm.TableSpec::name).toList();
-        Endpoint source = endpoint(null, form.source().datasourceId(),
-                form.source().http() == null ? form.source().namespace() : form.source().http().path());
+        String sourceType = typeOf(form.source().datasourceId());
+        String sourceLocation = form.source().namespace();
+        try {
+            sourceLocation = sourceType == null ? sourceLocation : WizardConnectors.source(sourceType).location(form);
+        } catch (ConsoleException e) {
+            // not a wizard source (any more): show the namespace
+        }
+        Endpoint source = endpoint(null, form.source().datasourceId(), sourceLocation);
         WizardForm.Target t = form.target();
-        String targetType = typeOf(t.datasourceId());
-        boolean es = "ELASTICSEARCH".equals(targetType);
-        List<String> targets = form.source().tables().stream().map(table -> WizardGenerator.targetName(form, table, es)).toList();
+        DataSourceCapabilities target = capabilities(typeOf(t.datasourceId()));
+        boolean lowerCase = target != null && target.lowerCaseNames();
+        List<String> targets = form.source().tables().stream().map(table -> WizardGenerator.targetName(form, table, lowerCase)).toList();
         String naming = targets.isEmpty() ? "-" : targets.size() == 1 ? targets.get(0) : targets.get(0) + " 等 " + targets.size() + " 张";
-        String location = "ELASTICSEARCH".equals(targetType) ? naming : t.namespace() + " · " + naming;
+        String location = target != null && !target.namespaces() ? naming : t.namespace() + " · " + naming;
         Endpoint sink = endpoint(null, t.datasourceId(), location);
         String detail = (t.writeMode() == null ? "" : t.writeMode().name()) + " · "
                 + (t.dataMode() == WizardForm.DataMode.CLEAR ? "写入前清空" : "保留已有数据");
@@ -242,6 +250,14 @@ public class JobOverviewService {
             }
         }
         return new Endpoint(connector, datasourceId, name, type, location);
+    }
+
+    private static DataSourceCapabilities capabilities(String type) {
+        try {
+            return type == null ? null : WizardConnectors.capabilities(type);
+        } catch (ConsoleException e) {
+            return null;
+        }
     }
 
     private String typeOf(String datasourceId) {

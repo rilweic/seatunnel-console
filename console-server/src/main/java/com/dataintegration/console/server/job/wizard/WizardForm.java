@@ -1,5 +1,11 @@
 package com.dataintegration.console.server.job.wizard;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -10,7 +16,7 @@ import java.util.Map;
  *
  * @param parallelism env.parallelism, 1/2/4/8
  * @param validation generate per-table row-count validation where it can be accurate (§7.6)
- * @param sourceOptions advanced Jdbc source options, written as given
+ * @param sourceOptions advanced options of the source connector, as far as it accepts them
  * @param sinkOptions advanced sink options, written as given
  * @param fieldRule how target field names derive from source field names, for tables without their
  *     own rule; null keeps them
@@ -37,58 +43,29 @@ public record WizardForm(
     }
 
     /**
-     * @param namespace database (MySQL) or schema (PostgreSQL) holding the tables
+     * @param namespace database (MySQL) or schema (PostgreSQL) holding the tables; null where the
+     *     source type has none
+     * @param spec the source type's own settings, read by its {@link WizardSource} (e.g. the HTTP
+     *     request, §7.13); null for sources that need nothing beyond tables. Forms saved before
+     *     §7.14 kept the HTTP settings under {@code http}, read here as well.
      */
-    public record Source(String datasourceId, String namespace, List<TableSpec> tables, HttpSpec http) {
+    public record Source(String datasourceId, String namespace, List<TableSpec> tables, @JsonAlias("http") JsonNode spec) {
+
+        private static final ObjectMapper JSON = JsonMapper.builder().build();
 
         public Source(String datasourceId, String namespace, List<TableSpec> tables) {
             this(datasourceId, namespace, tables, null);
         }
-    }
 
-    /** One HTTP endpoint and the fields confirmed from its response preview (§7.13). */
-    public record HttpSpec(
-            String path,
-            HttpMethod method,
-            Map<String, String> params,
-            String body,
-            HttpPaging paging,
-            String contentField,
-            List<HttpField> fields,
-            List<String> primaryKeys) {}
-
-    public enum HttpMethod {
-        GET,
-        POST
-    }
-
-    public record HttpField(String name, String type, String jsonPath, Integer precision, Integer scale) {
-
-        public HttpField(String name, String type, String jsonPath) {
-            this(name, type, jsonPath, null, null);
+        /** A source whose spec is the given settings object, e.g. an {@code HttpSpec}. */
+        public static Source withSpec(String datasourceId, String namespace, List<TableSpec> tables, Object spec) {
+            return new Source(datasourceId, namespace, tables, spec == null ? null : JSON.valueToTree(spec));
         }
-    }
 
-    public record HttpPaging(
-            HttpPagingMode mode,
-            String pageField,
-            HttpPageLocation pageLocation,
-            Long startPageNumber,
-            String pageSizeField,
-            Integer pageSize,
-            Long totalPageSize,
-            String cursorField,
-            String cursorResponseField) {}
-
-    public enum HttpPagingMode {
-        NONE,
-        PAGE_NUMBER,
-        CURSOR
-    }
-
-    public enum HttpPageLocation {
-        PARAMS,
-        BODY
+        /** The spec as the source type's settings record, or null when there is none. */
+        public <T> T spec(Class<T> type) {
+            return spec == null || spec.isNull() ? null : JSON.treeToValue(spec, type);
+        }
     }
 
     /**

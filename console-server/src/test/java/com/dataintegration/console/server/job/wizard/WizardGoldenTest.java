@@ -45,6 +45,19 @@ class WizardGoldenTest {
         return scenarios.stream().map(json -> DynamicTest.dynamicTest(json.getFileName().toString(), () -> check(json)));
     }
 
+    @org.junit.jupiter.api.Test
+    void formsSavedWithHttpAreReadIntoSpecAndSavedBackAsSpec() throws IOException {
+        JsonNode old = JSON.readTree(Files.readString(DIR.resolve("06-http-to-mysql-cursor-pk.json"))).get("form");
+        assertThat(old.get("source").has("http")).isTrue();
+
+        WizardForm form = JSON.treeToValue(old, WizardForm.class);
+        assertThat(form.source().spec().get("path").asString()).isEqualTo("/orders");
+
+        JsonNode saved = JSON.readTree(JSON.writeValueAsString(form)).get("source");
+        assertThat(saved.has("http")).isFalse();
+        assertThat(saved.get("spec")).isEqualTo(old.get("source").get("http"));
+    }
+
     private static void check(Path json) throws IOException {
         JsonNode scenario = JSON.readTree(Files.readString(json));
         String actual = render(endpoints(scenario.get("endpoints")), JSON.treeToValue(scenario.get("form"), WizardForm.class));

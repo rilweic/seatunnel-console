@@ -15,12 +15,7 @@ import com.dataintegration.console.datasource.http.HttpPreviewResponse;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpField;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpMethod;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPageLocation;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPaging;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpPagingMode;
-import com.dataintegration.console.server.job.wizard.WizardForm.HttpSpec;
+import com.dataintegration.console.server.job.wizard.source.HttpSpec;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.Sync;
 import com.dataintegration.console.server.job.wizard.WizardForm.SyncMode;
@@ -47,11 +42,11 @@ class WizardServiceTest {
 
     @Test
     void previewHttpUsesParamsStartPageAndVariablesAndReturnsDatasourceResponse() {
-        HttpPaging paging = new HttpPaging(
-                HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.PARAMS, 3L, "size", 50, null, null, null);
-        HttpSpec http = new HttpSpec("/orders/${tenant}", HttpMethod.GET,
+        HttpSpec.Paging paging = new HttpSpec.Paging(
+                HttpSpec.PagingMode.PAGE_NUMBER, "pageNo", HttpSpec.PageLocation.PARAMS, 3L, "size", 50, null, null, null);
+        HttpSpec http = new HttpSpec("/orders/${tenant}", HttpSpec.Method.GET,
                 Map.of("tenant", "${tenant}", "pageNo", "999"), null, paging,
-                "$", List.of(new HttpField("id", "BIGINT", null)), List.of("id"));
+                "$", List.of(new HttpSpec.Field("id", "BIGINT", null)), List.of("id"));
         HttpPreviewResponse response = new HttpPreviewResponse(201, 42, "{\"created\":true}");
         when(datasourceService.previewHttp(eq("http-ds"), any())).thenReturn(response);
 
@@ -68,10 +63,10 @@ class WizardServiceTest {
 
     @Test
     void previewHttpPopulatesPageAndPageSizeIntoPostBody() {
-        HttpPaging paging = new HttpPaging(
-                HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.BODY, 0L, "size", 25, null, null, null);
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.POST, null, "{\"tenant\":\"${tenant}\"}", paging,
-                "$", List.of(new HttpField("id", "BIGINT", null)), List.of("id"));
+        HttpSpec.Paging paging = new HttpSpec.Paging(
+                HttpSpec.PagingMode.PAGE_NUMBER, "pageNo", HttpSpec.PageLocation.BODY, 0L, "size", 25, null, null, null);
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.POST, null, "{\"tenant\":\"${tenant}\"}", paging,
+                "$", List.of(new HttpSpec.Field("id", "BIGINT", null)), List.of("id"));
         when(datasourceService.previewHttp(eq("http-ds"), any()))
                 .thenReturn(new HttpPreviewResponse(200, 5, "[]"));
 
@@ -84,11 +79,11 @@ class WizardServiceTest {
 
     @Test
     void previewHttpRemovesCursorParameterFromFirstPage() {
-        HttpPaging paging = new HttpPaging(
-                HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null, "next", "$.next");
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET,
+        HttpSpec.Paging paging = new HttpSpec.Paging(
+                HttpSpec.PagingMode.CURSOR, null, HttpSpec.PageLocation.PARAMS, null, null, null, null, "next", "$.next");
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.GET,
                 Map.of("tenant", "acme", "next", "stale-cursor"), null, paging,
-                "$", List.of(new HttpField("id", "BIGINT", null)), List.of("id"));
+                "$", List.of(new HttpSpec.Field("id", "BIGINT", null)), List.of("id"));
         when(datasourceService.previewHttp(eq("http-ds"), any()))
                 .thenReturn(new HttpPreviewResponse(200, 5, "[]"));
 
@@ -165,10 +160,10 @@ class WizardServiceTest {
     @Test
     void precheckHttpSupportsArrayIndexesAndQuotedFieldNames() {
         mockHttpTypes();
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.GET, null, null, null, "$",
                 List.of(
-                        new HttpField("order-id", "BIGINT", "$['order-id']"),
-                        new HttpField("first", "STRING", "$.items[0].name")),
+                        new HttpSpec.Field("order-id", "BIGINT", "$['order-id']"),
+                        new HttpSpec.Field("first", "STRING", "$.items[0].name")),
                 null);
         when(datasourceService.previewHttp(eq("http-ds"), any()))
                 .thenReturn(new HttpPreviewResponse(200, 8,
@@ -194,8 +189,8 @@ class WizardServiceTest {
     @Test
     void precheckHttpValidatesFieldPathsWhenFirstPageIsEmpty() {
         mockHttpTypes();
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
-                List.of(new HttpField("id", "BIGINT", "$.id[0")), null);
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.GET, null, null, null, "$",
+                List.of(new HttpSpec.Field("id", "BIGINT", "$.id[0")), null);
         when(datasourceService.previewHttp(eq("http-ds"), any()))
                 .thenReturn(new HttpPreviewResponse(200, 8, "[]"));
 
@@ -207,8 +202,8 @@ class WizardServiceTest {
     @Test
     void precheckHttpRequiresExplicitPathForSpecialFieldNames() {
         mockHttpTypes();
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
-                List.of(new HttpField("order.id", "BIGINT", null)), null);
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.GET, null, null, null, "$",
+                List.of(new HttpSpec.Field("order.id", "BIGINT", null)), null);
         when(datasourceService.previewHttp(eq("http-ds"), any()))
                 .thenReturn(new HttpPreviewResponse(200, 8, "[]"));
 
@@ -220,8 +215,8 @@ class WizardServiceTest {
     @Test
     void precheckHttpRejectsExplicitRelativeJsonPath() {
         mockHttpTypes();
-        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
-                List.of(new HttpField("id", "BIGINT", "bad path")), null);
+        HttpSpec http = new HttpSpec("/orders", HttpSpec.Method.GET, null, null, null, "$",
+                List.of(new HttpSpec.Field("id", "BIGINT", "bad path")), null);
         WizardService.PrecheckResult result = wizardService.precheck(form(http), Map.of());
 
         assertThat(result.errors()).anyMatch(message -> message.contains("jsonPath 必须以 $ 开头"));
@@ -269,13 +264,13 @@ class WizardServiceTest {
     }
 
     private static HttpSpec http(String contentField) {
-        return new HttpSpec("/orders", HttpMethod.GET, null, null, null, contentField,
-                List.of(new HttpField("id", "BIGINT", null)), List.of("id"));
+        return new HttpSpec("/orders", HttpSpec.Method.GET, null, null, null, contentField,
+                List.of(new HttpSpec.Field("id", "BIGINT", null)), List.of("id"));
     }
 
     private static WizardForm form(HttpSpec http) {
         return new WizardForm(
-                new WizardForm.Source("http-ds", null, List.of(new TableSpec("orders", null, null, null)), http),
+                WizardForm.Source.withSpec("http-ds", null, List.of(new TableSpec("orders", null, null, null)), http),
                 new Target("mysql-ds", "ods", null, null, null, SchemaMode.CREATE, DataMode.KEEP, WriteMode.UPSERT),
                 new Sync(SyncMode.INCREMENTAL, null, null, null),
                 1,
