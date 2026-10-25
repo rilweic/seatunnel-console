@@ -199,6 +199,7 @@
 | 阶段 | 类型 |
 |---|---|
 | P1 | MySQL、PostgreSQL、Elasticsearch |
+| P1 之后（2026-10-25 提前到 P2 前） | HTTP 接口（只作来源，§7.13） |
 | P3 | 按需扩展 |
 
 每种数据源类型要实现：测试连接、列出库/表/索引、读取表结构，以及"数据源 → 对应 connector 配置项"的翻译。例如 Jdbc 用 `url/driver/user/password`，CDC 用 `base-url/username/password`。
@@ -315,6 +316,47 @@ updated_at >= '$[yyyy-MM-dd-1] 00:00:00' and updated_at < '$[yyyy-MM-dd] 00:00:0
 - 脚本编辑器上方"插入 transform"：常用插件（Sql、FieldRename、TableRename、Filter、Replace、Copy、JsonPath、RegexExtract、Split、FieldEncrypt、TableFilter）各有一个带中文注释的模板，可以先改再插入；下方列出该插件的全部参数，说明是集群 `/option-rules?type=transform` 的原文
 - 脚本里还没有 `transform {}` 时，在 `sink` 前面新建一个；已有时插到光标处
 - FieldEncrypt 模板用 `encrypt_key_id`，不写 `key`（7.11）
+
+### 7.13 HTTP 接口来源（2026-10-25 设计，待实现）
+
+用 SeaTunnel 的 `Http` source（`connector-http-base`）把接口返回的 JSON 同步到 MySQL、PG、ES。它的限制决定了下面的设计：一个 source 对应一个接口、不能并行、没法计数；JSON 必须写 `schema.fields`；认证只能写在 `headers` 里；分页有页码和游标两种。
+
+**范围**：新增「HTTP」数据源类型；向导支持 HTTP → MySQL/PG/ES，只做离线、`format = json`。实时轮询、`text` / `binary` 格式、OAuth2（要先换 token）不做，需要时用脚本模式（同样可以引用 `datasource_id`）。
+
+**数据源和任务的分工**：
+
+| 存在哪 | 内容 |
+|---|---|
+| 数据源（一个系统一个） | 基础地址（如 `https://api.example.com`）、认证、公共 Header、连接和读取超时、可选的测试路径 |
+| 任务（一个接口一个） | 路径、GET / POST、请求参数、POST Body、分页、数据位置、字段、主键 |
+
+- 认证方式：无、Bearer Token、Basic（用户名 / 密码）、API Key（自定义 Header 名或 query 参数名）。凭据和数据库密码一样加密保存、不回传浏览器，提交时由 `toConnectorOptions` 渲染进 `headers` / `params`，归档配置里是 `******`（§6）
+- 测试连接：带认证 GET「基础地址 + 测试路径」（不填测试路径就请求基础地址）。2xx 成功；401 / 403 提示认证失败；其他显示状态码和响应开头 200 个字符
+- 向导用到的 HTTP 请求（测试连接、请求预览）都由 console 服务端发出，所以 console 和 SeaTunnel 节点都要能访问这个接口
+
+**向导各步**：
+
+| 步骤 | HTTP 来源时的内容 |
+|---|---|
+| ① 来源 | 选 HTTP 数据源，填请求：路径、方法、参数（键值表格，值可以用变量）、POST 时的 JSON Body；再选分页（见下）。一个任务一个接口，要同步多个接口就建多个任务（可用任务复制） |
+| ① 请求预览 | 「发送请求预览」用当前配置真实请求第一页，显示返回的 JSON。用户在 JSON 树上点选数据所在的数组 → `content_field`；console 用前几条记录推断字段和类型（可以改）→ `schema.fields`；嵌套字段可以勾选展开 → `json_field`。预览的响应不保存 |
+| ② 目标 | 同数据库来源，只有一行"表映射"：目标表名必填，默认取路径最后一段。生成时写成 `schema.table`，所以 sink 的 `${table_name}`、`table_transform` 都按这个名字走，不再需要 TableRename |
+| ③ 字段与同步方式 | 字段映射和字段处理照常可用（§7.8、§7.10、§7.11）。主键可选：选了就生成 `schema.primaryKey`，写入默认 upsert；不选就是追加，全量时默认清空后写入（沿用 §7.4）。没有"增量字段"，增量见下 |
+| ④ 并行度与校验 | 并行度固定为 1；行数校验关闭（接口无法计数），说明原因，运行页照常显示引擎读写条数。高级参数里中文化：重试次数和退避、请求间隔 `request_interval_ms`（防限流）、超时、缺字段时返回空值 `json_filed_missed_return_null`（默认开）；`keep_params_as_form` 等兼容旧版本的参数隐藏 |
+| ⑤ 预检查与预览 | 数据源连通；按配置请求第一页，检查 `content_field` 能取到数组、字段都在；目标端检查同数据库来源 |
+
+**分页**（统一生成 `pageing.use_placeholder_replacement = true`）：
+
+- 不分页
+- 页码：页码参数名、放在参数还是 Body、起始页、每页条数的参数名和值；结束条件选"返回条数小于每页条数"（`batch_size`）或"固定总页数"（`total_page_size`）。参数或 Body 里写 `${page}`
+- 游标：游标参数名、响应里的游标路径（`cursor_response_field`），写 `${cursor}`
+- `page`、`cursor` 是保留名，不能用作任务参数名，console 的变量替换也不碰它们（同 `${table_name}`）
+
+**增量**：接口没有增量字段，增量靠请求参数带时间窗口。参数值支持变量，旁边有「按天 / 按小时」快捷插入（如 `start=$[yyyy-MM-dd-1]`、`end=$[yyyy-MM-dd]`），补数和重跑按计划时间算出各自的窗口（§7.5、§8）。
+
+**凭据检查扩展**（§6 第 6 条）：HTTP 下凭据常写在 Header 里，所以 Header 名 `Authorization`、`Cookie`、`X-API-Key`，以及名字含 key / token 的 Header，也算作凭据：任务配置（含脚本、高级参数）里直接写会拒绝保存，打码时一并替换。认证只能放在数据源里。
+
+**实现顺序**（每项单独提交，用 scratchpad 里的本地 Python mock 接口在真实集群上验证分页和认证）：数据源类型和测试连接 → 请求预览和字段推断 → 向导生成和预检查 → 凭据检查扩展 → 文档。
 
 ## 8. 变量
 
@@ -478,7 +520,7 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 
 - Flink 和 Spark 引擎（EngineClient 的新实现）
 - 告警（Webhook）
-- 更多数据源；ES 作为来源
+- 更多数据源；ES 作为来源（HTTP 来源已提前，§7.13）
 - 类似 Tapdata Board 的拖拽快速创建
 - 可选：AES ConfigShade 加固；逐行数据校验；console 多实例部署
 
@@ -496,3 +538,4 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 | 8 | 表 / 字段映射和字段处理都生成 SeaTunnel 自带的 transform（FieldRename、TableRename、Sql、JsonPath、RegexExtract、Split、FieldEncrypt），做成向导选项 | SQL 别名改名：主键信息会丢；下推到源库写 SQL：表达式跟着源库方言走，且用户要会写 SQL |
 | 9 | 加密密钥由 console 管理，配置只引用 ID，提交时注入 | 密钥写进配置：违反"配置里不出现密钥"的原则 |
 | 10 | 离线调度最小间隔 2 分钟，补数只补已经到点的时间、同一任务同时只有一个未结束的补数 | 不限制：容易误配成每秒运行，或提前跑未来的日期 |
+| 11 | HTTP 来源：数据源存基础地址和认证，任务存接口请求；字段靠请求预览点选推断；增量靠参数里的时间变量 | 一个数据源对应一个接口：认证要重复配置；让用户手写 schema：新手写不出来 |
