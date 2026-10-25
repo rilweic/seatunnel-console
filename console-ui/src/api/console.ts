@@ -87,13 +87,37 @@ export const projectApi = {
   saveParams: (id: string, items: ParamItem[]) => put<ParamItem[]>(`/projects/${id}/params`, items),
 }
 
-export type DatasourceType = 'MYSQL' | 'POSTGRESQL' | 'ELASTICSEARCH' | 'HTTP'
+/** A datasource type name from the server, e.g. MYSQL; the list comes from {@link datasourceApi.types}. */
+export type DatasourceType = string
+
+/** What a datasource type can do (DataSourceCapabilities on the server, design.md §6.1). */
+export interface DatasourceCapabilities {
+  label: string
+  /** SeaTunnel source connector the wizard generates; null when the wizard cannot read from it. */
+  sourceConnector: string | null
+  /** SeaTunnel sink connector the wizard generates; null when the wizard cannot write to it. */
+  sinkConnector: string | null
+  /** Jobs pick a database or schema first. */
+  namespaces: boolean
+  multiTable: boolean
+  countable: boolean
+  maxParallelism: number
+  lowerCaseNames: boolean
+  jdbcDriver: boolean
+}
+
+export interface DatasourceTypeView {
+  type: DatasourceType
+  capabilities: DatasourceCapabilities
+}
 
 export interface DatasourceView extends Owned {
   id: string
   name: string
   type: DatasourceType
   description: string | null
+  /** Where it points, e.g. db1:3306/shop, worked out by the server per type. */
+  address: string
   config: Record<string, string>
   secretsSet: string[]
   createdAt: string
@@ -120,6 +144,7 @@ export interface ColumnMeta {
 }
 
 export const datasourceApi = {
+  types: () => get<DatasourceTypeView[]>('/datasources/types'),
   namespaces: (id: string) => get<string[]>(`/datasources/${id}/namespaces`),
   tables: (id: string, namespace?: string) => get<TableMeta[]>(`/datasources/${id}/tables`, { namespace }),
   columns: (id: string, namespace: string | undefined, table: string) =>

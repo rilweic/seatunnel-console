@@ -58,6 +58,7 @@ public class DatasourceService {
             String name,
             String type,
             String description,
+            String address,
             Map<String, String> config,
             Set<String> secretsSet,
             String ownerId,
@@ -235,6 +236,15 @@ public class DatasourceService {
         return config(require(datasourceId)).get(key);
     }
 
+    /** Where the datasource points, for the list; empty when its type is no longer supported. */
+    private String address(DatasourceEntity entity) {
+        try {
+            return plugins.get(entity.getType()).address(config(entity));
+        } catch (ConsoleException e) {
+            return "";
+        }
+    }
+
     /** A datasource type and what it can do, for the UI. */
     public record TypeView(String type, DataSourceCapabilities capabilities) {}
 
@@ -358,6 +368,7 @@ public class DatasourceService {
                 entity.getName(),
                 entity.getType(),
                 entity.getDescription(),
+                address(entity),
                 config(entity),
                 secretsSet,
                 entity.getCreatedBy(),

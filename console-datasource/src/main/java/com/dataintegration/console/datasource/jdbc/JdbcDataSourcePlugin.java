@@ -42,6 +42,17 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
     /** How this database quotes identifiers and forms SeaTunnel table paths. */
     public abstract SqlDialect dialect();
 
+    /** The port used when none is configured, e.g. 3306. */
+    protected abstract int defaultPort();
+
+    @Override
+    public String address(Map<String, String> config) {
+        String database = config.get("database");
+        String port = config.get("port");
+        return config.get("host") + ":" + (port == null || port.isBlank() ? defaultPort() : port.trim())
+                + (database == null || database.isBlank() ? "" : "/" + database);
+    }
+
     @Override
     public Set<String> secretKeys() {
         return Set.of("password");

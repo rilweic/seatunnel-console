@@ -19,6 +19,11 @@ public class PostgreSqlDataSourcePlugin extends JdbcDataSourcePlugin {
     }
 
     @Override
+    protected int defaultPort() {
+        return 5432;
+    }
+
+    @Override
     public SqlDialect dialect() {
         return SqlDialect.POSTGRESQL;
     }
@@ -27,7 +32,7 @@ public class PostgreSqlDataSourcePlugin extends JdbcDataSourcePlugin {
     @Override
     public String buildUrl(Map<String, String> props) {
         String host = Props.required(props, "host");
-        int port = Props.port(props, 5432);
+        int port = Props.port(props, defaultPort());
         String database = Props.required(props, "database");
         return withParams("jdbc:postgresql://" + host + ":" + port + "/" + database, props.get("params"));
     }

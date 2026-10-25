@@ -19,6 +19,13 @@ public interface DataSourcePlugin {
     /** What this type can do, so callers never compare type names (docs/design.md §6.1). */
     DataSourceCapabilities capabilities();
 
+    /**
+     * Where the datasource points, shown in the datasource list, e.g. {@code db1:3306/shop}.
+     *
+     * @param config the saved properties without the secret ones
+     */
+    String address(Map<String, String> config);
+
     /** Property names stored encrypted and never returned to the browser, e.g. {@code password}. */
     Set<String> secretKeys();
 

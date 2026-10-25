@@ -1,11 +1,10 @@
 package com.dataintegration.console.datasource;
 
-import com.dataintegration.console.datasource.jdbc.JdbcDataSourcePlugin;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dataintegration.console.common.ConsoleException;
+import com.dataintegration.console.datasource.jdbc.JdbcDataSourcePlugin;
 
 import org.junit.jupiter.api.Test;
 
@@ -89,6 +88,16 @@ class DataSourcePluginsTest {
                 .isEqualTo("app.public.t");
         assertThat(((JdbcDataSourcePlugin) plugins.get("MYSQL")).dialect().qualified("shop", "a`b"))
                 .isEqualTo("`shop`.`a``b`");
+    }
+
+    @Test
+    void addressesShowWhereEachTypePoints() {
+        DataSourcePlugins plugins = new DataSourcePlugins();
+        assertThat(plugins.get("MYSQL").address(Map.of("host", "db1", "database", "shop"))).isEqualTo("db1:3306/shop");
+        assertThat(plugins.get("POSTGRESQL").address(Map.of("host", "pg", "port", "6432", "database", "app")))
+                .isEqualTo("pg:6432/app");
+        assertThat(plugins.get("ELASTICSEARCH").address(Map.of("hosts", "http://es:9200"))).isEqualTo("http://es:9200");
+        assertThat(plugins.get("HTTP").address(Map.of("baseUrl", "https://api.example.com"))).isEqualTo("https://api.example.com");
     }
 
     @Test

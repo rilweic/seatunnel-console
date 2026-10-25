@@ -20,6 +20,11 @@ public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
     }
 
     @Override
+    protected int defaultPort() {
+        return 3306;
+    }
+
+    @Override
     public SqlDialect dialect() {
         return SqlDialect.MYSQL;
     }
@@ -28,7 +33,7 @@ public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
     @Override
     public String buildUrl(Map<String, String> props) {
         String host = Props.required(props, "host");
-        int port = Props.port(props, 3306);
+        int port = Props.port(props, defaultPort());
         String database = Props.optional(props, "database");
         return withParams("jdbc:mysql://" + host + ":" + port + "/" + (database == null ? "" : database), props.get("params"));
     }

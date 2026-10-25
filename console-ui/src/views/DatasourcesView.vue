@@ -3,57 +3,17 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
-import { datasourceApi, type DatasourceType, type DatasourceView } from '@/api/console'
+import { datasourceApi, type DatasourceView } from '@/api/console'
+import { datasourceForms } from '@/components/datasource/forms'
+import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 import { useUserStore } from '@/stores/user'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
-interface FieldDef {
-  key: string
-  label: string
-  required?: boolean
-  secret?: boolean
-  placeholder?: string
-}
-
-/** Must match the properties read by the plugins in console-datasource. */
-const fieldsByType: Record<DatasourceType, FieldDef[]> = {
-  MYSQL: [
-    { key: 'host', label: '主机', required: true },
-    { key: 'port', label: '端口', placeholder: '3306' },
-    { key: 'database', label: '数据库', placeholder: '可选' },
-    { key: 'username', label: '用户名', required: true },
-    { key: 'password', label: '密码', secret: true },
-    { key: 'params', label: '连接参数', placeholder: '如 useSSL=false&serverTimezone=Asia/Shanghai' },
-  ],
-  POSTGRESQL: [
-    { key: 'host', label: '主机', required: true },
-    { key: 'port', label: '端口', placeholder: '5432' },
-    { key: 'database', label: '数据库', required: true },
-    { key: 'username', label: '用户名', required: true },
-    { key: 'password', label: '密码', secret: true },
-    { key: 'params', label: '连接参数', placeholder: '如 sslmode=disable' },
-  ],
-  ELASTICSEARCH: [
-    { key: 'hosts', label: '地址', required: true, placeholder: 'http://es1:9200,http://es2:9200' },
-    { key: 'username', label: '用户名', placeholder: '可选' },
-    { key: 'password', label: '密码', secret: true },
-  ],
-  HTTP: [
-    { key: 'baseUrl', label: '基础地址', required: true, placeholder: 'https://api.example.com' },
-    { key: 'connectTimeoutMs', label: '连接超时', placeholder: '12000（毫秒）' },
-    { key: 'socketTimeoutMs', label: '读取超时', placeholder: '60000（毫秒）' },
-    { key: 'testPath', label: '测试路径', placeholder: '可选，如 /health' },
-  ],
-}
-
-const typeLabels: Record<DatasourceType, string> = {
-  MYSQL: 'MySQL',
-  POSTGRESQL: 'PostgreSQL',
-  ELASTICSEARCH: 'Elasticsearch',
-  HTTP: 'HTTP',
-}
+const { types, label: typeLabel } = useDatasourceTypes()
+/** Types the server supports and this page has a form for, in the server's order. */
+const creatableTypes = computed(() => types.value.filter((t) => datasourceForms[t.type]))
 
 const rows = ref<DatasourceView[]>([])
 const total = ref(0)
@@ -76,7 +36,7 @@ const dialog = reactive({
   visible: false,
   id: '',
   name: '',
-  type: 'MYSQL' as DatasourceType,
+  type: '',
   description: '',
   props: {} as Record<string, string>,
   secretsSet: [] as string[],
@@ -84,10 +44,15 @@ const dialog = reactive({
   testing: false,
 })
 
-const fields = computed(() => fieldsByType[dialog.type])
+const form = computed(() => datasourceForms[dialog.type])
+
+function initialProps(type: string) {
+  return datasourceForms[type]?.initialProps?.() ?? {}
+}
 
 function openCreate() {
-  Object.assign(dialog, { visible: true, id: '', name: '', type: 'MYSQL', description: '', props: {}, secretsSet: [] })
+  const type = creatableTypes.value[0]?.type ?? ''
+  Object.assign(dialog, { visible: true, id: '', name: '', type, description: '', props: initialProps(type), secretsSet: [] })
 }
 
 function openEdit(row: DatasourceView) {
@@ -97,13 +62,13 @@ function openEdit(row: DatasourceView) {
     name: row.name,
     type: row.type,
     description: row.description ?? '',
-    props: { authType: 'NONE', apiKeyLocation: 'HEADER', ...row.config },
+    props: { ...initialProps(row.type), ...row.config },
     secretsSet: row.secretsSet,
   })
 }
 
-function secretPlaceholder(field: Pick<FieldDef, 'key'>) {
-  return dialog.id && dialog.secretsSet.includes(field.key) ? '已保存，留空表示不修改' : ''
+function secretPlaceholder(key: string) {
+  return dialog.id && dialog.secretsSet.includes(key) ? '已保存，留空表示不修改' : ''
 }
 
 async function testConnection() {
@@ -165,12 +130,6 @@ async function copyId(row: DatasourceView) {
   }
 }
 
-function summary(row: DatasourceView) {
-  const c = row.config
-  if (row.type === 'HTTP') return c.baseUrl
-  return row.type === 'ELASTICSEARCH' ? c.hosts : `${c.host}:${c.port || (row.type === 'MYSQL' ? 3306 : 5432)}${c.database ? '/' + c.database : ''}`
-}
-
 onMounted(load)
 </script>
 
@@ -187,17 +146,17 @@ onMounted(load)
       </el-radio-group>
         <el-input v-model="query.keyword" placeholder="搜索名称" clearable class="search" @change="apply()" />
         <el-select v-model="query.type" placeholder="全部类型" clearable class="type" @change="apply()">
-          <el-option v-for="(label, value) in typeLabels" :key="value" :label="label" :value="value" />
+          <el-option v-for="t in types" :key="t.type" :label="t.capabilities.label" :value="t.type" />
         </el-select>
       </div>
     </div>
     <el-table v-loading="loading" :data="rows">
       <el-table-column prop="name" label="名称" min-width="160" />
       <el-table-column label="类型" width="130">
-        <template #default="{ row }">{{ typeLabels[row.type as DatasourceType] }}</template>
+        <template #default="{ row }">{{ typeLabel(row.type) }}</template>
       </el-table-column>
       <el-table-column label="地址" min-width="220" show-overflow-tooltip>
-        <template #default="{ row }">{{ summary(row) }}</template>
+        <template #default="{ row }">{{ row.address }}</template>
       </el-table-column>
       <el-table-column label="更新时间" width="170">
         <template #default="{ row }">{{ formatTime(row.updatedAt) }}</template>
@@ -230,48 +189,17 @@ onMounted(load)
         <el-input v-model="dialog.name" maxlength="64" />
       </el-form-item>
       <el-form-item label="类型" required>
-        <el-radio-group v-model="dialog.type" :disabled="!!dialog.id" @change="dialog.props = dialog.type === 'HTTP' ? { authType: 'NONE', apiKeyLocation: 'HEADER' } : {}">
-          <el-radio-button v-for="(label, value) in typeLabels" :key="value" :value="value">{{ label }}</el-radio-button>
+        <el-radio-group v-model="dialog.type" :disabled="!!dialog.id" @change="dialog.props = initialProps(dialog.type)">
+          <el-radio-button v-for="t in creatableTypes" :key="t.type" :value="t.type">{{ t.capabilities.label }}</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-for="field in fields" :key="field.key" :label="field.label" :required="field.required">
-        <el-input
-          v-model="dialog.props[field.key]"
-          :type="field.secret ? 'password' : 'text'"
-          :show-password="field.secret"
-          :placeholder="field.secret ? secretPlaceholder(field) : field.placeholder"
-          autocomplete="off"
-        />
-      </el-form-item>
-      <template v-if="dialog.type === 'HTTP'">
-        <el-form-item label="认证方式">
-          <el-select v-model="dialog.props.authType">
-            <el-option label="无认证" value="NONE" />
-            <el-option label="Bearer Token" value="BEARER" />
-            <el-option label="Basic" value="BASIC" />
-            <el-option label="API Key" value="API_KEY" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="dialog.props.authType === 'BEARER'" label="Token" required>
-          <el-input v-model="dialog.props.token" type="password" show-password :placeholder="secretPlaceholder({ key: 'token' })" autocomplete="off" />
-        </el-form-item>
-        <template v-if="dialog.props.authType === 'BASIC'">
-          <el-form-item label="用户名" required><el-input v-model="dialog.props.username" autocomplete="off" /></el-form-item>
-          <el-form-item label="密码">
-            <el-input v-model="dialog.props.password" type="password" show-password :placeholder="secretPlaceholder({ key: 'password' })" autocomplete="off" />
-          </el-form-item>
-        </template>
-        <template v-if="dialog.props.authType === 'API_KEY'">
-          <el-form-item label="Key 位置"><el-radio-group v-model="dialog.props.apiKeyLocation"><el-radio-button value="HEADER">Header</el-radio-button><el-radio-button value="QUERY">Query</el-radio-button></el-radio-group></el-form-item>
-          <el-form-item label="Key 名称" required><el-input v-model="dialog.props.apiKeyName" placeholder="如 X-API-Key 或 api_key" /></el-form-item>
-          <el-form-item label="Key 值" required>
-            <el-input v-model="dialog.props.apiKey" type="password" show-password :placeholder="secretPlaceholder({ key: 'apiKey' })" autocomplete="off" />
-          </el-form-item>
-        </template>
-        <el-form-item label="公共 Header">
-          <el-input v-model="dialog.props.headers" type="textarea" :rows="3" placeholder='JSON 对象，如 {"Accept":"application/json"}；认证 Header 请在上方配置' />
-        </el-form-item>
-      </template>
+      <component
+        :is="form.component"
+        v-if="form"
+        v-bind="form.options"
+        :values="dialog.props"
+        :secret-placeholder="secretPlaceholder"
+      />
       <el-form-item label="描述">
         <el-input v-model="dialog.description" type="textarea" maxlength="512" />
       </el-form-item>

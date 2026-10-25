@@ -48,6 +48,11 @@ public class HttpDataSourcePlugin implements DataSourcePlugin {
         return DataSourceType.HTTP;
     }
 
+    @Override
+    public String address(Map<String, String> config) {
+        return config.get("baseUrl");
+    }
+
     /** A wizard source only: one endpoint per job, read page by page, and it cannot be counted. */
     @Override
     public DataSourceCapabilities capabilities() {

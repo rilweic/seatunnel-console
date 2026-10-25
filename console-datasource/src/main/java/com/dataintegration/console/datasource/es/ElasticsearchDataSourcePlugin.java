@@ -57,6 +57,11 @@ public class ElasticsearchDataSourcePlugin implements DataSourcePlugin {
         return DataSourceType.ELASTICSEARCH;
     }
 
+    @Override
+    public String address(Map<String, String> config) {
+        return config.get("hosts");
+    }
+
     /** A wizard target only: reading an index is left to scripts. Index names are lower case. */
     @Override
     public DataSourceCapabilities capabilities() {
