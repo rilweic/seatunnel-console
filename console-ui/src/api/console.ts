@@ -100,7 +100,8 @@ export interface DatasourceCapabilities {
   /** Jobs pick a database or schema first. */
   namespaces: boolean
   multiTable: boolean
-  countable: boolean
+  /** How rows are counted for validation; null when they cannot be. */
+  countBy: 'SQL' | 'INDEX' | null
   maxParallelism: number
   lowerCaseNames: boolean
   jdbcDriver: boolean

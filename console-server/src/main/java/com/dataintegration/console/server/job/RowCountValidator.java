@@ -3,6 +3,7 @@ package com.dataintegration.console.server.job;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.datasource.CountRequest;
+import com.dataintegration.console.datasource.DataSourceCapabilities.CountBy;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.ValidationSpec.Mode;
 import com.dataintegration.console.server.job.ValidationSpec.Side;
@@ -180,14 +181,14 @@ public class RowCountValidator {
             case SQL -> {
                 requireText(side.datasourceId(), "validation " + name + ": choose a datasource");
                 requireText(side.sql(), "validation " + name + ": enter the count SQL");
-                if (datasourceService.typeOf(side.datasourceId()).equals("ELASTICSEARCH")) {
+                if (datasourceService.capabilitiesOf(side.datasourceId()).countBy() != CountBy.SQL) {
                     throw invalid("validation " + name + ": SQL needs a database datasource, use ES mode for Elasticsearch");
                 }
             }
             case ES -> {
                 requireText(side.datasourceId(), "validation " + name + ": choose a datasource");
                 requireText(side.index(), "validation " + name + ": enter the index");
-                if (!datasourceService.typeOf(side.datasourceId()).equals("ELASTICSEARCH")) {
+                if (datasourceService.capabilitiesOf(side.datasourceId()).countBy() != CountBy.INDEX) {
                     throw invalid("validation " + name + ": ES mode needs an Elasticsearch datasource");
                 }
             }

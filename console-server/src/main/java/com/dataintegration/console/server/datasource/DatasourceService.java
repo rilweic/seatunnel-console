@@ -203,10 +203,9 @@ public class DatasourceService {
     /** Sends one HTTP request with the saved credentials; the response is never persisted. */
     public HttpPreviewResponse previewHttp(String datasourceId, HttpPreviewRequest request) {
         DatasourceEntity entity = requireEditable(datasourceId);
-        if (!"HTTP".equals(entity.getType())) {
+        if (!(plugins.get(entity.getType()) instanceof HttpDataSourcePlugin plugin)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "HTTP preview requires an HTTP datasource");
         }
-        HttpDataSourcePlugin plugin = (HttpDataSourcePlugin) plugins.get(entity.getType());
         return plugin.preview(decryptedProps(entity), request);
     }
 

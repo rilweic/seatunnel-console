@@ -12,7 +12,7 @@ package com.dataintegration.console.datasource;
  * @param namespaces tables sit in a database or schema that jobs pick first (MySQL, PostgreSQL);
  *     false when they sit directly under the datasource (Elasticsearch indices) or there are none
  * @param multiTable one wizard job may read several of its tables
- * @param countable rows can be counted, for row-count validation
+ * @param countBy how rows are counted for row-count validation; null when they cannot be
  * @param maxParallelism highest parallelism a wizard job reading from it may use
  * @param lowerCaseNames table names must be lower case (Elasticsearch indices)
  * @param jdbcDriver SeaTunnel workers need this type's JDBC driver, checked by the cluster diagnostics
@@ -23,10 +23,22 @@ public record DataSourceCapabilities(
         String sinkConnector,
         boolean namespaces,
         boolean multiTable,
-        boolean countable,
+        CountBy countBy,
         int maxParallelism,
         boolean lowerCaseNames,
         boolean jdbcDriver) {
+
+    /** How a datasource counts rows (docs/design.md §10.3). */
+    public enum CountBy {
+        /** a count query, {@link CountRequest#sql} */
+        SQL,
+        /** an index count, {@link CountRequest#index} */
+        INDEX
+    }
+
+    public boolean countable() {
+        return countBy != null;
+    }
 
     public boolean wizardSource() {
         return sourceConnector != null;

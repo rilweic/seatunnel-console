@@ -1,6 +1,7 @@
 package com.dataintegration.console.datasource.jdbc;
 
 import com.dataintegration.console.datasource.DataSourceCapabilities;
+import com.dataintegration.console.datasource.DataSourceCapabilities.CountBy;
 import com.dataintegration.console.datasource.DataSourceType;
 import com.dataintegration.console.datasource.Props;
 
@@ -16,7 +17,7 @@ public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
 
     @Override
     public DataSourceCapabilities capabilities() {
-        return new DataSourceCapabilities("MySQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, true, 8, false, true);
+        return new DataSourceCapabilities("MySQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, CountBy.SQL, 8, false, true);
     }
 
     @Override

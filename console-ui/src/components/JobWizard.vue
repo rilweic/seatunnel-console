@@ -105,7 +105,7 @@ function fitToSource() {
   const caps = sourceCaps.value
   if (!caps) return
   form.parallelism = Math.min(form.parallelism, caps.maxParallelism)
-  if (!caps.countable) form.validation = false
+  if (!caps.countBy) form.validation = false
 }
 
 function onSourceDatasource() {
@@ -272,7 +272,7 @@ function payload(): WizardForm {
             customCondition: form.sync.window === 'CUSTOM' ? clean(form.sync.customCondition) : null,
           },
     parallelism: Math.min(form.parallelism, sourceCaps.value?.maxParallelism ?? form.parallelism),
-    validation: sourceCaps.value && !sourceCaps.value.countable ? false : form.validation,
+    validation: sourceCaps.value && !sourceCaps.value.countBy ? false : form.validation,
     sourceOptions: opts(form.sourceOptions),
     sinkOptions: opts(form.sinkOptions),
     fieldRule: cleanRule(form.fieldRule),
@@ -546,7 +546,7 @@ onMounted(async () => {
           <HelpTip :text="sourceUi?.text.parallelismHelp ?? ''" />
         </el-form-item>
         <el-form-item label="行数校验">
-          <el-switch v-model="form.validation" :disabled="!sourceCaps?.countable" />
+          <el-switch v-model="form.validation" :disabled="!sourceCaps?.countBy" />
           <HelpTip :text="sourceUi?.text.validationHelp ?? ''" />
         </el-form-item>
       </el-form>

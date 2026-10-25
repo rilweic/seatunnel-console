@@ -21,6 +21,7 @@ import {
 import EChart from '@/components/EChart.vue'
 import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
 import { formatCompact, formatDuration, formatNumber, formatTime, statusTag, statusText, triggerText } from '@/utils/format'
+import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 
 const props = defineProps<{ job: JobView }>()
 const emit = defineEmits<{ showRuns: [] }>()
@@ -126,10 +127,10 @@ function openTrendRun(index: number) {
 }
 
 const WINDOW_TEXT: Record<string, string> = { DAY: '每次同步前一天的数据', HOUR: '每次同步前一小时的数据', CUSTOM: '自定义增量条件' }
-const TYPE_TEXT: Record<string, string> = { MYSQL: 'MySQL', POSTGRESQL: 'PostgreSQL', ELASTICSEARCH: 'Elasticsearch', HTTP: 'HTTP' }
+const { label: typeLabel } = useDatasourceTypes()
 
 function endpointType(e: FlowEndpoint): string {
-  return (e.datasourceType && TYPE_TEXT[e.datasourceType]) || e.connector || '-'
+  return (e.datasourceType && typeLabel(e.datasourceType)) || e.connector || '-'
 }
 
 async function toggleSchedule() {

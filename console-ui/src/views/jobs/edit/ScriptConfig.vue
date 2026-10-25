@@ -9,6 +9,7 @@ import ValidationTag from '@/components/ValidationTag.vue'
 
 import TransformInsertDialog from './TransformInsertDialog.vue'
 import { nowText, paramsProblem, toMap, toRows } from '@/utils/params'
+import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 
 const props = defineProps<{ job: JobView; version: VersionDetail | null }>()
 const emit = defineEmits<{ saved: []; dirty: [dirty: boolean] }>()
@@ -81,8 +82,10 @@ const dirty = computed(
 watch(dirty, (value) => emit('dirty', value))
 
 const datasources = ref<DatasourceView[]>([])
-const jdbcDatasources = computed(() => datasources.value.filter((d) => d.type === 'MYSQL' || d.type === 'POSTGRESQL'))
-const esDatasources = computed(() => datasources.value.filter((d) => d.type === 'ELASTICSEARCH'))
+const { capabilities, label: typeLabel } = useDatasourceTypes()
+/** Datasources a validation side can count with a query (SQL mode) or by index (ES mode). */
+const sqlCountDatasources = computed(() => datasources.value.filter((d) => capabilities(d.type)?.countBy === 'SQL'))
+const indexCountDatasources = computed(() => datasources.value.filter((d) => capabilities(d.type)?.countBy === 'INDEX'))
 const pickedDatasource = ref('')
 const editor = ref<{ textarea?: HTMLTextAreaElement } | null>(null)
 
@@ -253,7 +256,7 @@ onMounted(async () => {
       </div>
       <template v-else>
         <el-select v-model="validation.source.datasourceId" placeholder="数据源" filterable class="side-ds">
-          <el-option v-for="d in jdbcDatasources" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
+          <el-option v-for="d in sqlCountDatasources" :key="d.id" :label="`${d.name} (${typeLabel(d.type)})`" :value="d.id" />
         </el-select>
         <el-input v-model="validation.source.sql" type="textarea" :rows="3" class="code" placeholder="select count(*) from orders where dt = '${dt}'" />
       </template>
@@ -266,13 +269,13 @@ onMounted(async () => {
       </el-radio-group>
       <template v-if="validation.target.mode === 'SQL'">
         <el-select v-model="validation.target.datasourceId" placeholder="数据源" filterable class="side-ds">
-          <el-option v-for="d in jdbcDatasources" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
+          <el-option v-for="d in sqlCountDatasources" :key="d.id" :label="`${d.name} (${typeLabel(d.type)})`" :value="d.id" />
         </el-select>
         <el-input v-model="validation.target.sql" type="textarea" :rows="3" class="code" placeholder="select count(*) from ods_orders where dt = '${dt}'" />
       </template>
       <template v-else>
         <el-select v-model="validation.target.datasourceId" placeholder="数据源" filterable class="side-ds">
-          <el-option v-for="d in esDatasources" :key="d.id" :label="d.name" :value="d.id" />
+          <el-option v-for="d in indexCountDatasources" :key="d.id" :label="d.name" :value="d.id" />
         </el-select>
         <el-input v-model="validation.target.index" placeholder="索引，如 orders_${dt}" class="side-ds" />
         <el-input v-model="validation.target.query" type="textarea" :rows="3" class="code" placeholder='可选的 query，如 {"term": {"dt": "${dt}"}}' />

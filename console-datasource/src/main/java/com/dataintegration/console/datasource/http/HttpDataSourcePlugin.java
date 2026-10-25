@@ -56,7 +56,7 @@ public class HttpDataSourcePlugin implements DataSourcePlugin {
     /** A wizard source only: one endpoint per job, read page by page, and it cannot be counted. */
     @Override
     public DataSourceCapabilities capabilities() {
-        return new DataSourceCapabilities("HTTP", HTTP_CONNECTOR, null, false, false, false, 1, false, false);
+        return new DataSourceCapabilities("HTTP", HTTP_CONNECTOR, null, false, false, null, 1, false, false);
     }
 
     @Override
