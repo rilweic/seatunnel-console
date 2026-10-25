@@ -258,6 +258,9 @@ onBeforeUnmount(() => {
       <el-table-column label="触发" width="80">
         <template #default="{ row }">{{ triggerText[row.triggerType] }}</template>
       </el-table-column>
+      <el-table-column label="运行 ID" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.id }}</template>
+      </el-table-column>
       <el-table-column label="开始时间" width="170">
         <template #default="{ row }">{{ formatTime(row.startedAt ?? row.createdAt) }}</template>
       </el-table-column>

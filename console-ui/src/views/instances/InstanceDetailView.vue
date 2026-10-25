@@ -227,7 +227,7 @@ onBeforeUnmount(() => {
           <el-tag v-if="instance.jobDeleted" type="info">已删除</el-tag>
           <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
-          <router-link v-if="instance.backfillBatchId && !instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">属于一次补数</router-link>
+          <router-link v-if="instance.backfillBatchId && !instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">查看补数批次</router-link>
         </div>
         <div>
           <el-button v-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>
@@ -242,6 +242,9 @@ onBeforeUnmount(() => {
         <el-descriptions-item label="读取行数">{{ formatNumber(instance.readRows) }}</el-descriptions-item>
         <el-descriptions-item label="写入行数">{{ formatNumber(instance.writeRows) }}</el-descriptions-item>
         <el-descriptions-item label="尝试次数">{{ instance.attemptCount }}</el-descriptions-item>
+        <el-descriptions-item label="运行 ID" :span="3">
+          <code>{{ instance.id }}</code>
+        </el-descriptions-item>
         <el-descriptions-item v-if="instance.validationStatus && instance.validationStatus !== 'SKIPPED'" label="行数校验" :span="3">
           <ValidationTag :instance="instance" />
           <span class="muted validation-msg">{{ instance.validationMessage }}</span>
