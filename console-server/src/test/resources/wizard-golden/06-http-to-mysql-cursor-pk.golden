@@ -1,0 +1,77 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    datasource_id = "http-ds"
+    url = "/orders"
+    method = "GET"
+    params = {
+      tenant = "acme"
+      since = "$[yyyy-MM-dd-1]"
+    }
+    format = "json"
+    json_filed_missed_return_null = true
+    json_field = {
+      id = "$.data.items[*].id"
+      order-id = "$.data.items[*].order-id"
+      amount = "$.data.items[*].amount"
+      code = "$.data.items[*].meta.code"
+    }
+    schema = {
+      table = "http_orders"
+      columns = [
+        { name = "id", type = BIGINT, nullable = false }
+        { name = "order-id", type = STRING, nullable = true }
+        { name = "amount", type = "decimal(20,4)", nullable = true }
+        { name = "code", type = STRING, columnLength = 255, nullable = false }
+      ]
+      primaryKey {
+        name = "http_pk"
+        columnNames = ["id", "code"]
+      }
+    }
+    keep_page_param_as_http_param = true
+    pageing = {
+      page_type = "Cursor"
+      cursor_field = "cursor"
+      cursor_response_field = "$.data.next"
+      use_placeholder_replacement = true
+    }
+    retry = 3
+    plugin_output = "source"
+  }
+}
+
+transform {
+  FieldRename {
+    plugin_input = ["source"]
+    plugin_output = "fields_renamed"
+    table_transform = [
+      { table_path = "http_orders", specific = [
+          { field_name = "order-id", target_name = "order_code" }
+        ] }
+    ]
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "my-ds"
+    database = "ods"
+    table = "${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["fields_renamed"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+HTTP 接口无法计数，不做行数校验

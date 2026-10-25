@@ -1,0 +1,43 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Jdbc {
+    datasource_id = "pg-ds"
+    table_list = [
+      { table_path = "app.public.Orders" }
+      { table_path = "app.public.items", query = "select \"id\", \"sku\" from \"public\".\"items\"" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+transform {
+  TableRename {
+    plugin_input = ["source"]
+    plugin_output = "tables_renamed"
+    table_transform = [
+      { table_path = "app.public.Orders", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "app_orders" }] }
+      { table_path = "app.public.items", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "app_items" }] }
+    ]
+  }
+}
+
+sink {
+  Elasticsearch {
+    datasource_id = "es-ds"
+    index = "${table_name}"
+    primary_keys = ["${primary_key}"]
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "DROP_DATA"
+    plugin_input = ["tables_renamed"]
+  }
+}
+
+# ---- validation ----
+ValidationSpec[enabled=true, source=null, target=null, failOnMismatch=false, tables=[TableCheck[name=Orders, source=Side[mode=SQL, datasourceId=pg-ds, sql=select count(*) from "public"."Orders", index=null, query=null], target=Side[mode=ES, datasourceId=es-ds, sql=null, index=app_orders, query=null]], TableCheck[name=items, source=Side[mode=SQL, datasourceId=pg-ds, sql=select count(*) from "public"."items", index=null, query=null], target=Side[mode=ES, datasourceId=es-ds, sql=null, index=app_items, query=null]]]]
+# ---- notes ----
+

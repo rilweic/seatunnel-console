@@ -1,0 +1,30 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 2
+}
+
+source {
+  Jdbc {
+    datasource_id = "src-ds"
+    table_list = [
+      { table_path = "shop.events", query = "select * from `shop`.`events` where (type <> 'debug') and (`created_at` >= '$[yyyy-MM-dd HH-1/24]:00:00' and `created_at` < '$[yyyy-MM-dd HH]:00:00')" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+sink {
+  Elasticsearch {
+    datasource_id = "es-ds"
+    index = "${table_name}"
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["source"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+ES 目标的增量窗口不做行数校验（日期格式在 ES 里不好保证一致）

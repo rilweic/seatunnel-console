@@ -1,0 +1,12 @@
+{
+  "endpoints": {"sourceType": "POSTGRESQL", "sourceDatabase": "app", "targetType": "MYSQL", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "pg-ds", "namespace": "sales", "tables": [
+      {"name": "orders", "columns": null, "filter": null, "incrementalField": null}
+    ]},
+    "target": {"datasourceId": "my-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "ERROR", "dataMode": "KEEP", "writeMode": "APPEND", "tableRule": null},
+    "sync": {"mode": "INCREMENTAL", "window": "CUSTOM", "field": null, "customCondition": "id > ${last_id}"},
+    "parallelism": 8, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null
+  }
+}

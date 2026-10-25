@@ -1,0 +1,14 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "MYSQL", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "shop", "tables": [
+      {"name": "orders", "columns": null, "filter": null, "incrementalField": null},
+      {"name": "users", "columns": ["id", "name"], "filter": "status = 1", "incrementalField": null}
+    ]},
+    "target": {"datasourceId": "dst-ds", "namespace": "ods", "tableName": null, "prefix": "ods_", "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "KEEP", "writeMode": "UPSERT", "tableRule": null},
+    "sync": {"mode": "FULL", "window": null, "field": null, "customCondition": null},
+    "parallelism": 4, "validation": true,
+    "sourceOptions": {"fetch_size": "1000"}, "sinkOptions": {"batch_size": "500"}, "fieldRule": null
+  }
+}

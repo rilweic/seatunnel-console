@@ -1,0 +1,35 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "MYSQL", "targetDatabase": null,
+                "sourceColumns": {"customers": ["id", "name", "phone", "age", "profile", "tags", "email"]}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "crm", "tables": [
+      {"name": "customers", "columns": null, "filter": null, "incrementalField": null,
+       "targetName": null, "fieldNames": {"name": "full_name"}, "fieldRule": null,
+       "processes": {
+         "name": {"replace": {"find": " ", "replacement": "", "regex": false}, "mask": null, "cast": null, "encrypt": null},
+         "phone": {"replace": null, "mask": {"preset": "PHONE", "keepFirst": null, "keepLast": null, "maskChar": null}, "cast": null, "encrypt": true},
+         "age": {"replace": null, "mask": null, "cast": {"type": "BIGINT", "precision": null, "scale": null}, "encrypt": null}
+       },
+       "extracts": [
+         {"source": "profile", "kind": "JSON", "pattern": null, "dropSource": true,
+          "outputs": [{"name": "city", "path": "$.address.city", "type": "STRING", "precision": null, "scale": null}]},
+         {"source": "email", "kind": "REGEX", "pattern": "^(.*)@(.*)$", "dropSource": false,
+          "outputs": [{"name": "mail_user", "path": null, "type": "STRING", "precision": null, "scale": null},
+                      {"name": "mail_domain", "path": null, "type": "STRING", "precision": null, "scale": null}]},
+         {"source": "tags", "kind": "SPLIT", "pattern": ",", "dropSource": false,
+          "outputs": [{"name": "tag1", "path": null, "type": "STRING", "precision": null, "scale": null}]}
+       ],
+       "addedFields": [
+         {"name": "batch", "kind": "CONSTANT", "fields": null, "value": "$[yyyyMMdd]", "op": null, "start": null, "length": null, "format": null, "type": "STRING", "precision": null, "scale": null},
+         {"name": "label", "kind": "CONCAT", "fields": ["full_name", "city"], "value": "-", "op": null, "start": null, "length": null, "format": null, "type": null, "precision": null, "scale": null},
+         {"name": "synced_at", "kind": "NOW", "fields": null, "value": null, "op": null, "start": null, "length": null, "format": null, "type": "TIMESTAMP", "precision": null, "scale": null}
+       ],
+       "encryptKeyId": "key-1"}
+    ]},
+    "target": {"datasourceId": "dst-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "CLEAR", "writeMode": "UPSERT", "tableRule": null},
+    "sync": {"mode": "FULL", "window": null, "field": null, "customCondition": null},
+    "parallelism": 1, "validation": true, "sourceOptions": {}, "sinkOptions": {},
+    "fieldRule": {"find": null, "replace": null, "nameCase": "UPPER", "prefix": null, "suffix": null}
+  }
+}

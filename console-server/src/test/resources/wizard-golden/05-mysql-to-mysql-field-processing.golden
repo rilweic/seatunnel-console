@@ -1,0 +1,95 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Jdbc {
+    datasource_id = "src-ds"
+    table_list = [
+      { table_path = "crm.customers" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+transform {
+  JsonPath {
+    plugin_input = ["source"]
+    plugin_output = "json_extracted"
+    table_match_regex = "(?!)"
+    columns = [{ src_field = "profile", path = "$.address.city", dest_field = "city", column_error_handle_way = "SKIP" }]
+    table_transform = [
+      { table_path = "crm.customers", columns = [{ src_field = "profile", path = "$.address.city", dest_field = "city", column_error_handle_way = "SKIP" }] }
+    ]
+  }
+  RegexExtract {
+    plugin_input = ["json_extracted"]
+    plugin_output = "regex_extracted"
+    table_match_regex = "(?!)"
+    source_field = "email", regex_pattern = "^(.*)@(.*)$", output_fields = ["mail_user", "mail_domain"]
+    table_transform = [
+      { table_path = "crm.customers", source_field = "email", regex_pattern = "^(.*)@(.*)$", output_fields = ["mail_user", "mail_domain"] }
+    ]
+  }
+  Split {
+    plugin_input = ["regex_extracted"]
+    plugin_output = "split_extracted"
+    table_match_regex = "(?!)"
+    separator = ",", split_field = "tags", output_fields = ["tag1"]
+    table_transform = [
+      { table_path = "crm.customers", separator = ",", split_field = "tags", output_fields = ["tag1"] }
+    ]
+  }
+  Sql {
+    plugin_input = ["split_extracted"]
+    plugin_output = "processed"
+    table_match_regex = "(?!)"
+    query = "select id, REPLACE(TRY_CAST(name AS STRING), ' ', '') as name, TRY_CAST(CASE WHEN CHAR_LENGTH(TRY_CAST(phone AS STRING)) > 7 THEN CONCAT(LEFT(TRY_CAST(phone AS STRING), 3), REPEAT('*', CHAR_LENGTH(TRY_CAST(phone AS STRING)) - 7), RIGHT(TRY_CAST(phone AS STRING), 4)) ELSE TRY_CAST(phone AS STRING) END AS STRING) as phone, TRY_CAST(age AS BIGINT) as age, tags, email, city, mail_user, mail_domain, tag1, '$[yyyyMMdd]' as batch, CONCAT_WS('-', full_name, city) as label, TRY_CAST(NOW() AS TIMESTAMP) as synced_at from dual"
+    table_transform = [
+      { table_path = "crm.customers", query = "select id, REPLACE(TRY_CAST(name AS STRING), ' ', '') as name, TRY_CAST(CASE WHEN CHAR_LENGTH(TRY_CAST(phone AS STRING)) > 7 THEN CONCAT(LEFT(TRY_CAST(phone AS STRING), 3), REPEAT('*', CHAR_LENGTH(TRY_CAST(phone AS STRING)) - 7), RIGHT(TRY_CAST(phone AS STRING), 4)) ELSE TRY_CAST(phone AS STRING) END AS STRING) as phone, TRY_CAST(age AS BIGINT) as age, tags, email, city, mail_user, mail_domain, tag1, '$[yyyyMMdd]' as batch, CONCAT_WS('-', full_name, city) as label, TRY_CAST(NOW() AS TIMESTAMP) as synced_at from dual" }
+    ]
+  }
+  FieldEncrypt {
+    plugin_input = ["processed"]
+    plugin_output = "encrypted"
+    table_match_regex = "(?!)"
+    fields = ["phone"], encrypt_key_id = "key-1"
+    table_transform = [
+      { table_path = "crm.customers", fields = ["phone"], encrypt_key_id = "key-1" }
+    ]
+  }
+  FieldRename {
+    plugin_input = ["encrypted"]
+    plugin_output = "fields_renamed"
+    table_transform = [
+      { table_path = "crm.customers", specific = [
+          { field_name = "id", target_name = "ID" }
+          { field_name = "name", target_name = "full_name" }
+          { field_name = "phone", target_name = "PHONE" }
+          { field_name = "age", target_name = "AGE" }
+          { field_name = "tags", target_name = "TAGS" }
+          { field_name = "email", target_name = "EMAIL" }
+        ] }
+    ]
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "dst-ds"
+    database = "ods"
+    table = "${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "DROP_DATA"
+    plugin_input = ["fields_renamed"]
+  }
+}
+
+# ---- validation ----
+ValidationSpec[enabled=true, source=null, target=null, failOnMismatch=false, tables=[TableCheck[name=customers, source=Side[mode=SQL, datasourceId=src-ds, sql=select count(*) from `crm`.`customers`, index=null, query=null], target=Side[mode=SQL, datasourceId=dst-ds, sql=select count(*) from `ods`.`customers`, index=null, query=null]]]]
+# ---- notes ----
+

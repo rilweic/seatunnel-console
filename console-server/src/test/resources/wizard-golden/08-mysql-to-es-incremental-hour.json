@@ -1,0 +1,12 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "ELASTICSEARCH", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "shop", "tables": [
+      {"name": "events", "columns": null, "filter": "type <> 'debug'", "incrementalField": null}
+    ]},
+    "target": {"datasourceId": "es-ds", "namespace": null, "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "KEEP", "writeMode": "APPEND", "tableRule": null},
+    "sync": {"mode": "INCREMENTAL", "window": "HOUR", "field": "created_at", "customCondition": null},
+    "parallelism": 2, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null
+  }
+}

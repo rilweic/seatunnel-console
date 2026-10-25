@@ -1,0 +1,33 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 8
+}
+
+source {
+  Jdbc {
+    datasource_id = "pg-ds"
+    table_list = [
+      { table_path = "app.sales.orders", query = "select * from \"sales\".\"orders\" where (id > ${last_id})" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "my-ds"
+    database = "ods"
+    table = "${table_name}"
+    generate_sink_sql = true
+    enable_upsert = false
+    schema_save_mode = "ERROR_WHEN_SCHEMA_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["source"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+自定义增量条件无法套用到目标表，不做行数校验

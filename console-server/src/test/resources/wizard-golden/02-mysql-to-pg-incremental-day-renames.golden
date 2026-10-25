@@ -1,0 +1,57 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 2
+}
+
+source {
+  Jdbc {
+    datasource_id = "src-ds"
+    table_list = [
+      { table_path = "shop.Orders", query = "select `id`, `modified_at`, `amount` from `shop`.`Orders` where (`modified_at` >= '$[yyyy-MM-dd-1] 00:00:00' and `modified_at` < '$[yyyy-MM-dd] 00:00:00')" }
+      { table_path = "shop.users", query = "select `id`, `updated_at`, `Name` from `shop`.`users` where (deleted = 0) and (`updated_at` >= '$[yyyy-MM-dd-1] 00:00:00' and `updated_at` < '$[yyyy-MM-dd] 00:00:00')" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+transform {
+  FieldRename {
+    plugin_input = ["source"]
+    plugin_output = "fields_renamed"
+    table_transform = [
+      { table_path = "shop.Orders", specific = [
+          { field_name = "id", target_name = "order_id" }
+        ] }
+      { table_path = "shop.users", specific = [
+          { field_name = "Name", target_name = "name" }
+        ] }
+    ]
+  }
+  TableRename {
+    plugin_input = ["fields_renamed"]
+    plugin_output = "tables_renamed"
+    table_transform = [
+      { table_path = "shop.Orders", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "ods_orders_d" }] }
+      { table_path = "shop.users", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "dim_user" }] }
+    ]
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "dst-ds"
+    database = "dw"
+    table = "public.${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["tables_renamed"]
+  }
+}
+
+# ---- validation ----
+ValidationSpec[enabled=true, source=null, target=null, failOnMismatch=false, tables=[TableCheck[name=Orders, source=Side[mode=SQL, datasourceId=src-ds, sql=select count(*) from `shop`.`Orders` where (`modified_at` >= '$[yyyy-MM-dd-1] 00:00:00' and `modified_at` < '$[yyyy-MM-dd] 00:00:00'), index=null, query=null], target=Side[mode=SQL, datasourceId=dst-ds, sql=select count(*) from "public"."ods_orders_d" where "modified_at" >= '$[yyyy-MM-dd-1] 00:00:00' and "modified_at" < '$[yyyy-MM-dd] 00:00:00', index=null, query=null]], TableCheck[name=users, source=Side[mode=SQL, datasourceId=src-ds, sql=select count(*) from `shop`.`users` where (deleted = 0) and (`updated_at` >= '$[yyyy-MM-dd-1] 00:00:00' and `updated_at` < '$[yyyy-MM-dd] 00:00:00'), index=null, query=null], target=Side[mode=SQL, datasourceId=dst-ds, sql=select count(*) from "public"."dim_user" where "updated_at" >= '$[yyyy-MM-dd-1] 00:00:00' and "updated_at" < '$[yyyy-MM-dd] 00:00:00', index=null, query=null]]]]
+# ---- notes ----
+

@@ -1,0 +1,47 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 4
+}
+
+source {
+  Jdbc {
+    datasource_id = "src-ds"
+    table_list = [
+      { table_path = "shop.orders" }
+      { table_path = "shop.users", query = "select `id`, `name` from `shop`.`users` where (status = 1)" }
+    ]
+    fetch_size = 1000
+    plugin_output = "source"
+  }
+}
+
+transform {
+  TableRename {
+    plugin_input = ["source"]
+    plugin_output = "tables_renamed"
+    table_transform = [
+      { table_path = "shop.orders", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "ods_orders" }] }
+      { table_path = "shop.users", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "ods_users" }] }
+    ]
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "dst-ds"
+    database = "ods"
+    table = "${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    batch_size = 500
+    plugin_input = ["tables_renamed"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+全量同步且保留目标已有数据：目标表里可能还有源端已删除的数据，计数不准，不做行数校验

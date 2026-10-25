@@ -1,0 +1,19 @@
+{
+  "endpoints": {"sourceType": "HTTP", "sourceDatabase": null, "targetType": "ELASTICSEARCH", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "http-ds", "namespace": null,
+      "tables": [{"name": "search", "columns": null, "filter": null, "incrementalField": null}],
+      "http": {"path": "orders/search", "method": "POST", "params": {}, "body": "{\"status\":\"open\"}",
+               "paging": {"mode": "PAGE_NUMBER", "pageField": "pageNo", "pageLocation": "BODY", "startPageNumber": 1, "pageSizeField": "size",
+                          "pageSize": 100, "totalPageSize": 50, "cursorField": null, "cursorResponseField": null},
+               "contentField": "$",
+               "fields": [{"name": "id", "type": "BIGINT", "jsonPath": null},
+                          {"name": "created", "type": "TIMESTAMP", "jsonPath": null}],
+               "primaryKeys": []}},
+    "target": {"datasourceId": "es-ds", "namespace": null, "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "CLEAR", "writeMode": "UPSERT",
+               "tableRule": {"find": null, "replace": null, "nameCase": "KEEP", "prefix": "API_", "suffix": null}},
+    "sync": {"mode": "FULL", "window": null, "field": null, "customCondition": null},
+    "parallelism": 1, "validation": true, "sourceOptions": {"json_filed_missed_return_null": "false"}, "sinkOptions": {}, "fieldRule": null
+  }
+}

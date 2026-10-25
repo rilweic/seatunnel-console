@@ -1,0 +1,13 @@
+{
+  "endpoints": {"sourceType": "POSTGRESQL", "sourceDatabase": "app", "targetType": "ELASTICSEARCH", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "pg-ds", "namespace": "public", "tables": [
+      {"name": "Orders", "columns": null, "filter": null, "incrementalField": null},
+      {"name": "items", "columns": ["id", "sku"], "filter": null, "incrementalField": null}
+    ]},
+    "target": {"datasourceId": "es-ds", "namespace": null, "tableName": null, "prefix": "App_", "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "CLEAR", "writeMode": "UPSERT", "tableRule": null},
+    "sync": {"mode": "FULL", "window": null, "field": null, "customCondition": null},
+    "parallelism": 1, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null
+  }
+}

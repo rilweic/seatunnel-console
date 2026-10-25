@@ -1,0 +1,22 @@
+{
+  "endpoints": {"sourceType": "HTTP", "sourceDatabase": null, "targetType": "MYSQL", "targetDatabase": null, "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "http-ds", "namespace": null,
+      "tables": [{"name": "orders", "columns": ["id", "order-id", "amount", "code"], "filter": null, "incrementalField": null,
+                  "targetName": "http_orders", "fieldNames": {"order-id": "order_code"}, "fieldRule": null}],
+      "http": {"path": "/orders", "method": "GET", "params": {"tenant": "acme", "since": "$[yyyy-MM-dd-1]"}, "body": null,
+               "paging": {"mode": "CURSOR", "pageField": null, "pageLocation": "PARAMS", "startPageNumber": null, "pageSizeField": null,
+                          "pageSize": null, "totalPageSize": null, "cursorField": "cursor", "cursorResponseField": "$.data.next"},
+               "contentField": "$.data.items",
+               "fields": [{"name": "id", "type": "BIGINT", "jsonPath": "$.id"},
+                          {"name": "name", "type": "STRING", "jsonPath": "$.name"},
+                          {"name": "order-id", "type": "STRING", "jsonPath": null},
+                          {"name": "amount", "type": "DECIMAL", "jsonPath": "$.amount", "precision": 20, "scale": 4},
+                          {"name": "code", "type": "STRING", "jsonPath": "$.meta.code"}],
+               "primaryKeys": ["id", "code"]}},
+    "target": {"datasourceId": "my-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "KEEP", "writeMode": "UPSERT", "tableRule": null},
+    "sync": {"mode": "FULL", "window": null, "field": null, "customCondition": null},
+    "parallelism": 4, "validation": true, "sourceOptions": {"retry": "3"}, "sinkOptions": {}, "fieldRule": null
+  }
+}

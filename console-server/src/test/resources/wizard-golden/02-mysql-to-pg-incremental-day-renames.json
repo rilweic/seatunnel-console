@@ -1,0 +1,16 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "POSTGRESQL", "targetDatabase": "dw", "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "shop", "tables": [
+      {"name": "Orders", "columns": ["id", "modified_at", "amount"], "filter": null, "incrementalField": "modified_at",
+       "targetName": null, "fieldNames": {"id": "order_id"}, "fieldRule": null},
+      {"name": "users", "columns": ["id", "updated_at", "Name"], "filter": "deleted = 0", "incrementalField": null,
+       "targetName": "dim_user", "fieldNames": null, "fieldRule": {"find": null, "replace": null, "nameCase": "LOWER", "prefix": null, "suffix": null}}
+    ]},
+    "target": {"datasourceId": "dst-ds", "namespace": "public", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "KEEP", "writeMode": "UPSERT",
+               "tableRule": {"find": null, "replace": null, "nameCase": "LOWER", "prefix": "ods_", "suffix": "_d"}},
+    "sync": {"mode": "INCREMENTAL", "window": "DAY", "field": "updated_at", "customCondition": null},
+    "parallelism": 2, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null
+  }
+}

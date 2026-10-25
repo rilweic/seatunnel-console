@@ -1,0 +1,47 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Http {
+    datasource_id = "http-ds"
+    url = "orders/search"
+    method = "POST"
+    body = "{\"status\":\"open\",\"pageNo\":\"${page}\",\"size\":100}"
+    format = "json"
+    schema = {
+      table = "api_search"
+      fields {
+        id = BIGINT
+        created = TIMESTAMP
+      }
+    }
+    pageing = {
+      page_type = "PageNumber"
+      page_field = "pageNo"
+      start_page_number = 1
+      batch_size = 100
+      total_page_size = 50
+      use_placeholder_replacement = true
+    }
+    json_filed_missed_return_null = false
+    plugin_output = "source"
+  }
+}
+
+sink {
+  Elasticsearch {
+    datasource_id = "es-ds"
+    index = "${table_name}"
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "DROP_DATA"
+    plugin_input = ["source"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+HTTP 接口无法计数，不做行数校验
