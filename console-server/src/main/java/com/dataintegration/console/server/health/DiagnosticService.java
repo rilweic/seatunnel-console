@@ -76,7 +76,7 @@ public class DiagnosticService {
 
         submit("作业日志", LOG_JOB, this::judgeLogs, probes, results);
         for (DatasourceEntity ds : datasourceMapper.selectList(new LambdaQueryWrapper<DatasourceEntity>()
-                .in(DatasourceEntity::getType, "MYSQL", "POSTGRESQL")
+                .in(DatasourceEntity::getType, jdbcDriverTypes())
                 .orderByAsc(DatasourceEntity::getName))) {
             String config;
             try {
@@ -149,6 +149,12 @@ public class DiagnosticService {
         } catch (ConsoleException e) {
             return new Check("作业日志", "按作业拆分日志", Status.WARN, "无法读取日志列表：" + e.getMessage());
         }
+    }
+
+    /** Types whose JDBC driver the workers must have, e.g. MYSQL and POSTGRESQL. */
+    private List<String> jdbcDriverTypes() {
+        return datasourceService.types().stream().filter(t -> t.capabilities().jdbcDriver())
+                .map(DatasourceService.TypeView::type).toList();
     }
 
     private static void sleep() {

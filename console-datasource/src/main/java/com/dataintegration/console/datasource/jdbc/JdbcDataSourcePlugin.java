@@ -39,6 +39,9 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
 
     private static final int CONNECT_TIMEOUT_SECONDS = 5;
 
+    /** How this database quotes identifiers and forms SeaTunnel table paths. */
+    public abstract SqlDialect dialect();
+
     @Override
     public Set<String> secretKeys() {
         return Set.of("password");

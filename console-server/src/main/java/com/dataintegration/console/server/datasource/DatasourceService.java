@@ -10,6 +10,7 @@ import com.dataintegration.console.datasource.ConnectionTestResult;
 import com.dataintegration.console.datasource.CountRequest;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.DataSourcePlugin;
 import com.dataintegration.console.datasource.DataSourcePlugins;
 import com.dataintegration.console.datasource.http.HttpDataSourcePlugin;
@@ -232,6 +233,23 @@ public class DatasourceService {
     /** A saved, non-secret property such as the PostgreSQL database name. */
     public String property(String datasourceId, String key) {
         return config(require(datasourceId)).get(key);
+    }
+
+    /** A datasource type and what it can do, for the UI. */
+    public record TypeView(String type, DataSourceCapabilities capabilities) {}
+
+    public List<TypeView> types() {
+        return plugins.all().stream().map(p -> new TypeView(p.type().name(), p.capabilities())).toList();
+    }
+
+    /** What the type of a saved datasource can do. */
+    public DataSourceCapabilities capabilitiesOf(String datasourceId) {
+        return plugins.get(typeOf(datasourceId)).capabilities();
+    }
+
+    /** The plugin of a datasource type name, e.g. MYSQL. */
+    public DataSourcePlugin plugin(String type) {
+        return plugins.get(type);
     }
 
     /** Datasource type name, e.g. MYSQL, for picking the right validation form. */

@@ -28,6 +28,11 @@ public class DataSourcePlugins {
         plugins.forEach(p -> this.plugins.put(p.type(), p));
     }
 
+    /** Every registered plugin, in {@link DataSourceType} order. */
+    public List<DataSourcePlugin> all() {
+        return List.copyOf(plugins.values());
+    }
+
     public DataSourcePlugin get(DataSourceType type) {
         DataSourcePlugin plugin = plugins.get(type);
         if (plugin == null) {

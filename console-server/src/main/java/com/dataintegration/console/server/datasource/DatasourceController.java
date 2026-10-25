@@ -59,6 +59,12 @@ public class DatasourceController {
         return Result.ok(datasourceService.list(keyword, type, ownerId, page, size));
     }
 
+    /** The datasource types and what each can do (docs/design.md §6.1). */
+    @GetMapping("/types")
+    public Result<List<DatasourceService.TypeView>> types() {
+        return Result.ok(datasourceService.types());
+    }
+
     @GetMapping("/{id}")
     public Result<DatasourceView> get(@PathVariable String id) {
         return Result.ok(datasourceService.get(id));

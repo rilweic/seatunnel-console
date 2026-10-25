@@ -1,5 +1,6 @@
 package com.dataintegration.console.datasource.jdbc;
 
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.DataSourceType;
 import com.dataintegration.console.datasource.Props;
 
@@ -10,6 +11,16 @@ public class PostgreSqlDataSourcePlugin extends JdbcDataSourcePlugin {
     @Override
     public DataSourceType type() {
         return DataSourceType.POSTGRESQL;
+    }
+
+    @Override
+    public DataSourceCapabilities capabilities() {
+        return new DataSourceCapabilities("PostgreSQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, true, 8, false, true);
+    }
+
+    @Override
+    public SqlDialect dialect() {
+        return SqlDialect.POSTGRESQL;
     }
 
     /** PostgreSQL connections are always bound to one database, so it is required. */

@@ -16,6 +16,9 @@ public interface DataSourcePlugin {
 
     DataSourceType type();
 
+    /** What this type can do, so callers never compare type names (docs/design.md §6.1). */
+    DataSourceCapabilities capabilities();
+
     /** Property names stored encrypted and never returned to the browser, e.g. {@code password}. */
     Set<String> secretKeys();
 

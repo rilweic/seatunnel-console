@@ -1,5 +1,6 @@
 package com.dataintegration.console.datasource.jdbc;
 
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.DataSourceType;
 import com.dataintegration.console.datasource.Props;
 
@@ -11,6 +12,16 @@ public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
     @Override
     public DataSourceType type() {
         return DataSourceType.MYSQL;
+    }
+
+    @Override
+    public DataSourceCapabilities capabilities() {
+        return new DataSourceCapabilities("MySQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, true, 8, false, true);
+    }
+
+    @Override
+    public SqlDialect dialect() {
+        return SqlDialect.MYSQL;
     }
 
     /** Database is optional for MySQL, since jobs can address tables as {@code db.table}. */

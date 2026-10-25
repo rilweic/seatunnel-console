@@ -1,5 +1,7 @@
 package com.dataintegration.console.datasource;
 
+import com.dataintegration.console.datasource.jdbc.JdbcDataSourcePlugin;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -67,6 +69,26 @@ class DataSourcePluginsTest {
     void httpIsRegisteredByDefault() {
         assertThat(plugins.get(DataSourceType.HTTP).type()).isEqualTo(DataSourceType.HTTP);
         assertThat(plugins.get("HTTP").secretKeys()).containsExactlyInAnyOrder("token", "password", "apiKey");
+    }
+
+    @Test
+    void everyTypeDeclaresWhatItCanDo() {
+        DataSourcePlugins plugins = new DataSourcePlugins();
+        assertThat(plugins.all()).extracting(DataSourcePlugin::type).containsExactly(DataSourceType.values());
+        for (DataSourcePlugin plugin : plugins.all()) {
+            DataSourceCapabilities c = plugin.capabilities();
+            assertThat(c.label()).isNotBlank();
+            assertThat(c.maxParallelism()).isPositive();
+            // a JDBC driver check only makes sense for JDBC databases, which also need a dialect
+            assertThat(c.jdbcDriver()).isEqualTo(plugin instanceof JdbcDataSourcePlugin);
+        }
+        assertThat(plugins.get("MYSQL").capabilities().wizardSource()).isTrue();
+        assertThat(plugins.get("ELASTICSEARCH").capabilities().wizardSource()).isFalse();
+        assertThat(plugins.get("HTTP").capabilities().wizardTarget()).isFalse();
+        assertThat(((JdbcDataSourcePlugin) plugins.get("POSTGRESQL")).dialect().tablePath("app", "public", "t"))
+                .isEqualTo("app.public.t");
+        assertThat(((JdbcDataSourcePlugin) plugins.get("MYSQL")).dialect().qualified("shop", "a`b"))
+                .isEqualTo("`shop`.`a``b`");
     }
 
     @Test

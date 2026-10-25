@@ -12,6 +12,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
 import com.dataintegration.console.datasource.DataSourcePlugin;
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.DataSourceType;
 import com.dataintegration.console.datasource.Props;
 
@@ -54,6 +55,12 @@ public class ElasticsearchDataSourcePlugin implements DataSourcePlugin {
     @Override
     public DataSourceType type() {
         return DataSourceType.ELASTICSEARCH;
+    }
+
+    /** A wizard target only: reading an index is left to scripts. Index names are lower case. */
+    @Override
+    public DataSourceCapabilities capabilities() {
+        return new DataSourceCapabilities("Elasticsearch", null, ES_CONNECTOR, false, false, true, 1, true, false);
     }
 
     @Override

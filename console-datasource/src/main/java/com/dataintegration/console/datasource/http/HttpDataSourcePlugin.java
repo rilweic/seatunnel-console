@@ -6,6 +6,7 @@ import com.dataintegration.console.common.SecretRules;
 import com.dataintegration.console.datasource.ConnectionTestResult;
 import com.dataintegration.console.datasource.CountRequest;
 import com.dataintegration.console.datasource.DataSourcePlugin;
+import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.DataSourceType;
 import com.dataintegration.console.datasource.Props;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
@@ -45,6 +46,12 @@ public class HttpDataSourcePlugin implements DataSourcePlugin {
     @Override
     public DataSourceType type() {
         return DataSourceType.HTTP;
+    }
+
+    /** A wizard source only: one endpoint per job, read page by page, and it cannot be counted. */
+    @Override
+    public DataSourceCapabilities capabilities() {
+        return new DataSourceCapabilities("HTTP", HTTP_CONNECTOR, null, false, false, false, 1, false, false);
     }
 
     @Override
