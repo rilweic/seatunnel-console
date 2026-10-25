@@ -78,7 +78,7 @@ onMounted(load)
 <template>
   <div class="page">
     <el-card v-loading="loading" shadow="never">
-      <PageHeader title="集群健康检查" description="检查 SeaTunnel 集群和 console 的运行前提（设计文档 §4.3）。打开页面时自动执行，不会提交任何作业。">
+      <PageHeader title="集群健康检查" description="检查 SeaTunnel 集群和 console 的运行前提与连通状态。打开页面时自动执行，不会提交任何作业。">
         <el-button :icon="Refresh" @click="load">重新检查</el-button>
       </PageHeader>
 

@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus'
 import { computed, ref, watch } from 'vue'
 
 import { encryptKeyApi, type AddedField, type ColumnMeta, type EncryptKeyView, type Extract, type FieldProcess, type NameRule, type WizardForm, type WizardTable } from '@/api/console'
+import HelpTip from '@/components/HelpTip.vue'
 import { describeAdded, describeExtract, hasProcess, newFieldNames, processTags, readableFields, typeLabel } from '@/utils/fieldProcessing'
 import { clashes, isEmptyRule, nameProblem, ruleFieldName, syncedFields, targetFieldName, targetTableName } from '@/utils/naming'
 
@@ -410,7 +411,7 @@ function timeFields(t: WizardTable) {
       </el-table>
 
       <template v-if="newRows.length">
-        <div class="new-title">新字段 <span class="tip">按顺序写在目标表的最后</span></div>
+        <div class="new-title">新字段 <HelpTip text="按顺序写在目标表的最后" /></div>
         <el-table :data="newRows" class="table-box">
           <el-table-column label="字段名" prop="name" min-width="160">
             <template #default="{ row }">

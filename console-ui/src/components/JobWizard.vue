@@ -19,6 +19,7 @@ import {
   type TableMeta,
   type WizardForm,
 } from '@/api/console'
+import HelpTip from '@/components/HelpTip.vue'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { paramsProblem } from '@/utils/params'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
@@ -721,10 +722,16 @@ onMounted(async () => {
         </template>
       </el-form>
 
-      <div class="section-title">字段映射 <span class="tip">{{ sourceIsHttp ? '选择同步字段、目标名称和字段处理' : '每张表同步哪些字段、写成什么名字；过滤条件和增量字段也在这里按表设置' }}</span></div>
+      <div class="section-title">
+        字段映射
+        <HelpTip :text="sourceIsHttp ? '选择同步字段、目标名称和字段处理' : '每张表同步哪些字段、写成什么名字；过滤条件和增量字段也在这里按表设置'" />
+      </div>
       <FieldMapping :form="form" :columns="columns" :loading="loadingColumns" :es="targetIsEs" :http="sourceIsHttp" />
 
-      <div class="section-title">任务参数 <span class="tip">HTTP 请求参数、Body 和数据库条件里可以用 <code>${名称}</code> 引用</span></div>
+      <div class="section-title">
+        任务参数
+        <HelpTip text="HTTP 请求参数、Body 和数据库条件里可以用 ${名称} 引用" />
+      </div>
       <ParamsEditor v-model="params" />
     </section>
 
@@ -739,11 +746,11 @@ onMounted(async () => {
           <el-radio-group v-model="form.parallelism" :disabled="sourceIsHttp">
             <el-radio-button v-for="p in [1, 2, 4, 8]" :key="p" :value="p">{{ p }}</el-radio-button>
           </el-radio-group>
-          <div class="tip full">{{ sourceIsHttp ? 'HTTP 接口按分页顺序读取，并行度固定为 1。' : '单表时按主键自动切分、并行读取；多表时多张表同时读。数据量不大时用 1 即可，并行度越高对源库压力越大。失败重试和超时在"调度"页配置。' }}</div>
+          <HelpTip :text="sourceIsHttp ? 'HTTP 接口按分页顺序读取，并行度固定为 1。' : '单表时按主键自动切分、并行读取；多表时多张表同时读。数据量不大时用 1 即可，并行度越高对源库压力越大。失败重试和超时在“调度”页配置。'" />
         </el-form-item>
         <el-form-item label="行数校验">
           <el-switch v-model="form.validation" :disabled="sourceIsHttp" />
-          <div class="tip full">{{ sourceIsHttp ? '接口无法直接提供总数，运行页仍会显示引擎读写条数。' : '运行成功后按表比对源端和目标端的行数。只在"全量 + 清空后写入"或"按时间增量"时准确，其他情况会自动跳过并说明原因。' }}</div>
+          <HelpTip :text="sourceIsHttp ? '接口无法直接提供总数，运行页仍会显示引擎读写条数。' : '运行成功后按表比对源端和目标端的行数。只在“全量 + 清空后写入”或“按时间增量”时准确，其他情况会自动跳过并说明原因。'" />
         </el-form-item>
       </el-form>
       <el-collapse class="advanced">

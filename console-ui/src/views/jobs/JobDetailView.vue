@@ -76,6 +76,9 @@ onMounted(load)
 
 <template>
   <el-card v-if="job" shadow="never">
+    <div class="detail-context">
+      <strong>任务详情</strong>
+    </div>
     <div class="head">
       <div class="title">
         <div class="name">
@@ -140,6 +143,16 @@ onMounted(load)
 </template>
 
 <style scoped>
+.detail-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
 .head {
   display: flex;
   justify-content: space-between;
@@ -201,6 +214,16 @@ onMounted(load)
 
 .buttons .el-button + .el-button {
   margin-left: 0;
+}
+
+@media (max-width: 900px) {
+  .head {
+    flex-direction: column;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
 }
 
 /* scoped, not :deep - the dropdown menu is teleported out of this component */

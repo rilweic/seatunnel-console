@@ -4,7 +4,7 @@ defineProps<{ title: string; description?: string }>()
 </script>
 
 <template>
-  <div class="page-header">
+  <div class="page-header" :class="{ 'no-desc': !description }">
     <div class="text">
       <div class="title">{{ title }}</div>
       <div v-if="description" class="description">{{ description }}</div>
@@ -20,6 +20,10 @@ defineProps<{ title: string; description?: string }>()
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 20px;
+}
+
+.page-header.no-desc {
+  align-items: center;
 }
 
 .title {
@@ -40,5 +44,9 @@ defineProps<{ title: string; description?: string }>()
   gap: 8px;
   flex: none;
   padding-top: 12px;
+}
+
+.page-header.no-desc .actions {
+  padding-top: 0;
 }
 </style>

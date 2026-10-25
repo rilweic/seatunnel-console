@@ -176,7 +176,7 @@ onMounted(load)
 
 <template>
   <el-card shadow="never">
-    <PageHeader title="数据源" description="数据库、Elasticsearch 和 HTTP 接口的连接信息，凭据加密保存。任务里用 datasource_id 引用，提交运行时才注入。">
+    <PageHeader title="数据源" description="配置同步任务读取和写入数据时使用的连接信息。">
       <el-button type="primary" :icon="Plus" @click="openCreate">新建数据源</el-button>
     </PageHeader>
     <div class="toolbar">

@@ -218,6 +218,13 @@ onBeforeUnmount(() => {
 <template>
   <div v-if="detail && instance" class="page">
     <el-card shadow="never">
+      <div class="detail-context">
+        <strong>运行实例详情</strong>
+        <div class="run-identity">
+          <span>运行 ID</span>
+          <code>{{ instance.id }}</code>
+        </div>
+      </div>
       <div class="head">
         <div class="title">
           <BackButton :fallback="instance.jobDeleted ? '/instances' : `/jobs/${instance.jobDefinitionId}/runs`" />
@@ -242,9 +249,6 @@ onBeforeUnmount(() => {
         <el-descriptions-item label="读取行数">{{ formatNumber(instance.readRows) }}</el-descriptions-item>
         <el-descriptions-item label="写入行数">{{ formatNumber(instance.writeRows) }}</el-descriptions-item>
         <el-descriptions-item label="尝试次数">{{ instance.attemptCount }}</el-descriptions-item>
-        <el-descriptions-item label="运行 ID" :span="3">
-          <code>{{ instance.id }}</code>
-        </el-descriptions-item>
         <el-descriptions-item v-if="instance.validationStatus && instance.validationStatus !== 'SKIPPED'" label="行数校验" :span="3">
           <ValidationTag :instance="instance" />
           <span class="muted validation-msg">{{ instance.validationMessage }}</span>
@@ -341,11 +345,45 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.detail-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.run-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.run-identity code {
+  color: var(--el-text-color-regular);
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
 .head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+}
+
+@media (max-width: 700px) {
+  .head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
 }
 
 .title {

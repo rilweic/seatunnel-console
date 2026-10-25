@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 
 import type { HttpSourceField, HttpSourceSpec } from '@/api/console'
+import HelpTip from '@/components/HelpTip.vue'
 import JsonViewer from '@/components/json/JsonViewer.vue'
 
 type JsonPathPart = string | number
@@ -466,9 +467,9 @@ function findArrayPath(value: unknown, jsonPath: string, path: JsonPathPart[] = 
     <section v-if="modelValue.contentField" class="section fields-section">
       <div class="section-title">
         数据字段
+        <HelpTip text="根据数组中前 20 条对象记录推断；标量字段已加入，可勾选对象或数组中的嵌套标量字段。" />
         <code>{{ modelValue.contentField }}</code>
       </div>
-      <div class="field-help">根据数组中前 20 条对象记录推断；标量字段已加入，可勾选对象或数组中的嵌套标量字段。</div>
 
       <el-tree
         v-if="nestedCandidates.length"
@@ -671,13 +672,6 @@ function findArrayPath(value: unknown, jsonPath: string, path: JsonPathPart[] = 
 .elapsed {
   color: var(--el-text-color-secondary);
   font-size: 12px;
-}
-
-.field-help {
-  margin: -4px 0 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .nested-tree {
