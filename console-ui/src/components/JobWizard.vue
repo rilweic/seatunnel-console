@@ -1,9 +1,11 @@
 <script setup lang="ts">
 /**
  * The job wizard (docs/design.md §7.2): collects a WizardForm in five steps. The HOCON is generated
- * and checked by the server; this component never builds config itself.
+ * and checked by the server; this component never builds config itself. What differs between
+ * sources and targets comes from the datasource capabilities and the connector registry
+ * (./wizard/connectors.ts, §7.14), so no type is named here.
  */
-import { Check, Refresh } from '@element-plus/icons-vue'
+import { Check } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 
@@ -16,17 +18,17 @@ import {
   type DatasourceView,
   type NameRule,
   type PrecheckResult,
-  type TableMeta,
   type WizardForm,
 } from '@/api/console'
 import HelpTip from '@/components/HelpTip.vue'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
+import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 import { paramsProblem } from '@/utils/params'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
 
 import AdvancedOptions from './wizard/AdvancedOptions.vue'
+import { HANDLED_SINK_OPTIONS, wizardSinks, wizardSources, type SourceContext } from './wizard/connectors'
 import FieldMapping from './wizard/FieldMapping.vue'
-import HttpSourcePanel from './wizard/HttpSourcePanel.vue'
 import TableMapping from './wizard/TableMapping.vue'
 
 const props = defineProps<{ jobId: string; ownerId: string | null; readonly: boolean; initialForm: WizardForm | null }>()
@@ -37,12 +39,25 @@ const emit = defineEmits<{ saved: [versionNo: number]; dirty: [dirty: boolean] }
 const step = defineModel<number>('step', { default: 0 })
 const steps = ['来源', '目标', '字段与同步方式', '并行度与校验', '预检查与预览']
 
+const { types, ready: typesReady, capabilities, label: typeLabel } = useDatasourceTypes()
 const datasources = ref<DatasourceView[]>([])
-const sourceDatasources = computed(() => datasources.value.filter((d) => d.type !== 'ELASTICSEARCH'))
-const targetDatasources = computed(() => datasources.value.filter((d) => d.type !== 'HTTP'))
 const typeOf = (id: string) => datasources.value.find((d) => d.id === id)?.type
-const sourceIsHttp = computed(() => typeOf(form.source.datasourceId) === 'HTTP')
-const targetIsEs = computed(() => typeOf(form.target.datasourceId) === 'ELASTICSEARCH')
+const sourceCaps = computed(() => capabilities(typeOf(form.source.datasourceId)))
+const targetCaps = computed(() => capabilities(typeOf(form.target.datasourceId)))
+/** The source's screens and checks, or undefined until a source is chosen. */
+const sourceUi = computed(() => wizardSources[sourceCaps.value?.sourceConnector ?? ''])
+const sinkUi = computed(() => wizardSinks[targetCaps.value?.sinkConnector ?? ''])
+const lowerCaseNames = computed(() => !!targetCaps.value?.lowerCaseNames)
+const tableWord = computed(() => sinkUi.value?.tableWord ?? '目标表')
+const sourceDatasources = computed(() => datasources.value.filter((d) => wizardSources[capabilities(d.type)?.sourceConnector ?? '']))
+const targetDatasources = computed(() => datasources.value.filter((d) => wizardSinks[capabilities(d.type)?.sinkConnector ?? '']))
+/** e.g. "MySQL、PostgreSQL 或 HTTP", for the select placeholders. */
+function labels(can: (t: (typeof types.value)[number]) => boolean) {
+  const names = types.value.filter(can).map((t) => t.capabilities.label)
+  return names.length > 1 ? `${names.slice(0, -1).join('、')} 或 ${names[names.length - 1]}` : names.join('')
+}
+const sourcePlaceholder = computed(() => labels((t) => !!wizardSources[t.capabilities.sourceConnector ?? '']))
+const targetPlaceholder = computed(() => labels((t) => !!wizardSinks[t.capabilities.sinkConnector ?? '']))
 
 function emptyForm(): WizardForm {
   return {
@@ -72,200 +87,50 @@ migrateNaming(form)
 const targetTouched = ref(props.initialForm !== null)
 
 // ---- step 1: source ----
-const sourceNamespaces = ref<string[]>([])
-const sourceTables = ref<TableMeta[]>([])
-const tableFilter = ref('')
-const loadingTables = ref(false)
-const tableRef = ref<{ toggleRowSelection: (row: TableMeta, selected: boolean) => void; clearSelection: () => void } | null>(null)
-const selected = ref<string[]>(form.source.tables.map((t) => t.name))
-const previewText = ref('')
-const previewStatus = ref<number | null>(null)
-const previewElapsed = ref<number | null>(null)
-const previewLoading = ref(false)
-
-function defaultHttp(): NonNullable<WizardForm['source']['spec']> {
-  return {
-    path: '/',
-    method: 'GET',
-    params: {},
-    body: '',
-    paging: { mode: 'NONE', pageLocation: 'PARAMS', startPageNumber: 1, pageSize: 100 },
-    contentField: null,
-    fields: [],
-    primaryKeys: [],
-  }
+/** Selected tables without a primary key, reported by the source step. */
+const tablesWithoutPk = ref<string[]>([])
+const sourceContext: SourceContext = {
+  jobId: props.jobId,
+  payload: () => payload(),
+  params: () => toMap(params.value),
 }
 
-async function previewHttp() {
-  if (!form.source.spec) return
-  previewLoading.value = true
-  try {
-    const result = await jobApi.httpPreview(props.jobId, { form: payload(), params: toMap(params.value) })
-    previewText.value = result.body
-    previewStatus.value = result.statusCode
-    previewElapsed.value = result.elapsedMillis
-  } finally {
-    previewLoading.value = false
-  }
+function onKeyless(names: string[]) {
+  tablesWithoutPk.value = names
+  if (!targetTouched.value) applyTargetDefaults()
 }
 
-watch(
-  () => [form.source.datasourceId, form.source.spec?.path, form.source.spec?.method, form.source.spec?.params, form.source.spec?.body, form.source.spec?.paging],
-  () => {
-    previewText.value = ''
-    previewStatus.value = null
-    previewElapsed.value = null
-  },
-  { deep: true },
-)
-
-watch(
-  () => [form.source.spec?.fields, form.source.spec?.path, form.source.spec?.primaryKeys] as const,
-  (_current, previous) => {
-    if (!sourceIsHttp.value || !form.source.spec) return
-    const name = form.source.spec.path.split('/').filter(Boolean).pop() || 'http_data'
-    // An HTTP job has exactly one table, so its settings (blocked fields, renames, processing) stay
-    // when the path and with it the table name changes, even while the path is being typed.
-    const old = form.source.tables[0]
-    const previousColumns = old ? old.columns : undefined
-    const available = form.source.spec.fields.map((f) => f.name)
-    const oldFieldNames = new Set((previous?.[0] ?? []).map((field) => field.name))
-    const added = available.filter((field) => !oldFieldNames.has(field))
-    const columns = old && previousColumns == null
-      ? previousColumns
-      : previousColumns
-        ? [
-            ...previousColumns.filter((field) => available.includes(field)),
-            ...added.filter((field) => !previousColumns.includes(field)),
-          ]
-        : available
-    form.source.tables = [{
-      ...(old ?? {}),
-      name,
-      columns,
-      filter: null,
-      incrementalField: null,
-    }]
-    selected.value = form.source.tables.map((t) => t.name)
-    if (!targetTouched.value) applyTargetDefaults()
-  },
-  { deep: true, immediate: true },
-)
-
-const filteredTables = computed(() => {
-  const q = tableFilter.value.trim()
-  if (!q) return sourceTables.value
-  let re: RegExp | null = null
-  try {
-    re = new RegExp(q, 'i')
-  } catch {
-    re = null
-  }
-  return sourceTables.value.filter((t) => (re ? re.test(t.name) : t.name.toLowerCase().includes(q.toLowerCase())))
-})
-const tableMeta = computed(() => new Map(sourceTables.value.map((t) => [t.name, t])))
-const tablesWithoutPk = computed(() => sourceIsHttp.value
-  ? ((form.source.spec?.primaryKeys?.length ?? 0) === 0 ? selected.value : [])
-  : selected.value.filter((n) => (tableMeta.value.get(n)?.primaryKeys.length ?? 1) === 0))
-
-async function loadSourceNamespaces() {
-  sourceNamespaces.value = form.source.datasourceId ? await datasourceApi.namespaces(form.source.datasourceId) : []
+/** A source that cannot run in parallel or be counted keeps the form within what it can do. */
+function fitToSource() {
+  const caps = sourceCaps.value
+  if (!caps) return
+  form.parallelism = Math.min(form.parallelism, caps.maxParallelism)
+  if (!caps.countable) form.validation = false
 }
 
-async function loadSourceTables() {
-  sourceTables.value = []
-  if (!form.source.datasourceId || !form.source.namespace) return
-  loadingTables.value = true
-  try {
-    sourceTables.value = await datasourceApi.tables(form.source.datasourceId, form.source.namespace)
-  } finally {
-    loadingTables.value = false
-  }
-  await nextTick()
-  restoreSelection()
-}
-
-/** Re-reads the table list, e.g. after tables were created; the selection is kept. */
-async function refreshTables() {
-  await loadSourceTables()
-  const names = new Set(sourceTables.value.map((t) => t.name))
-  const gone = selected.value.filter((n) => !names.has(n))
-  if (gone.length) ElMessage.warning(`已选的表在源库里找不到了：${gone.join('，')}`)
-  else ElMessage.success(`已刷新，共 ${sourceTables.value.length} 张表`)
-}
-
-/** Shows `selected` in the table; it never changes `selected` itself. */
-function restoreSelection() {
-  tableRef.value?.clearSelection()
-  for (const t of filteredTables.value) {
-    if (selected.value.includes(t.name)) tableRef.value?.toggleRowSelection(t, true)
-  }
-}
-
-/*
- * `selected` changes only on the user's own clicks (select / select-all). The table's
- * selection-change also fires when its rows change, e.g. while typing a filter, and would then
- * report the hidden tables as unchecked; listening to it lost the selection.
- */
-// Order is kept (new tables go last), so checking and unchecking a table leaves the form as it was.
-function onSelect(rows: TableMeta[], row: TableMeta) {
-  const checked = rows.some((r) => r.name === row.name)
-  selected.value = checked
-    ? [...selected.value.filter((n) => n !== row.name), row.name]
-    : selected.value.filter((n) => n !== row.name)
-}
-
-function onSelectAll(rows: TableMeta[]) {
-  const visible = filteredTables.value.map((t) => t.name)
-  selected.value = rows.length > 0
-    ? [...selected.value, ...visible.filter((n) => !selected.value.includes(n))]
-    : selected.value.filter((n) => !visible.includes(n))
-}
-
-watch(filteredTables, () => nextTick(restoreSelection))
-
-async function onSourceDatasource() {
+function onSourceDatasource() {
   form.source.namespace = ''
   form.source.tables = []
-  selected.value = []
-  sourceTables.value = []
+  tablesWithoutPk.value = []
   columns.value = {}
-  // advanced options belong to the connector (Jdbc or Http); the server refuses the other's
+  // advanced options belong to the connector; the server refuses another connector's
   form.sourceOptions = {}
-  if (sourceIsHttp.value) {
-    form.source.spec = defaultHttp()
-    form.parallelism = 1
-    form.validation = false
-  } else {
-    form.source.spec = null
-    await loadSourceNamespaces()
-  }
+  form.source.spec = sourceUi.value?.newSpec?.() ?? null
+  fitToSource()
 }
-
-async function onSourceNamespace() {
-  selected.value = []
-  await loadSourceTables()
-}
-
-/** Keeps per-table settings of tables that stay selected. */
-watch(selected, (names) => {
-  const old = new Map(form.source.tables.map((t) => [t.name, t]))
-  form.source.tables = names.map((n) => old.get(n) ?? { name: n, columns: null, filter: '', incrementalField: '' })
-  if (!targetTouched.value) applyTargetDefaults()
-})
 
 // ---- step 2: target ----
 const targetNamespaces = ref<string[]>([])
 
 async function loadTargetNamespaces() {
-  targetNamespaces.value = form.target.datasourceId && !targetIsEs.value ? await datasourceApi.namespaces(form.target.datasourceId) : []
+  targetNamespaces.value = form.target.datasourceId && targetCaps.value?.namespaces ? await datasourceApi.namespaces(form.target.datasourceId) : []
 }
 
 async function onTargetDatasource() {
   form.target.namespace = ''
   targetNamespaces.value = []
   if (!form.target.datasourceId) return
-  targetNamespaces.value = await datasourceApi.namespaces(form.target.datasourceId)
+  await loadTargetNamespaces()
 }
 
 /** §7.4: upsert + keep when every table has a primary key; otherwise append, and clear on full sync. */
@@ -288,25 +153,10 @@ const columns = ref<Record<string, ColumnMeta[]>>({})
 const loadingColumns = ref(false)
 
 async function loadColumns() {
+  if (!sourceUi.value) return
   loadingColumns.value = true
   try {
-    if (sourceIsHttp.value) {
-      const fields = form.source.spec?.fields ?? []
-      const primaryKeys = form.source.spec?.primaryKeys ?? []
-      columns.value = Object.fromEntries(form.source.tables.map((t) => [t.name, fields.map((f) => ({
-        name: f.name,
-        type: f.type,
-        nullable: true,
-        primaryKey: primaryKeys.includes(f.name),
-        temporal: f.type === 'DATE' || f.type === 'TIMESTAMP',
-      }))]))
-      return
-    }
-    for (const t of form.source.tables) {
-      if (!columns.value[t.name]) {
-        columns.value[t.name] = await datasourceApi.columns(form.source.datasourceId, form.source.namespace, t.name)
-      }
-    }
+    columns.value = await sourceUi.value.loadColumns(form, columns.value)
   } finally {
     loadingColumns.value = false
   }
@@ -320,27 +170,21 @@ const commonTimeFields = computed(() => {
 })
 
 // ---- step 4: parallelism, validation, advanced options ----
-const HANDLED = {
-  source: ['url', 'driver', 'username', 'password', 'table_path', 'table_list', 'query', 'where_condition', 'parallelism'],
-  http: ['url', 'method', 'params', 'body', 'headers', 'schema', 'content_field', 'json_field', 'format', 'pageing', 'page_type',
-    'keep_page_param_as_http_param', 'keep_params_as_form', 'connect_timeout_ms', 'socket_timeout_ms', 'poll_interval_millis',
-    'binary_chunk_size', 'enable_multi_lines'],
-  sink: ['url', 'driver', 'username', 'password', 'database', 'table', 'generate_sink_sql', 'enable_upsert', 'schema_save_mode',
-    'data_save_mode', 'primary_keys', 'hosts', 'index', 'tablePrefix', 'tableSuffix'],
-}
+const parallelisms = computed(() => [1, 2, 4, 8].filter((p) => p <= (sourceCaps.value?.maxParallelism ?? 8)))
 const sourceOptionDefs = ref<ConnectorOption[]>([])
 const sinkOptionDefs = ref<ConnectorOption[]>([])
 const optionsError = ref('')
 
 async function loadOptionDefs() {
   optionsError.value = ''
+  const sourcePlugin = sourceCaps.value?.sourceConnector
+  const sinkPlugin = targetCaps.value?.sinkConnector
+  if (!sourcePlugin || !sinkPlugin) return
   try {
-    const sinkPlugin = targetIsEs.value ? 'Elasticsearch' : 'Jdbc'
-    const sourcePlugin = sourceIsHttp.value ? 'Http' : 'Jdbc'
-    const handled = sourceIsHttp.value ? HANDLED.http : HANDLED.source
+    const handled = sourceUi.value?.handledOptions ?? []
     const [src, snk] = await Promise.all([connectorApi.options('source', sourcePlugin), connectorApi.options('sink', sinkPlugin)])
     sourceOptionDefs.value = src.filter((o) => !handled.includes(o.key) && !o.key.startsWith('auth.'))
-    sinkOptionDefs.value = snk.filter((o) => !HANDLED.sink.includes(o.key) && !o.key.startsWith('auth.'))
+    sinkOptionDefs.value = snk.filter((o) => !HANDLED_SINK_OPTIONS.includes(o.key) && !o.key.startsWith('auth.'))
   } catch {
     optionsError.value = '无法从 SeaTunnel 集群读取连接器参数，高级参数暂不可用'
   }
@@ -389,6 +233,8 @@ function toMap(rows: ParamRow[]) {
 function payload(): WizardForm {
   const clean = (v?: string | null) => (v && v.trim() ? v.trim() : null)
   const opts = (o?: Record<string, string>) => Object.fromEntries(Object.entries(o ?? {}).filter(([, v]) => v?.trim()))
+  const incremental = !!sourceUi.value?.incremental
+  const spec = form.source.spec
   return {
     source: {
       datasourceId: form.source.datasourceId,
@@ -406,26 +252,18 @@ function payload(): WizardForm {
         addedFields: t.addedFields?.length ? t.addedFields : null,
         encryptKeyId: t.encryptKeyId || null,
       })),
-      spec: form.source.spec ? {
-        ...form.source.spec,
-        path: clean(form.source.spec.path) ?? '/',
-        params: opts(form.source.spec.params),
-        body: form.source.spec.body || null,
-        contentField: clean(form.source.spec.contentField),
-        fields: form.source.spec.fields.map((f) => ({ ...f, name: f.name.trim(), jsonPath: clean(f.jsonPath) })),
-        primaryKeys: form.source.spec.primaryKeys ?? [],
-      } : null,
+      spec: spec ? (sourceUi.value?.cleanSpec?.(spec) ?? spec) : null,
     },
     target: {
       ...form.target,
-      namespace: targetIsEs.value ? null : clean(form.target.namespace),
+      namespace: targetCaps.value && !targetCaps.value.namespaces ? null : clean(form.target.namespace),
       tableName: null,
       prefix: null,
       suffix: null,
       tableRule: cleanRule(form.target.tableRule),
     },
     sync:
-      sourceIsHttp.value || form.sync.mode === 'FULL'
+      !incremental || form.sync.mode === 'FULL'
         ? { mode: 'FULL', window: null, field: null, customCondition: null }
         : {
             mode: 'INCREMENTAL',
@@ -433,8 +271,8 @@ function payload(): WizardForm {
             field: form.sync.window === 'CUSTOM' ? null : clean(form.sync.field),
             customCondition: form.sync.window === 'CUSTOM' ? clean(form.sync.customCondition) : null,
           },
-    parallelism: sourceIsHttp.value ? 1 : form.parallelism,
-    validation: sourceIsHttp.value ? false : form.validation,
+    parallelism: Math.min(form.parallelism, sourceCaps.value?.maxParallelism ?? form.parallelism),
+    validation: sourceCaps.value && !sourceCaps.value.countable ? false : form.validation,
     sourceOptions: opts(form.sourceOptions),
     sinkOptions: opts(form.sinkOptions),
     fieldRule: cleanRule(form.fieldRule),
@@ -494,18 +332,13 @@ watch(dirty, (value) => emit('dirty', value))
 function stepError(i: number): string | null {
   if (i === 0) {
     if (!form.source.datasourceId) return '请选择源数据源'
-    if (sourceIsHttp.value) {
-      if (!form.source.spec?.path.trim()) return '请填写 HTTP 请求路径'
-      if (!form.source.spec.fields.length) return '请发送请求预览并选择数据数组和字段'
-    } else {
-      if (!form.source.namespace) return '请选择库或 schema'
-      if (form.source.tables.length === 0) return '请至少勾选一张表'
-    }
+    const problem = sourceUi.value?.stepProblem(form)
+    if (problem) return problem
   }
   if (i === 1) {
     if (!form.target.datasourceId) return '请选择目标数据源'
-    if (!targetIsEs.value && !form.target.namespace) return '请选择目标库或 schema'
-    const names = tableNamesProblem(form, targetIsEs.value)
+    if (targetCaps.value?.namespaces && !form.target.namespace) return '请选择目标库或 schema'
+    const names = tableNamesProblem(form, lowerCaseNames.value, tableWord.value)
     if (names) return names
   }
   if (i === 2) {
@@ -516,7 +349,7 @@ function stepError(i: number): string | null {
     const noKey = form.source.tables.find((t) => Object.values(t.processes ?? {}).some((p) => p.encrypt) && !t.encryptKeyId)
     if (noKey) return `${noKey.name} 有字段要加密，请在字段映射里选择加密密钥`
   }
-  if (i === 2 && !sourceIsHttp.value && form.sync.mode === 'INCREMENTAL') {
+  if (i === 2 && sourceUi.value?.incremental && form.sync.mode === 'INCREMENTAL') {
     if (form.sync.window === 'CUSTOM' && !form.sync.customCondition?.trim()) return '请填写自定义增量条件'
     if (form.sync.window !== 'CUSTOM') {
       const missing = form.source.tables.filter((t) => !(t.incrementalField?.trim() || form.sync.field))
@@ -552,18 +385,13 @@ onMounted(async () => {
   const initialStep = step.value
   step.value = 0
   // A job may only use its creator's datasources.
-  datasources.value = (await datasourceApi.list({ size: 200, ownerId: props.ownerId })).items
-  if (form.source.datasourceId && !sourceIsHttp.value) {
-    await loadSourceNamespaces()
-    await loadSourceTables()
-  } else if (sourceIsHttp.value) {
-    form.source.spec ??= defaultHttp()
-    form.parallelism = 1
-    form.validation = false
+  const [list] = await Promise.all([datasourceApi.list({ size: 200, ownerId: props.ownerId }), typesReady])
+  datasources.value = list.items
+  if (form.source.datasourceId) {
+    form.source.spec ??= sourceUi.value?.newSpec?.() ?? null
+    fitToSource()
   }
-  if (form.target.datasourceId && !targetIsEs.value) {
-    targetNamespaces.value = await datasourceApi.namespaces(form.target.datasourceId)
-  }
+  await loadTargetNamespaces()
   await nextTick()
   snapshot.value = currentSnapshot()
   if (initialStep > 0) {
@@ -585,56 +413,25 @@ onMounted(async () => {
     <section v-show="step === 0">
       <div class="step-heading">
         <h3>选择数据来源</h3>
-        <p>{{ sourceIsHttp ? '配置一个 HTTP 接口，预览响应并确认要同步的字段。' : '选择数据源和库，再勾选需要同步的表。' }}</p>
+        <p>{{ sourceUi?.text.intro ?? '选择要读取的数据源。' }}</p>
       </div>
       <el-form label-position="top" class="source-form">
         <el-form-item label="源数据源">
-          <el-select v-model="form.source.datasourceId" placeholder="MySQL、PostgreSQL 或 HTTP" filterable @change="onSourceDatasource">
-            <el-option v-for="d in sourceDatasources" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
+          <el-select v-model="form.source.datasourceId" :placeholder="sourcePlaceholder" filterable @change="onSourceDatasource">
+            <el-option v-for="d in sourceDatasources" :key="d.id" :label="`${d.name} (${typeLabel(d.type)})`" :value="d.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="!sourceIsHttp" label="库 / schema">
-          <el-select v-model="form.source.namespace" placeholder="选择库或 schema" filterable @change="onSourceNamespace" @visible-change="(open: boolean) => open && loadSourceNamespaces()">
-            <el-option v-for="n in sourceNamespaces" :key="n" :label="n" :value="n" />
-          </el-select>
-        </el-form-item>
+        <!-- the source step puts its own fields here, e.g. the database or schema -->
+        <div id="wizard-source-fields" class="source-fields" />
       </el-form>
-      <HttpSourcePanel
-        v-if="sourceIsHttp && form.source.spec"
-        v-model="form.source.spec"
-        :loading="previewLoading"
-        :preview-text="previewText"
-        :preview-status="previewStatus"
-        :preview-elapsed="previewElapsed"
-        @preview="previewHttp"
+      <component
+        :is="sourceUi.step"
+        v-if="sourceUi"
+        :key="form.source.datasourceId"
+        :form="form"
+        :context="sourceContext"
+        @keyless="onKeyless"
       />
-      <div v-else-if="form.source.namespace" class="tables">
-        <div class="tables-heading">
-          <div>
-            <div class="block-title">选择需要同步的表</div>
-            <div class="tip">勾选会保存到任务配置，筛选不会影响已选择的表。</div>
-          </div>
-          <div class="table-tags">
-            <el-tag :type="selected.length ? 'primary' : 'info'" disable-transitions>已选 {{ selected.length }} / {{ sourceTables.length }} 张表</el-tag>
-            <el-tag v-if="tablesWithoutPk.length" type="warning" disable-transitions>{{ tablesWithoutPk.length }} 张没有主键</el-tag>
-          </div>
-        </div>
-        <div class="tables-bar">
-          <el-input v-model="tableFilter" placeholder="筛选表名，支持正则，如 ^order_" clearable class="table-filter" />
-          <span class="tip bar-hint">输入关键字或正则表达式快速筛选</span>
-          <el-button :icon="Refresh" :loading="loadingTables" class="refresh" @click="refreshTables">刷新</el-button>
-        </div>
-        <el-table ref="tableRef" v-loading="loadingTables" :data="filteredTables" row-key="name" max-height="440" class="table-box" @select="onSelect" @select-all="onSelectAll">
-          <el-table-column type="selection" width="48" :reserve-selection="false" />
-          <el-table-column prop="name" label="表名" min-width="280" />
-          <el-table-column label="主键" min-width="180">
-            <template #default="{ row }">
-              <span v-if="row.primaryKeys.length">{{ row.primaryKeys.join(', ') }}</span>
-              <el-tag v-else size="small" type="warning">无主键</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
     </section>
 
     <!-- ② 目标 -->
@@ -645,11 +442,11 @@ onMounted(async () => {
       </div>
       <el-form label-width="130px" class="narrow form-card">
         <el-form-item label="目标数据源">
-          <el-select v-model="form.target.datasourceId" placeholder="MySQL、PostgreSQL 或 Elasticsearch" filterable class="w320" @change="onTargetDatasource">
-            <el-option v-for="d in targetDatasources" :key="d.id" :label="`${d.name} (${d.type})`" :value="d.id" />
+          <el-select v-model="form.target.datasourceId" :placeholder="targetPlaceholder" filterable class="w320" @change="onTargetDatasource">
+            <el-option v-for="d in targetDatasources" :key="d.id" :label="`${d.name} (${typeLabel(d.type)})`" :value="d.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="form.target.datasourceId && !targetIsEs" label="库 / schema">
+        <el-form-item v-if="form.target.datasourceId && targetCaps?.namespaces" label="库 / schema">
           <el-select v-model="form.target.namespace" placeholder="必须已存在，不会自动建库" filterable class="w320" @visible-change="(open: boolean) => open && loadTargetNamespaces()">
             <el-option v-for="n in targetNamespaces" :key="n" :label="n" :value="n" />
           </el-select>
@@ -681,16 +478,16 @@ onMounted(async () => {
           </div>
         </el-form-item>
       </el-form>
-      <TableMapping v-if="form.target.datasourceId && form.source.tables.length" :form="form" :es="targetIsEs" />
+      <TableMapping v-if="form.target.datasourceId && form.source.tables.length" :form="form" :lower-case="lowerCaseNames" :table-word="tableWord" />
     </section>
 
     <!-- ③ 字段与同步方式 -->
     <section v-show="step === 2">
       <div class="step-heading">
         <h3>设置字段与同步方式</h3>
-        <p>{{ sourceIsHttp ? '确认接口字段映射；需要增量时，在来源请求参数或 Body 中使用时间变量。' : '选择全量或增量同步，并按需调整每张表的字段和过滤条件。' }}</p>
+        <p>{{ sourceUi?.text.fields }}</p>
       </div>
-      <el-form v-if="!sourceIsHttp" label-width="96px" class="form-card">
+      <el-form v-if="sourceUi?.incremental" label-width="96px" class="form-card">
         <el-form-item label="同步方式">
           <el-radio-group v-model="form.sync.mode">
             <el-radio value="FULL">全量</el-radio>
@@ -724,9 +521,9 @@ onMounted(async () => {
 
       <div class="section-title">
         字段映射
-        <HelpTip :text="sourceIsHttp ? '选择同步字段、目标名称和字段处理' : '每张表同步哪些字段、写成什么名字；过滤条件和增量字段也在这里按表设置'" />
+        <HelpTip :text="sourceUi?.text.fieldsHelp ?? ''" />
       </div>
-      <FieldMapping :form="form" :columns="columns" :loading="loadingColumns" :es="targetIsEs" :http="sourceIsHttp" />
+      <FieldMapping :form="form" :columns="columns" :loading="loadingColumns" :lower-case="lowerCaseNames" :filters="!!sourceUi?.incremental" />
 
       <div class="section-title">
         任务参数
@@ -739,18 +536,18 @@ onMounted(async () => {
     <section v-show="step === 3">
       <div class="step-heading">
         <h3>调整运行与校验</h3>
-        <p>{{ sourceIsHttp ? 'Http source 固定单并行，接口无法直接计数，因此不做行数校验。' : '根据数据量设置并行度，并选择是否进行行数校验。' }}</p>
+        <p>{{ sourceUi?.text.run }}</p>
       </div>
       <el-form label-width="96px" class="form-card">
         <el-form-item label="并行度">
-          <el-radio-group v-model="form.parallelism" :disabled="sourceIsHttp">
-            <el-radio-button v-for="p in [1, 2, 4, 8]" :key="p" :value="p">{{ p }}</el-radio-button>
+          <el-radio-group v-model="form.parallelism" :disabled="parallelisms.length < 2">
+            <el-radio-button v-for="p in parallelisms" :key="p" :value="p">{{ p }}</el-radio-button>
           </el-radio-group>
-          <HelpTip :text="sourceIsHttp ? 'HTTP 接口按分页顺序读取，并行度固定为 1。' : '单表时按主键自动切分、并行读取；多表时多张表同时读。数据量不大时用 1 即可，并行度越高对源库压力越大。失败重试和超时在“调度”页配置。'" />
+          <HelpTip :text="sourceUi?.text.parallelismHelp ?? ''" />
         </el-form-item>
         <el-form-item label="行数校验">
-          <el-switch v-model="form.validation" :disabled="sourceIsHttp" />
-          <HelpTip :text="sourceIsHttp ? '接口无法直接提供总数，运行页仍会显示引擎读写条数。' : '运行成功后按表比对源端和目标端的行数。只在“全量 + 清空后写入”或“按时间增量”时准确，其他情况会自动跳过并说明原因。'" />
+          <el-switch v-model="form.validation" :disabled="!sourceCaps?.countable" />
+          <HelpTip :text="sourceUi?.text.validationHelp ?? ''" />
         </el-form-item>
       </el-form>
       <el-collapse class="advanced">
@@ -761,13 +558,13 @@ onMounted(async () => {
           <el-alert v-if="optionsError" :title="optionsError" type="warning" :closable="false" />
           <template v-else>
             <div class="tip adv-intro">不填就用默认值，大多数情况不需要改。改过的参数会高亮显示。</div>
-            <AdvancedOptions v-model="form.sourceOptions!" title="读取（来源）" :defs="sourceOptionDefs" type="source" :plugin="sourceIsHttp ? 'Http' : 'Jdbc'" />
+            <AdvancedOptions v-model="form.sourceOptions!" title="读取（来源）" :defs="sourceOptionDefs" type="source" :plugin="sourceCaps?.sourceConnector ?? ''" />
             <AdvancedOptions
               v-model="form.sinkOptions!"
               title="写入（目标）"
               :defs="sinkOptionDefs"
               type="sink"
-              :plugin="targetIsEs ? 'Elasticsearch' : 'Jdbc'"
+              :plugin="targetCaps?.sinkConnector ?? ''"
               :target-type="typeOf(form.target.datasourceId)"
             />
           </template>
@@ -953,6 +750,11 @@ onMounted(async () => {
   width: 100%;
 }
 
+/* a source step's own fields take their place in the grid */
+.source-fields {
+  display: contents;
+}
+
 .form-card {
   box-sizing: border-box;
   padding: 18px 20px 6px;
@@ -982,74 +784,6 @@ onMounted(async () => {
 
 .warn {
   color: var(--el-color-warning-dark-2);
-}
-
-.tables {
-  margin-top: 20px;
-  padding: 18px 20px 20px;
-  border: 1px solid #e8edf4;
-  border-radius: 10px;
-}
-
-.tables-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.block-title {
-  margin-bottom: 4px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.table-tags {
-  display: flex;
-  flex: none;
-  gap: 8px;
-}
-
-.tables-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  flex-wrap: wrap;
-  background: #f8fafc;
-  border-radius: 8px;
-}
-
-.table-filter {
-  width: 360px;
-  max-width: 100%;
-}
-
-.bar-hint {
-  margin: 0;
-}
-
-.refresh {
-  margin-left: auto;
-}
-
-.table-box {
-  width: 100%;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.table-box :deep(th.el-table__cell) {
-  background: #f8fafc;
-}
-
-/* the box's own border closes the table */
-.table-box :deep(.el-table__body tr:last-child > td.el-table__cell) {
-  border-bottom: none;
 }
 
 .section-title {

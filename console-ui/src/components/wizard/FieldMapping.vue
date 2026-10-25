@@ -22,8 +22,10 @@ const props = defineProps<{
   form: WizardForm
   columns: Record<string, ColumnMeta[]>
   loading: boolean
-  es: boolean
-  http?: boolean
+  /** Target names are lower case (ES indices). */
+  lowerCase: boolean
+  /** The source reads with a per-table filter (JDBC). */
+  filters: boolean
 }>()
 
 const tableSearch = ref('')
@@ -50,7 +52,7 @@ const incremental = computed(() => props.form.sync.mode === 'INCREMENTAL' && pro
 const visibleTables = computed(() => {
   const q = tableSearch.value.trim().toLowerCase()
   return props.form.source.tables.filter(
-    (t) => !q || t.name.toLowerCase().includes(q) || targetTableName(props.form, t, props.es).toLowerCase().includes(q),
+    (t) => !q || t.name.toLowerCase().includes(q) || targetTableName(props.form, t, props.lowerCase).toLowerCase().includes(q),
   )
 })
 
@@ -298,7 +300,7 @@ function timeFields(t: WizardTable) {
           @click="current = t.name"
         >
           <div class="t-target">
-            <span class="t-name">{{ targetTableName(form, t, es) }}</span>
+            <span class="t-name">{{ targetTableName(form, t, lowerCase) }}</span>
             <span v-if="problems(t).size || newProblems(t).size" class="dot" title="有字段名冲突或不合法" />
           </div>
           <div class="t-meta">
@@ -315,7 +317,7 @@ function timeFields(t: WizardTable) {
     <section v-if="table" class="fields">
       <div class="fields-bar">
         <div class="table-title">
-          {{ table.name }} <el-icon class="arrow"><Right /></el-icon> <b>{{ targetTableName(form, table, es) }}</b>
+          {{ table.name }} <el-icon class="arrow"><Right /></el-icon> <b>{{ targetTableName(form, table, lowerCase) }}</b>
         </div>
         <div class="bar-actions">
           <el-button :icon="CirclePlus" @click="openAdd(null)">新增字段</el-button>
@@ -327,7 +329,7 @@ function timeFields(t: WizardTable) {
       </div>
 
       <div class="table-settings">
-        <label v-if="!http">过滤条件
+        <label v-if="filters">过滤条件
           <el-input v-model="table.filter" placeholder="可选，不含 where，如 status = 1；可以使用变量" class="code" clearable />
         </label>
         <label v-if="encrypts">加密密钥

@@ -11,12 +11,13 @@ import { clashes, isEmptyRule, nameProblem, ruleTableName, targetTableName } fro
 
 import NameRuleDialog from './NameRuleDialog.vue'
 
-const props = defineProps<{ form: WizardForm; es: boolean }>()
+/** @property lowerCase target names are lower case (ES indices); tableWord: 目标表, 索引 */
+const props = defineProps<{ form: WizardForm; lowerCase: boolean; tableWord: string }>()
 
 const ruleOpen = ref(false)
-const what = computed(() => (props.es ? '索引' : '目标表'))
+const what = computed(() => props.tableWord)
 
-const names = computed(() => props.form.source.tables.map((t) => targetTableName(props.form, t, props.es)))
+const names = computed(() => props.form.source.tables.map((t) => targetTableName(props.form, t, props.lowerCase)))
 const clashing = computed(() => clashes(names.value))
 const byHandCount = computed(() => props.form.source.tables.filter((t) => t.targetName != null).length)
 
@@ -43,7 +44,7 @@ function onInput(t: WizardTable, value: string) {
 /** A name equal to the rule's, or left empty, follows the rule again. */
 function onBlur(t: WizardTable) {
   const typed = t.targetName?.trim()
-  t.targetName = !typed || typed === ruleTableName(props.form, t, props.es) ? null : typed
+  t.targetName = !typed || typed === ruleTableName(props.form, t, props.lowerCase) ? null : typed
 }
 
 function applyRule(rule: NameRule, clearByHand: boolean) {
@@ -92,7 +93,7 @@ function applyRule(rule: NameRule, clearByHand: boolean) {
         </template>
       </el-table-column>
     </el-table>
-    <div v-if="es" class="tip note">ES 索引名一律转为小写。</div>
+    <div v-if="lowerCase" class="tip note">{{ what }}名一律转为小写。</div>
 
     <NameRuleDialog
       v-model="ruleOpen"
@@ -102,7 +103,7 @@ function applyRule(rule: NameRule, clearByHand: boolean) {
       source-label="源表名"
       :target-label="`${what}名`"
       with-replace
-      :lower="es"
+      :lower="lowerCase"
       @apply="applyRule"
     />
   </div>

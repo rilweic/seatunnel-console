@@ -20,14 +20,14 @@ export function isEmptyRule(rule: NameRule | null | undefined): boolean {
 }
 
 /** The table's name from the rule alone, ignoring a name set by hand. */
-export function ruleTableName(form: WizardForm, table: WizardTable, es: boolean): string {
+export function ruleTableName(form: WizardForm, table: WizardTable, lowerCase: boolean): string {
   const name = applyRule(form.target.tableRule, table.name)
-  return es ? name.toLowerCase() : name
+  return lowerCase ? name.toLowerCase() : name
 }
 
-export function targetTableName(form: WizardForm, table: WizardTable, es: boolean): string {
+export function targetTableName(form: WizardForm, table: WizardTable, lowerCase: boolean): string {
   const name = table.targetName?.trim() ? table.targetName.trim() : applyRule(form.target.tableRule, table.name)
-  return es ? name.toLowerCase() : name
+  return lowerCase ? name.toLowerCase() : name
 }
 
 export function fieldRuleOf(form: WizardForm, table: WizardTable): NameRule | null | undefined {
@@ -82,13 +82,19 @@ export function nameProblem(name: string, clashing: Set<string>): string | null 
   return null
 }
 
-/** The first problem among target table names, for blocking the step. */
-export function tableNamesProblem(form: WizardForm, es: boolean): string | null {
-  const names = form.source.tables.map((t) => targetTableName(form, t, es))
+/**
+ * The first problem among target table names, for blocking the step.
+ *
+ * @param lowerCase the target needs lower-case names (Elasticsearch indices)
+ * @param tableWord what a table is called on the target: 目标表, 索引
+ */
+export function tableNamesProblem(form: WizardForm, lowerCase: boolean, tableWord: string): string | null {
+  const names = form.source.tables.map((t) => targetTableName(form, t, lowerCase))
   const clashing = clashes(names)
+  const what = tableWord.startsWith('目标') ? tableWord : `目标${tableWord}`
   for (const [i, t] of form.source.tables.entries()) {
     const problem = nameProblem(names[i], clashing)
-    if (problem) return `${t.name} 的目标${es ? '索引' : '表'}名${problem}`
+    if (problem) return `${t.name} 的${what}名${problem}`
   }
   return null
 }
