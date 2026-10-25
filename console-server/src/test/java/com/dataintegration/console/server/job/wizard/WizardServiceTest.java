@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.dataintegration.console.datasource.http.HttpPreviewRequest;
+import com.dataintegration.console.datasource.meta.ColumnMeta;
+import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.datasource.http.HttpPreviewResponse;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.encryptkey.EncryptKeyService;
@@ -224,6 +226,41 @@ class WizardServiceTest {
 
         assertThat(result.errors()).anyMatch(message -> message.contains("jsonPath 必须以 $ 开头"));
         verify(datasourceService, never()).previewHttp(eq("http-ds"), any());
+    }
+
+    @Test
+    void precheckJdbcReportsMissingTablesIncrementalFieldsAndKeysThroughTheSourcePlugin() {
+        when(datasourceService.typeOf("pg-ds")).thenReturn("POSTGRESQL");
+        when(datasourceService.typeOf("mysql-ds")).thenReturn("MYSQL");
+        when(datasourceService.property("pg-ds", "database")).thenReturn("app");
+        when(datasourceService.namespaces("pg-ds")).thenReturn(List.of("public"));
+        when(datasourceService.tables("pg-ds", "public")).thenReturn(List.of(
+                new TableMeta("orders", List.of("id")), new TableMeta("users", List.of())));
+        when(datasourceService.columns("pg-ds", "public", "orders")).thenReturn(List.of(
+                new ColumnMeta("id", "int8", false, true, false), new ColumnMeta("updated_at", "timestamp", true, false, true)));
+        when(datasourceService.columns("pg-ds", "public", "users")).thenReturn(List.of(
+                new ColumnMeta("id", "int8", false, false, false), new ColumnMeta("updated_at", "varchar(20)", true, false, false)));
+        // the generated incremental queries run under "where 1 = 0"
+        when(datasourceService.count(eq("pg-ds"), any())).thenReturn(0L);
+        when(datasourceService.namespaces("mysql-ds")).thenReturn(List.of("ods"));
+        when(datasourceService.tables("mysql-ds", "ods")).thenReturn(List.of());
+        WizardForm form = new WizardForm(
+                new WizardForm.Source("pg-ds", "public", List.of(
+                        new TableSpec("orders", null, null, null), new TableSpec("users", null, null, null),
+                        new TableSpec("ghost", null, null, null))),
+                new Target("mysql-ds", "ods", null, null, null, SchemaMode.CREATE, DataMode.KEEP, WriteMode.UPSERT),
+                new Sync(SyncMode.INCREMENTAL, WizardForm.Window.DAY, "updated_at", null),
+                1, false, null, null);
+
+        WizardService.PrecheckResult result = wizardService.precheck(form, Map.of());
+
+        assertThat(result.errors()).containsExactlyInAnyOrder(
+                "源表不存在：ghost",
+                "users：增量字段 updated_at 是 varchar(20)，不是时间类型；数字型字段请用\"自定义条件\"");
+        assertThat(result.checks()).extracting(WizardService.Check::message)
+                .contains("users：没有主键，只能按追加方式写入", "目标表 orders 不存在，运行时自动创建");
+        assertThat(result.generated().hocon()).contains("table_path = \"app.public.orders\"");
+        verify(datasourceService, org.mockito.Mockito.times(2)).count(eq("pg-ds"), any());
     }
 
     private void mockHttpTypes() {

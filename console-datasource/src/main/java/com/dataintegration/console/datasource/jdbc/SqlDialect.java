@@ -1,8 +1,8 @@
 package com.dataintegration.console.datasource.jdbc;
 
 /**
- * How a relational database names things in SQL and in SeaTunnel's Jdbc {@code table_path}, so
- * the job wizard can generate queries for any JDBC datasource without knowing which one it is.
+ * How a relational database names things in SQL and in SeaTunnel's Jdbc options, so the job
+ * wizard can generate configs for any JDBC datasource without knowing which one it is.
  */
 public interface SqlDialect {
 
@@ -10,15 +10,23 @@ public interface SqlDialect {
     String quote(String identifier);
 
     /**
-     * SeaTunnel's {@code table_path} of a table: {@code namespace.table} where the namespace is the
-     * database (MySQL), {@code database.schema.table} where it is a schema (PostgreSQL).
-     *
-     * @param database the datasource's database, used when the namespace is a schema
+     * Whether a job's namespace is a schema inside the datasource's database (PostgreSQL) rather
+     * than the database itself (MySQL).
      */
-    String tablePath(String database, String namespace, String table);
+    boolean namespaceIsSchema();
 
     default String qualified(String namespace, String table) {
         return quote(namespace) + "." + quote(table);
+    }
+
+    /**
+     * SeaTunnel's {@code table_path} of a table: {@code database.table}, or
+     * {@code database.schema.table} where the namespace is a schema.
+     *
+     * @param database the datasource's database, used when the namespace is a schema
+     */
+    default String tablePath(String database, String namespace, String table) {
+        return namespaceIsSchema() ? database + "." + namespace + "." + table : namespace + "." + table;
     }
 
     /** Backquoted identifiers; the namespace is the database. */
@@ -29,12 +37,12 @@ public interface SqlDialect {
         }
 
         @Override
-        public String tablePath(String database, String namespace, String table) {
-            return namespace + "." + table;
+        public boolean namespaceIsSchema() {
+            return false;
         }
     };
 
-    /** Double-quoted identifiers; the namespace is a schema inside the datasource's database. */
+    /** Double-quoted identifiers; the namespace is a schema. */
     SqlDialect POSTGRESQL = new SqlDialect() {
         @Override
         public String quote(String identifier) {
@@ -42,8 +50,8 @@ public interface SqlDialect {
         }
 
         @Override
-        public String tablePath(String database, String namespace, String table) {
-            return database + "." + namespace + "." + table;
+        public boolean namespaceIsSchema() {
+            return true;
         }
     };
 }

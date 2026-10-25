@@ -23,6 +23,7 @@ import com.dataintegration.console.server.job.wizard.WizardForm.Target;
 import com.dataintegration.console.server.job.wizard.WizardForm.Window;
 import com.dataintegration.console.server.job.wizard.WizardForm.WriteMode;
 import com.dataintegration.console.server.job.wizard.WizardGenerator.Endpoints;
+import com.dataintegration.console.server.job.wizard.source.HttpSource;
 
 import org.junit.jupiter.api.Test;
 
@@ -415,19 +416,19 @@ class WizardGeneratorTest {
     void previewAndGeneratedConfigShareTheRequestAssembly() {
         HttpPaging params = new HttpPaging(HttpPagingMode.PAGE_NUMBER, " pageNo ", HttpPageLocation.PARAMS, 3L, "size", 50,
                 null, null, null);
-        assertThat(WizardGenerator.httpRequestParts(Map.of("tenant", "acme"), null, params, null).params())
+        assertThat(HttpSource.requestParts(Map.of("tenant", "acme"), null, params, null).params())
                 .containsExactly(Map.entry("tenant", "acme"), Map.entry("pageNo", "${page}"), Map.entry("size", "50"));
-        assertThat(WizardGenerator.httpRequestParts(Map.of("tenant", "acme"), null, params, "3").params())
+        assertThat(HttpSource.requestParts(Map.of("tenant", "acme"), null, params, "3").params())
                 .containsExactly(Map.entry("tenant", "acme"), Map.entry("pageNo", "3"), Map.entry("size", "50"));
 
         HttpPaging body = new HttpPaging(HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.BODY, 1L, "size", 25,
                 null, null, null);
-        assertThat(WizardGenerator.httpRequestParts(null, "{\"q\":\"x\"}", body, "1").body())
+        assertThat(HttpSource.requestParts(null, "{\"q\":\"x\"}", body, "1").body())
                 .isEqualTo("{\"q\":\"x\",\"pageNo\":\"1\",\"size\":25}");
 
         HttpPaging cursor = new HttpPaging(HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null,
                 "cursor", "next");
-        assertThat(WizardGenerator.httpRequestParts(Map.of("cursor", "${cursor}", "tenant", "acme"), null, cursor, null).params())
+        assertThat(HttpSource.requestParts(Map.of("cursor", "${cursor}", "tenant", "acme"), null, cursor, null).params())
                 .containsOnlyKeys("tenant");
     }
 

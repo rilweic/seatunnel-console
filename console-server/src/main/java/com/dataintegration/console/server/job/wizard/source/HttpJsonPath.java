@@ -1,4 +1,4 @@
-package com.dataintegration.console.server.job.wizard;
+package com.dataintegration.console.server.job.wizard.source;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
@@ -9,12 +9,12 @@ import tools.jackson.databind.JsonNode;
  * The JSON paths the HTTP wizard writes (§7.13): dot fields, quoted field names and array indices,
  * e.g. {@code $.data['order-id'][0]}. Anything else is refused instead of being skipped.
  */
-final class HttpJsonPath {
+public final class HttpJsonPath {
 
     private HttpJsonPath() {}
 
     /** Throws when the path is not one the wizard accepts. */
-    static void requireValid(String path) {
+    public static void requireValid(String path) {
         read(null, path);
     }
 
@@ -22,7 +22,7 @@ final class HttpJsonPath {
      * The node at the path, or null when it is missing. A path without {@code $} is a field of the
      * root, as Jayway reads it.
      */
-    static JsonNode read(JsonNode root, String path) {
+    public static JsonNode read(JsonNode root, String path) {
         if (path == null || path.isBlank() || path.trim().equals("$")) {
             return root;
         }
