@@ -4,5 +4,6 @@ package com.dataintegration.console.datasource;
 public enum DataSourceType {
     MYSQL,
     POSTGRESQL,
-    ELASTICSEARCH
+    ELASTICSEARCH,
+    HTTP
 }

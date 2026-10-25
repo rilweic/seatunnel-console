@@ -64,6 +64,12 @@ class DataSourcePluginsTest {
     }
 
     @Test
+    void httpIsRegisteredByDefault() {
+        assertThat(plugins.get(DataSourceType.HTTP).type()).isEqualTo(DataSourceType.HTTP);
+        assertThat(plugins.get("HTTP").secretKeys()).containsExactlyInAnyOrder("token", "password", "apiKey");
+    }
+
+    @Test
     void refusesConnectorsTheTypeCannotBack() {
         assertThatThrownBy(
                         () -> plugins.get(DataSourceType.MYSQL)

@@ -282,8 +282,44 @@ const SINK_ES: OptionDict = {
     'vector_dimensions'],
 }
 
+const SOURCE_HTTP: OptionDict = {
+  groups: ['请求重试', 'JSON 解析'],
+  options: {
+    retry: {
+      label: '失败重试次数',
+      help: '请求发生网络异常时的最大重试次数。HTTP 状态码错误不会按这个参数重试。',
+      group: '请求重试',
+      control: 'number',
+    },
+    retry_backoff_multiplier_ms: {
+      label: '重试退避基数（毫秒）',
+      help: '每次重试前等待时间的增长基数，默认 100 毫秒。',
+      group: '请求重试',
+      control: 'number',
+      rare: true,
+    },
+    retry_backoff_max_ms: {
+      label: '最大退避时间（毫秒）',
+      help: '每次重试前最多等待多久，默认 10000 毫秒。',
+      group: '请求重试',
+      control: 'number',
+      rare: true,
+    },
+    json_filed_missed_return_null: {
+      label: '缺少 JSON 字段时返回空值',
+      help: '记录缺少已配置字段时写入 null，而不是让解析失败。参数名中的 filed 是 SeaTunnel 的既有拼写。',
+      group: 'JSON 解析',
+      control: 'bool',
+    },
+  },
+  hidden: ['url', 'method', 'params', 'body', 'headers', 'schema', 'content_field', 'json_field', 'format', 'pageing',
+    'keep_params_as_form', 'keep_page_param_as_http_param', 'connect_timeout_ms', 'socket_timeout_ms', 'poll_interval_millis',
+    'binary_chunk_size', 'enable_multi_lines'],
+}
+
 const DICTS: Record<string, OptionDict> = {
   'source:Jdbc': SOURCE_JDBC,
+  'source:Http': SOURCE_HTTP,
   'sink:Jdbc': SINK_JDBC,
   'sink:Elasticsearch': SINK_ES,
 }

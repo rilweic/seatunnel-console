@@ -81,7 +81,7 @@ const dirty = computed(
 watch(dirty, (value) => emit('dirty', value))
 
 const datasources = ref<DatasourceView[]>([])
-const jdbcDatasources = computed(() => datasources.value.filter((d) => d.type !== 'ELASTICSEARCH'))
+const jdbcDatasources = computed(() => datasources.value.filter((d) => d.type === 'MYSQL' || d.type === 'POSTGRESQL'))
 const esDatasources = computed(() => datasources.value.filter((d) => d.type === 'ELASTICSEARCH'))
 const pickedDatasource = ref('')
 const editor = ref<{ textarea?: HTMLTextAreaElement } | null>(null)
@@ -213,7 +213,7 @@ onMounted(async () => {
     </el-select>
     <el-button :disabled="!pickedDatasource" @click="insertDatasource">插入数据源</el-button>
     <el-button @click="transformOpen = true">插入 transform</el-button>
-    <span class="tip">在 source / sink 的连接器里写 <code>datasource_id</code>，密码不会出现在配置中。目前支持 Jdbc 和 Elasticsearch 连接器。</span>
+    <span class="tip">在 source / sink 的连接器里写 <code>datasource_id</code>，密码不会出现在配置中。目前支持 Jdbc、Elasticsearch 和 Http 连接器。</span>
   </div>
   <el-input ref="editor" v-model="hocon" type="textarea" :rows="24" class="code" spellcheck="false" />
   <TransformInsertDialog v-model="transformOpen" @insert="insertTransform" />

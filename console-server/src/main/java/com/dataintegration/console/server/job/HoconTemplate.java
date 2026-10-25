@@ -2,6 +2,8 @@ package com.dataintegration.console.server.job;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
+import com.dataintegration.console.common.SecretRules;
+import com.dataintegration.console.datasource.http.HttpDataSourcePlugin;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigException;
 import com.typesafe.config.ConfigFactory;
@@ -12,12 +14,21 @@ import com.typesafe.config.ConfigValue;
 import com.typesafe.config.ConfigValueFactory;
 import com.typesafe.config.ConfigValueType;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+
+
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,11 +51,8 @@ public final class HoconTemplate {
 
     private static final String FIELD_ENCRYPT = "FieldEncrypt";
 
-    /** Option names that hold credentials; they belong in a datasource, never in a saved config. */
-    private static final Pattern SECRET_KEY =
-            Pattern.compile("(?i).*(password|passwd|secret|token|credential|api_?key|access_?key).*");
-
     public static final String MASK = "******";
+    private static final ObjectMapper JSON = JsonMapper.builder().build();
 
     /**
      * Where a string value may carry a credential: every {@code key=value} parameter (JDBC URLs,
@@ -148,7 +156,11 @@ public final class HoconTemplate {
     }
 
     public static boolean isSecretKey(String key) {
-        return SECRET_KEY.matcher(key).matches();
+        return SecretRules.isSecretKey(key);
+    }
+
+    private static boolean isSecretHeader(String key) {
+        return SecretRules.isSecretHeader(key);
     }
 
     /**
@@ -252,7 +264,9 @@ public final class HoconTemplate {
         if (value instanceof ConfigObject object) {
             object.forEach((key, child) -> {
                 String childPath = path.isEmpty() ? key : path + "." + key;
-                if (isSecretKey(key) && hasValue(child)) {
+                if (key.equals("headers") && child instanceof ConfigObject headers) {
+                    collectHeaderSecrets(childPath, headers, found);
+                } else if (isSecretKey(key) && hasValue(child)) {
                     found.add(childPath);
                 } else {
                     collectSecrets(childPath, child, found);
@@ -264,10 +278,77 @@ public final class HoconTemplate {
             }
         } else {
             String text = text(value);
-            if (text != null && carriesSecret(text)) {
+            if (text != null && (carriesSecret(text) || jsonCarriesSecret(text))) {
                 found.add(path);
             }
         }
+    }
+
+    /**
+     * A JSON text, such as an Http {@code body}, with a credential-like key holding a value:
+     * {@code {"token":"..."}} is a password written into the config like any other.
+     */
+    private static boolean jsonCarriesSecret(String text) {
+        String trimmed = text.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            return false;
+        }
+        try {
+            return jsonHasSecret(JSON.readTree(trimmed));
+        } catch (JacksonException e) {
+            return false;
+        }
+    }
+
+    private static boolean jsonHasSecret(JsonNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.isObject()) {
+            for (Map.Entry<String, JsonNode> field : node.properties()) {
+                if (isSecretKey(field.getKey()) && jsonHasValue(field.getValue())) {
+                    return true;
+                }
+                if (jsonHasSecret(field.getValue())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                if (jsonHasSecret(item)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean jsonHasValue(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return false;
+        }
+        if (node.isContainer()) {
+            for (JsonNode item : node) {
+                if (jsonHasValue(item)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        return !node.asString().isBlank();
+    }
+
+    private static void collectHeaderSecrets(String path, ConfigObject headers, List<String> found) {
+        headers.forEach((key, value) -> {
+            String childPath = path + "." + key;
+            if ((isSecretKey(key) || isSecretHeader(key)) && hasValue(value)) {
+                found.add(childPath);
+            } else {
+                collectSecrets(childPath, value, found);
+            }
+        });
     }
 
     /**
@@ -390,10 +471,29 @@ public final class HoconTemplate {
     private static ConfigObject maskSecrets(ConfigObject object) {
         ConfigObject result = object;
         for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
+            String key = entry.getKey();
             ConfigValue value = entry.getValue();
-            // The whole value goes under a credential-like key, whatever its shape.
-            ConfigValue masked = isSecretKey(entry.getKey()) && hasValue(value) ? ConfigValueFactory.fromAnyRef(MASK) : maskSecrets(value);
-            result = result.withValue(entry.getKey(), masked);
+            ConfigValue masked;
+            if (key.equals("headers") && value instanceof ConfigObject headers) {
+                masked = maskHeaderSecrets(headers);
+            } else {
+                // The whole value goes under a credential-like key, whatever its shape.
+                masked = isSecretKey(key) && hasValue(value) ? ConfigValueFactory.fromAnyRef(MASK) : maskSecrets(value);
+            }
+            result = result.withValue(key, masked);
+        }
+        return result;
+    }
+
+    private static ConfigObject maskHeaderSecrets(ConfigObject headers) {
+        ConfigObject result = headers;
+        for (Map.Entry<String, ConfigValue> entry : headers.entrySet()) {
+            String key = entry.getKey();
+            ConfigValue value = entry.getValue();
+            ConfigValue masked = (isSecretKey(key) || isSecretHeader(key)) && hasValue(value)
+                    ? ConfigValueFactory.fromAnyRef(MASK)
+                    : maskSecrets(value);
+            result = result.withValue(key, masked);
         }
         return result;
     }
@@ -453,9 +553,60 @@ public final class HoconTemplate {
         ConfigObject result = block.withoutKey(DATASOURCE_KEY);
         Map<String, Object> options = resolver.resolve(connector, String.valueOf(id.unwrapped()));
         for (Map.Entry<String, Object> option : options.entrySet()) {
-            if (!result.containsKey(option.getKey())) {
-                result = result.withValue(option.getKey(), ConfigValueFactory.fromAnyRef(option.getValue()));
+            ConfigValue datasourceValue = ConfigValueFactory.fromAnyRef(option.getValue());
+            ConfigValue templateValue = result.get(option.getKey());
+            if (templateValue == null) {
+                result = result.withValue(option.getKey(), datasourceValue);
+            } else if ("Http".equals(connector) && option.getKey().equals("url")) {
+                result = result.withValue(option.getKey(), ConfigValueFactory.fromAnyRef(
+                        HttpDataSourcePlugin.resolveUrl(text(datasourceValue), text(templateValue))));
+            } else if (templateValue instanceof ConfigObject templateObject
+                    && datasourceValue instanceof ConfigObject datasourceObject) {
+                ConfigObject merged;
+                if ("Http".equals(connector) && option.getKey().equals("params")) {
+                    merged = mergeHttpParams(datasourceObject, templateObject);
+                } else if ("Http".equals(connector) && option.getKey().equals("headers")) {
+                    merged = mergeHttpHeaders(datasourceObject, templateObject);
+                } else {
+                    merged = mergeObjects(datasourceObject, templateObject);
+                }
+                result = result.withValue(option.getKey(), merged);
             }
+        }
+        return result;
+    }
+
+    private static ConfigObject mergeHttpParams(ConfigObject datasource, ConfigObject template) {
+        for (String key : template.keySet()) {
+            if (datasource.containsKey(key)) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                        "Http task parameter conflicts with datasource API Key: " + key);
+            }
+        }
+        return mergeObjects(datasource, template);
+    }
+
+    /**
+     * A job may add headers but never replace the datasource's: its authentication header can have
+     * any name (an API Key header called {@code appId}), so every datasource header is kept.
+     * Header names are case-insensitive.
+     */
+    private static ConfigObject mergeHttpHeaders(ConfigObject datasource, ConfigObject template) {
+        Set<String> names = new HashSet<>();
+        datasource.keySet().forEach(name -> names.add(name.toLowerCase(Locale.ROOT)));
+        for (String key : template.keySet()) {
+            if (names.contains(key.toLowerCase(Locale.ROOT))) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                        "Http task header conflicts with a datasource header: " + key);
+            }
+        }
+        return mergeObjects(datasource, template);
+    }
+
+    private static ConfigObject mergeObjects(ConfigObject datasource, ConfigObject template) {
+        ConfigObject result = datasource;
+        for (Map.Entry<String, ConfigValue> entry : template.entrySet()) {
+            result = result.withValue(entry.getKey(), entry.getValue());
         }
         return result;
     }

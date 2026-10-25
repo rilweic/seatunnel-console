@@ -3,6 +3,7 @@ package com.dataintegration.console.datasource;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.datasource.es.ElasticsearchDataSourcePlugin;
+import com.dataintegration.console.datasource.http.HttpDataSourcePlugin;
 import com.dataintegration.console.datasource.jdbc.MySqlDataSourcePlugin;
 import com.dataintegration.console.datasource.jdbc.PostgreSqlDataSourcePlugin;
 
@@ -16,7 +17,11 @@ public class DataSourcePlugins {
     private final Map<DataSourceType, DataSourcePlugin> plugins = new EnumMap<>(DataSourceType.class);
 
     public DataSourcePlugins() {
-        this(List.of(new MySqlDataSourcePlugin(), new PostgreSqlDataSourcePlugin(), new ElasticsearchDataSourcePlugin()));
+        this(List.of(
+                new MySqlDataSourcePlugin(),
+                new PostgreSqlDataSourcePlugin(),
+                new ElasticsearchDataSourcePlugin(),
+                new HttpDataSourcePlugin()));
     }
 
     public DataSourcePlugins(List<DataSourcePlugin> plugins) {

@@ -4,7 +4,16 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import JsonNode from './JsonNode.vue'
 
-const props = defineProps<{ text: string }>()
+const props = withDefaults(
+  defineProps<{
+    text: string
+    selectableArrays?: boolean
+    selectedPath?: string
+  }>(),
+  { selectableArrays: false, selectedPath: '' },
+)
+
+const emit = defineEmits<{ select: [path: (string | number)[]] }>()
 
 const collapsed = ref<Set<string>>(new Set())
 const fullscreen = ref(false)
@@ -92,7 +101,14 @@ onBeforeUnmount(() => {
       <pre class="raw">{{ text }}</pre>
     </template>
     <div v-else class="json-content">
-      <JsonNode :value="parsed.value" :collapsed="collapsed" @toggle="toggle" />
+      <JsonNode
+        :value="parsed.value"
+        :collapsed="collapsed"
+        :selectable-arrays="selectableArrays"
+        :selected-path="selectedPath"
+        @toggle="toggle"
+        @select="emit('select', $event)"
+      />
     </div>
   </section>
 </template>

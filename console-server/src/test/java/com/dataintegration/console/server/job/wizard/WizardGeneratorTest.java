@@ -7,6 +7,12 @@ import com.dataintegration.console.server.job.HoconTemplate;
 import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpField;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpMethod;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpPageLocation;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpPaging;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpPagingMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpSpec;
 import com.dataintegration.console.server.job.wizard.WizardForm.NameCase;
 import com.dataintegration.console.server.job.wizard.WizardForm.NameRule;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
@@ -249,5 +255,331 @@ class WizardGeneratorTest {
     void seatunnelPlaceholdersAreNotReportedAsUnresolved() {
         assertThat(Variables.unresolved("table = \"ods_${table_name}\", keys = [\"${primary_key}\"], x = ${typo}"))
                 .containsExactly("typo");
+    }
+
+    private static WizardForm httpForm(HttpSpec http, TableSpec table, boolean validation) {
+        return httpForm(http, table, validation, null);
+    }
+
+    private static WizardForm httpForm(HttpSpec http, TableSpec table, boolean validation, Map<String, String> sourceOptions) {
+        return new WizardForm(
+                new WizardForm.Source("http-ds", null, List.of(table), http),
+                target("ods", DataMode.CLEAR, WriteMode.UPSERT),
+                new Sync(SyncMode.INCREMENTAL, null, null, null),
+                8,
+                validation,
+                sourceOptions,
+                null);
+    }
+
+    @Test
+    void httpSourceUsesFinalTableNameFieldsAndPrimaryKeyWithoutDatabaseValidation() {
+        HttpSpec http = new HttpSpec(
+                "/orders",
+                HttpMethod.GET,
+                Map.of("tenant", "acme"),
+                null,
+                new HttpPaging(HttpPagingMode.NONE, null, null, null, null, null, null, null, null),
+                "$.data.list",
+                List.of(new HttpField("id", "bigint", null), new HttpField("name", "string", "$.name")),
+                List.of("id"));
+
+        WizardGenerator.Generated g = WizardGenerator.generate(httpForm(http, new TableSpec("orders", null, null, null), true),
+                new Endpoints("HTTP", null, "MYSQL", null));
+
+        assertThat(g.hocon())
+                .contains("parallelism = 1")
+                .contains("source {\n  Http {")
+                .contains("datasource_id = \"http-ds\"")
+                .contains("url = \"/orders\"")
+                .contains("method = \"GET\"")
+                .contains("tenant = \"acme\"")
+                .contains("format = \"json\"")
+                .doesNotContain("content_field")
+                .contains("json_field = {")
+                .contains("id = \"$.data.list[*].id\"")
+                .contains("name = \"$.data.list[*].name\"")
+                .contains("table = \"ods_orders\"")
+                // a primary key column must be NOT NULL for the target table to be created
+                .contains("{ name = \"id\", type = bigint, nullable = false }")
+                .contains("{ name = \"name\", type = string, nullable = true }")
+                .doesNotContain("fields {")
+                .contains("primaryKey {")
+                .contains("name = \"http_pk\"")
+                .contains("columnNames = [\"id\"]")
+                .contains("enable_upsert = true")
+                .doesNotContain("request_interval_ms")
+                .doesNotContain("table_list")
+                .doesNotContain("pageing")
+                .doesNotContain("TableRename")
+                .doesNotContain("incremental")
+                .contains("plugin_input = [\"source\"]");
+        parse(g.hocon());
+        assertThat(g.validation()).isNull();
+        assertThat(g.notes()).anyMatch(n -> n.contains("接口无法计数"));
+    }
+
+    @Test
+    void httpPageNumberPagingPopulatesParamsOrJsonBody() {
+        HttpPaging paramsPaging = new HttpPaging(
+                HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.PARAMS, 3L, "size", 50, 4L, null, null);
+        HttpSpec paramsHttp = new HttpSpec("/orders", HttpMethod.GET, Map.of("tenant", "acme"), null, paramsPaging,
+                null, List.of(new HttpField("id", "bigint", null)), null);
+        String paramsHocon = WizardGenerator.generate(httpForm(paramsHttp, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(paramsHocon)
+                .contains("tenant = \"acme\"")
+                .contains("pageNo = \"${page}\"")
+                .contains("keep_page_param_as_http_param = true")
+                .contains("size = \"50\"")
+                .contains("pageing = {")
+                .contains("page_field = \"pageNo\"")
+                .contains("start_page_number = 3")
+                .contains("batch_size = 50")
+                .contains("total_page_size = 4")
+                .contains("use_placeholder_replacement = true");
+        parse(paramsHocon);
+
+        HttpPaging bodyPaging = new HttpPaging(
+                HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.BODY, 0L, "size", 25, null, null, null);
+        HttpSpec bodyHttp = new HttpSpec("/orders/search", HttpMethod.POST, null, "{\"filter\":\"active\"}", bodyPaging,
+                "$", List.of(new HttpField("id", "bigint", null)), null);
+        String bodyHocon = WizardGenerator.generate(httpForm(bodyHttp, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(bodyHocon)
+                .contains("body = \"{\\\"filter\\\":\\\"active\\\",\\\"pageNo\\\":\\\"${page}\\\",\\\"size\\\":25}\"")
+                .contains("start_page_number = 0")
+                .contains("batch_size = 25")
+                .doesNotContain("total_page_size");
+        parse(bodyHocon);
+    }
+
+    @Test
+    void httpCursorPagingUsesParamsAndKeepsTheCursorParameter() {
+        HttpPaging paging = new HttpPaging(
+                HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null,
+                "next", "$.paging.cursors.next");
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, Map.of("tenant", "acme"), null, paging,
+                null, List.of(new HttpField("id", "bigint", null)), null);
+
+        String hocon = WizardGenerator.generate(httpForm(http, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+
+        assertThat(hocon)
+                .doesNotContain("next = \"${cursor}\"")
+                .contains("keep_page_param_as_http_param = true")
+                .contains("page_type = \"Cursor\"")
+                .contains("cursor_field = \"next\"")
+                .contains("cursor_response_field = \"$.paging.cursors.next\"")
+                .contains("use_placeholder_replacement = true")
+                .doesNotContain("page_field")
+                .doesNotContain("batch_size");
+        parse(hocon);
+    }
+
+    @Test
+    void httpStringPrimaryKeyGetsALength() {
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("code", "STRING", null), new HttpField("note", "STRING", null)), List.of("code"));
+        String hocon = WizardGenerator.generate(httpForm(http, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(hocon)
+                .contains("{ name = \"code\", type = STRING, columnLength = 255, nullable = false }")
+                .contains("{ name = \"note\", type = STRING, nullable = true }");
+        parse(hocon);
+    }
+
+    @Test
+    void httpCursorResponseFieldMustBeAValidPath() {
+        for (String field : List.of("nextCursor", "$.paging['next-cursor']")) {
+            HttpPaging paging = new HttpPaging(HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null,
+                    "cursor", field);
+            HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, paging, "$",
+                    List.of(new HttpField("id", "bigint", null)), null);
+            String hocon = WizardGenerator.generate(httpForm(http, new TableSpec("orders", null, null, null), false),
+                    new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+            parse(hocon);
+        }
+        for (String field : List.of("$.paging[", "$..next", "$.paging next")) {
+            HttpPaging paging = new HttpPaging(HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null,
+                    "cursor", field);
+            HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, paging, "$",
+                    List.of(new HttpField("id", "bigint", null)), null);
+            assertThatThrownBy(() -> WizardGenerator.generate(httpForm(http, new TableSpec("orders", null, null, null), false),
+                    new Endpoints("HTTP", null, "MYSQL", null)))
+                    .hasMessageContaining("游标响应字段的路径不合法");
+        }
+    }
+
+    @Test
+    void previewAndGeneratedConfigShareTheRequestAssembly() {
+        HttpPaging params = new HttpPaging(HttpPagingMode.PAGE_NUMBER, " pageNo ", HttpPageLocation.PARAMS, 3L, "size", 50,
+                null, null, null);
+        assertThat(WizardGenerator.httpRequestParts(Map.of("tenant", "acme"), null, params, null).params())
+                .containsExactly(Map.entry("tenant", "acme"), Map.entry("pageNo", "${page}"), Map.entry("size", "50"));
+        assertThat(WizardGenerator.httpRequestParts(Map.of("tenant", "acme"), null, params, "3").params())
+                .containsExactly(Map.entry("tenant", "acme"), Map.entry("pageNo", "3"), Map.entry("size", "50"));
+
+        HttpPaging body = new HttpPaging(HttpPagingMode.PAGE_NUMBER, "pageNo", HttpPageLocation.BODY, 1L, "size", 25,
+                null, null, null);
+        assertThat(WizardGenerator.httpRequestParts(null, "{\"q\":\"x\"}", body, "1").body())
+                .isEqualTo("{\"q\":\"x\",\"pageNo\":\"1\",\"size\":25}");
+
+        HttpPaging cursor = new HttpPaging(HttpPagingMode.CURSOR, null, HttpPageLocation.PARAMS, null, null, null, null,
+                "cursor", "next");
+        assertThat(WizardGenerator.httpRequestParts(Map.of("cursor", "${cursor}", "tenant", "acme"), null, cursor, null).params())
+                .containsOnlyKeys("tenant");
+    }
+
+    @Test
+    void advancedOptionsCannotOverrideGeneratedOptions() {
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("id", "bigint", null)), null);
+        WizardForm base = httpForm(http, new TableSpec("orders", null, null, null), false);
+        // written after the generated ones they would win, e.g. turn upsert back on without a primary key
+        for (String option : List.of("enable_upsert", "primary_keys", "data_save_mode", "table")) {
+            WizardForm f = new WizardForm(base.source(), base.target(), base.sync(), 1, false, null, Map.of(option, "x"));
+            assertThatThrownBy(() -> WizardGenerator.generate(f, new Endpoints("HTTP", null, "MYSQL", null)))
+                    .hasMessageContaining("由向导生成的 " + option);
+        }
+        WizardForm ordinarySink = new WizardForm(base.source(), base.target(), base.sync(), 1, false, null,
+                Map.of("batch_size", "500"));
+        assertThat(WizardGenerator.generate(ordinarySink, new Endpoints("HTTP", null, "MYSQL", null)).hocon())
+                .contains("batch_size = 500");
+
+        WizardForm jdbc = form(List.of(new TableSpec("orders", null, null, null)), target("ods", DataMode.KEEP, WriteMode.UPSERT),
+                FULL, false);
+        WizardForm jdbcQuery = new WizardForm(jdbc.source(), jdbc.target(), jdbc.sync(), 1, false,
+                Map.of("query", "select 1"), null);
+        assertThatThrownBy(() -> WizardGenerator.generate(jdbcQuery, MYSQL_TO_MYSQL))
+                .hasMessageContaining("由向导生成的 query");
+        WizardForm jdbcFetch = new WizardForm(jdbc.source(), jdbc.target(), jdbc.sync(), 1, false,
+                Map.of("fetch_size", "1000"), null);
+        assertThat(WizardGenerator.generate(jdbcFetch, MYSQL_TO_MYSQL).hocon()).contains("fetch_size = 1000");
+    }
+
+    @Test
+    void httpSchemaAndNestedFieldsArePrunedWhileFieldTransformsUseTheFinalTableName() {
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, null,
+                List.of(
+                        new HttpField("id", "bigint", "$.id"),
+                        new HttpField("name", "string", "$.data[*].name"),
+                        new HttpField("secret", "string", "$.data[*].secret")),
+                null);
+        TableSpec table = new TableSpec("orders", List.of("name", "id"), null, null, "orders_final",
+                Map.of("id", "order_id"), null);
+
+        String hocon = WizardGenerator.generate(httpForm(http, table, false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+
+        assertThat(hocon)
+                .contains("table = \"orders_final\"")
+                .contains("name = string")
+                .contains("id = bigint")
+                .contains("name = \"$.data[*].name\"")
+                .contains("id = \"$[*].id\"")
+                .doesNotContain("$[*].order_id")
+                .doesNotContain("secret")
+                .contains("{ table_path = \"orders_final\", specific = [")
+                .contains("{ field_name = \"id\", target_name = \"order_id\" }")
+                .doesNotContain("TableRename");
+        parse(hocon);
+    }
+
+    @Test
+    void httpDecimalHasPrecisionAndFieldTypesAreValidated() {
+        HttpSpec decimal = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$.data",
+                List.of(new HttpField("amount", "DECIMAL", "$.amount", 20, 6)), null);
+        String hocon = WizardGenerator.generate(httpForm(decimal, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(hocon).contains("amount = \"decimal(20,6)\"");
+        parse(hocon);
+
+        HttpSpec defaults = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("amount", "decimal", null)), null);
+        assertThat(WizardGenerator.generate(httpForm(defaults, new TableSpec("orders", null, null, null), false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon()).contains("amount = \"decimal(18,2)\"");
+
+        for (HttpField invalid : List.of(
+                new HttpField("id", "INT", null),
+                new HttpField("amount", "DECIMAL", null, 0, 2),
+                new HttpField("amount", "DECIMAL", null, 10, 11))) {
+            HttpSpec invalidHttp = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$", List.of(invalid), null);
+            assertThatThrownBy(() -> WizardGenerator.generate(
+                    httpForm(invalidHttp, new TableSpec("orders", null, null, null), false),
+                    new Endpoints("HTTP", null, "MYSQL", null)))
+                    .isInstanceOf(com.dataintegration.console.common.ConsoleException.class);
+        }
+    }
+
+    @Test
+    void httpAdvancedOptionsAreRestrictedToSupportedKeys() {
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("id", "bigint", null)), null);
+        TableSpec table = new TableSpec("orders", null, null, null);
+        String hocon = WizardGenerator.generate(httpForm(http, table, false, Map.of(
+                        "retry", "3",
+                        "retry_backoff_multiplier_ms", "100",
+                        "retry_backoff_max_ms", "10000",
+                        "json_filed_missed_return_null", "false")),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(hocon)
+                .contains("retry = 3")
+                .contains("retry_backoff_multiplier_ms = 100")
+                .contains("retry_backoff_max_ms = 10000")
+                .contains("json_filed_missed_return_null = false");
+        parse(hocon);
+
+        for (String option : List.of("format", "schema", "pageing", "request_interval_ms")) {
+            assertThatThrownBy(() -> WizardGenerator.generate(
+                    httpForm(http, table, false, Map.of(option, "invalid")),
+                    new Endpoints("HTTP", null, "MYSQL", null)))
+                    .hasMessageContaining("不支持的 HTTP 高级参数");
+        }
+    }
+
+    @Test
+    void httpWithoutPrimaryKeysAlwaysAppends() {
+        HttpSpec http = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("id", "bigint", null)), null);
+        TableSpec table = new TableSpec("orders", null, null, null);
+        String jdbc = WizardGenerator.generate(httpForm(http, table, false),
+                new Endpoints("HTTP", null, "MYSQL", null)).hocon();
+        assertThat(jdbc).contains("enable_upsert = false");
+
+        WizardForm esForm = new WizardForm(
+                new WizardForm.Source("http-ds", null, List.of(table), http),
+                new Target("es-ds", null, null, null, null, SchemaMode.CREATE, DataMode.CLEAR, WriteMode.UPSERT),
+                new Sync(SyncMode.INCREMENTAL, null, null, null), 1, false, null, null);
+        String es = WizardGenerator.generate(esForm, new Endpoints("HTTP", null, "ELASTICSEARCH", null)).hocon();
+        assertThat(es).doesNotContain("primary_keys");
+        parse(jdbc);
+        parse(es);
+    }
+
+    @Test
+    void httpShapeValidationRejectsMissingFieldsUnknownKeysAndCursorBody() {
+        Endpoints endpoints = new Endpoints("HTTP", null, "MYSQL", null);
+        TableSpec table = new TableSpec("orders", null, null, null);
+        HttpSpec missingFields = new HttpSpec("/orders", HttpMethod.GET, null, null, null, null, List.of(), null);
+        assertThatThrownBy(() -> WizardGenerator.generate(httpForm(missingFields, table, false), endpoints))
+                .hasMessageContaining("字段");
+
+        HttpSpec unknownKey = new HttpSpec("/orders", HttpMethod.GET, null, null, null, null,
+                List.of(new HttpField("id", "bigint", null)), List.of("missing"));
+        assertThatThrownBy(() -> WizardGenerator.generate(httpForm(unknownKey, table, false), endpoints))
+                .hasMessageContaining("主键");
+
+        HttpSpec relativePath = new HttpSpec("/orders", HttpMethod.GET, null, null, null, "$",
+                List.of(new HttpField("id", "bigint", "bad path")), null);
+        assertThatThrownBy(() -> WizardGenerator.generate(httpForm(relativePath, table, false), endpoints))
+                .hasMessageContaining("jsonPath 必须以 $ 开头");
+
+        HttpPaging cursorBody = new HttpPaging(HttpPagingMode.CURSOR, null, HttpPageLocation.BODY, null, null, null,
+                null, "cursor", "$.next");
+        HttpSpec invalidCursor = new HttpSpec("/orders", HttpMethod.GET, null, null, cursorBody, null,
+                List.of(new HttpField("id", "bigint", null)), null);
+        assertThatThrownBy(() -> WizardGenerator.generate(httpForm(invalidCursor, table, false), endpoints))
+                .hasMessageContaining("PARAMS");
     }
 }

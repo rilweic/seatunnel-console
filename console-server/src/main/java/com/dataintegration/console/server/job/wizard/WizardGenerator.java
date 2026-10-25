@@ -6,12 +6,20 @@ import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.ValidationSpec.Mode;
 import com.dataintegration.console.server.job.ValidationSpec.Side;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpField;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpPageLocation;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpPaging;
+import com.dataintegration.console.server.job.wizard.WizardForm.HttpSpec;
 import com.dataintegration.console.server.job.wizard.WizardForm.NameRule;
 import com.dataintegration.console.server.job.wizard.WizardForm.SchemaMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.SyncMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
 import com.dataintegration.console.server.job.wizard.WizardForm.Window;
 import com.dataintegration.console.server.job.wizard.WizardForm.WriteMode;
+
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -40,8 +48,30 @@ public final class WizardGenerator {
     public static final String MYSQL = "MYSQL";
     public static final String POSTGRESQL = "POSTGRESQL";
     public static final String ELASTICSEARCH = "ELASTICSEARCH";
+    public static final String HTTP = "HTTP";
 
     private static final Pattern RAW_VALUE = Pattern.compile("-?\\d+(\\.\\d+)?|true|false|\\[.*]|\\{.*}", Pattern.DOTALL);
+    private static final Pattern BARE_KEY = Pattern.compile("[A-Za-z0-9_-]+");
+    private static final Set<String> HTTP_FIELD_TYPES = Set.of("STRING", "BIGINT", "DOUBLE", "BOOLEAN", "DATE", "TIMESTAMP", "DECIMAL");
+    private static final Set<String> HTTP_SOURCE_OPTIONS = Set.of(
+            "retry", "retry_backoff_multiplier_ms", "retry_backoff_max_ms", "json_filed_missed_return_null");
+    /**
+     * Options the wizard writes itself or takes from the datasource, so advanced options may not set
+     * them: written after the generated ones, they would win (mirrors {@code HANDLED} in JobWizard.vue).
+     */
+    private static final Set<String> GENERATED_JDBC_SOURCE_OPTIONS = Set.of(
+            "datasource_id", "plugin_output", "url", "driver", "username", "password",
+            "table_path", "table_list", "query", "where_condition", "parallelism");
+    private static final Set<String> GENERATED_SINK_OPTIONS = Set.of(
+            "datasource_id", "plugin_input", "url", "driver", "username", "password", "hosts",
+            "database", "table", "index", "generate_sink_sql", "enable_upsert", "primary_keys",
+            "schema_save_mode", "data_save_mode", "tablePrefix", "tableSuffix");
+    /** Declared length of a string primary key from an HTTP source, so it becomes VARCHAR(255). */
+    private static final int HTTP_STRING_KEY_LENGTH = 255;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /** The params and body of an HTTP source request, paging applied. */
+    public record HttpRequestParts(Map<String, String> params, String body) {}
 
     /**
      * @param sourceDatabase PostgreSQL database of the source datasource (part of table_path); null for MySQL
@@ -71,25 +101,20 @@ public final class WizardGenerator {
 
     public static Generated generate(WizardForm form, Endpoints endpoints) {
         requireShape(form, endpoints);
+        boolean http = HTTP.equals(endpoints.sourceType());
         boolean es = ELASTICSEARCH.equals(endpoints.targetType());
+        boolean upsert = form.target().writeMode() == WriteMode.UPSERT
+                && (!http || form.source().http().primaryKeys() != null && !form.source().http().primaryKeys().isEmpty());
         StringBuilder hocon = new StringBuilder();
         hocon.append("# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑\n");
-        hocon.append("env {\n  job.mode = \"BATCH\"\n  parallelism = ").append(Math.max(1, form.parallelism())).append("\n}\n\n");
+        hocon.append("env {\n  job.mode = \"BATCH\"\n  parallelism = ")
+                .append(http ? 1 : Math.max(1, form.parallelism())).append("\n}\n\n");
 
-        hocon.append("source {\n  Jdbc {\n");
-        hocon.append("    datasource_id = ").append(str(form.source().datasourceId())).append('\n');
-        hocon.append("    table_list = [\n");
-        for (TableSpec table : form.source().tables()) {
-            hocon.append("      { table_path = ").append(str(tablePath(form, endpoints, table.name())));
-            String query = sourceQuery(form, endpoints, table, false);
-            if (query != null) {
-                hocon.append(", query = ").append(str(query));
-            }
-            hocon.append(" }\n");
+        if (http) {
+            appendHttpSource(hocon, form, es);
+        } else {
+            appendJdbcSource(hocon, form, endpoints);
         }
-        hocon.append("    ]\n");
-        appendOptions(hocon, form.sourceOptions());
-        hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
         String sinkInput = appendTransforms(hocon, form, endpoints, es);
 
         hocon.append("sink {\n");
@@ -97,7 +122,7 @@ public final class WizardGenerator {
             hocon.append("  Elasticsearch {\n");
             hocon.append("    datasource_id = ").append(str(form.target().datasourceId())).append('\n');
             hocon.append("    index = \"${table_name}\"\n");
-            if (form.target().writeMode() == WriteMode.UPSERT) {
+            if (upsert) {
                 hocon.append("    primary_keys = [\"${primary_key}\"]\n");
             }
         } else {
@@ -112,17 +137,236 @@ public final class WizardGenerator {
                 hocon.append("    table = ").append(str(name)).append('\n');
             }
             hocon.append("    generate_sink_sql = true\n");
-            hocon.append("    enable_upsert = ").append(form.target().writeMode() == WriteMode.UPSERT).append('\n');
+            hocon.append("    enable_upsert = ").append(upsert).append('\n');
         }
         hocon.append("    schema_save_mode = ").append(str(form.target().schemaMode() == SchemaMode.ERROR
                 ? "ERROR_WHEN_SCHEMA_NOT_EXIST" : "CREATE_SCHEMA_WHEN_NOT_EXIST")).append('\n');
         hocon.append("    data_save_mode = ").append(str(form.target().dataMode() == DataMode.CLEAR ? "DROP_DATA" : "APPEND_DATA")).append('\n');
-        appendOptions(hocon, form.sinkOptions());
+        appendOptions(hocon, form.sinkOptions(), GENERATED_SINK_OPTIONS);
         hocon.append("    plugin_input = [").append(str(sinkInput)).append("]\n  }\n}\n");
 
         List<String> notes = new ArrayList<>();
-        ValidationSpec validation = form.validation() ? validation(form, endpoints, notes) : null;
+        if (http) {
+            notes.add("HTTP 接口无法计数，不做行数校验");
+        }
+        ValidationSpec validation = !http && form.validation() ? validation(form, endpoints, notes) : null;
         return new Generated(hocon.toString(), validation, notes);
+    }
+
+    private static void appendJdbcSource(StringBuilder hocon, WizardForm form, Endpoints endpoints) {
+        hocon.append("source {\n  Jdbc {\n");
+        hocon.append("    datasource_id = ").append(str(form.source().datasourceId())).append('\n');
+        hocon.append("    table_list = [\n");
+        for (TableSpec table : form.source().tables()) {
+            hocon.append("      { table_path = ").append(str(tablePath(form, endpoints, table)));
+            String query = sourceQuery(form, endpoints, table, false);
+            if (query != null) {
+                hocon.append(", query = ").append(str(query));
+            }
+            hocon.append(" }\n");
+        }
+        hocon.append("    ]\n");
+        appendOptions(hocon, form.sourceOptions(), GENERATED_JDBC_SOURCE_OPTIONS);
+        hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
+    }
+
+    private static void appendHttpSource(StringBuilder hocon, WizardForm form, boolean es) {
+        TableSpec table = form.source().tables().get(0);
+        HttpSpec http = form.source().http();
+        HttpPaging paging = http.paging();
+        HttpRequestParts request = httpRequestParts(http.params(), http.body(), paging, null);
+        Map<String, String> params = request.params();
+        String body = request.body();
+
+        hocon.append("source {\n  Http {\n");
+        hocon.append("    datasource_id = ").append(str(form.source().datasourceId())).append('\n');
+        hocon.append("    url = ").append(str(http.path().trim())).append('\n');
+        hocon.append("    method = ").append(str(http.method().name())).append('\n');
+        if (!params.isEmpty()) {
+            appendStringMap(hocon, "params", params);
+        }
+        if (notBlank(body)) {
+            hocon.append("    body = ").append(str(body)).append('\n');
+        }
+        hocon.append("    format = \"json\"\n");
+        if (form.sourceOptions() == null || !form.sourceOptions().containsKey("json_filed_missed_return_null")) {
+            hocon.append("    json_filed_missed_return_null = true\n");
+        }
+        List<HttpField> fields = httpFields(form, table);
+        boolean extractRows = fields.stream().anyMatch(f -> notBlank(f.jsonPath()))
+                || notBlank(http.contentField()) && !"$".equals(http.contentField().trim());
+        if (extractRows) {
+            Map<String, String> jsonFields = new LinkedHashMap<>();
+            fields.forEach(f -> jsonFields.put(f.name(), httpJsonPath(http.contentField(), f)));
+            appendStringMap(hocon, "json_field", jsonFields);
+        }
+        hocon.append("    schema = {\n");
+        hocon.append("      table = ").append(str(targetName(form, table, es))).append('\n');
+        List<String> primaryKeys = http.primaryKeys() == null ? List.of() : http.primaryKeys().stream().map(String::trim).toList();
+        if (primaryKeys.isEmpty()) {
+            hocon.append("      fields {\n");
+            fields.forEach(f -> hocon.append("        ").append(key(f.name())).append(" = ").append(httpFieldType(f)).append('\n'));
+            hocon.append("      }\n");
+        } else {
+            // schema.fields makes every column nullable, and MySQL / PostgreSQL refuse a nullable
+            // primary key when the target table is created; a string key also needs a length, or
+            // MySQL makes it LONGTEXT, which cannot be a key.
+            hocon.append("      columns = [\n");
+            fields.forEach(f -> {
+                boolean key = primaryKeys.contains(f.name());
+                hocon.append("        { name = ").append(str(f.name())).append(", type = ").append(httpFieldType(f));
+                if (key && "STRING".equalsIgnoreCase(f.type().trim())) {
+                    hocon.append(", columnLength = ").append(HTTP_STRING_KEY_LENGTH);
+                }
+                hocon.append(", nullable = ").append(!key).append(" }\n");
+            });
+            hocon.append("      ]\n");
+        }
+        if (!primaryKeys.isEmpty()) {
+            hocon.append("      primaryKey {\n        name = \"http_pk\"\n        columnNames = [")
+                    .append(String.join(", ", http.primaryKeys().stream().map(String::trim).map(WizardGenerator::str).toList()))
+                    .append("]\n      }\n");
+        }
+        hocon.append("    }\n");
+        if (paging != null && (paging.mode() == WizardForm.HttpPagingMode.CURSOR
+                || paging.mode() == WizardForm.HttpPagingMode.PAGE_NUMBER && paging.pageLocation() != HttpPageLocation.BODY)) {
+            hocon.append("    keep_page_param_as_http_param = true\n");
+        }
+        if (paging != null && paging.mode() != WizardForm.HttpPagingMode.NONE) {
+            hocon.append("    pageing = {\n");
+            switch (paging.mode()) {
+                case PAGE_NUMBER -> {
+                    hocon.append("      page_type = \"PageNumber\"\n");
+                    hocon.append("      page_field = ").append(str(paging.pageField().trim())).append('\n');
+                    hocon.append("      start_page_number = ").append(paging.startPageNumber()).append('\n');
+                    hocon.append("      batch_size = ").append(paging.pageSize()).append('\n');
+                    if (paging.totalPageSize() != null) {
+                        hocon.append("      total_page_size = ").append(paging.totalPageSize()).append('\n');
+                    }
+                }
+                case CURSOR -> {
+                    hocon.append("      page_type = \"Cursor\"\n");
+                    hocon.append("      cursor_field = ").append(str(paging.cursorField().trim())).append('\n');
+                    hocon.append("      cursor_response_field = ").append(str(paging.cursorResponseField().trim())).append('\n');
+                }
+                case NONE -> {}
+            }
+            hocon.append("      use_placeholder_replacement = true\n    }\n");
+        }
+        appendHttpOptions(hocon, form.sourceOptions());
+        hocon.append("    plugin_output = \"source\"\n  }\n}\n\n");
+    }
+
+    private static void appendHttpOptions(StringBuilder hocon, Map<String, String> options) {
+        if (options != null) {
+            options.forEach((key, value) -> {
+                if (key != null && !key.isBlank() && value != null && !value.isBlank()
+                        && !HTTP_SOURCE_OPTIONS.contains(key.trim())) {
+                    throw invalid("不支持的 HTTP 高级参数：" + key);
+                }
+            });
+        }
+        appendOptions(hocon, options);
+    }
+
+    private static String httpFieldType(HttpField field) {
+        String type = field.type().trim().toUpperCase(Locale.ROOT);
+        if (!HTTP_FIELD_TYPES.contains(type)) {
+            throw invalid("HTTP 字段 " + field.name() + " 的类型不支持：" + field.type());
+        }
+        if (!"DECIMAL".equals(type)) {
+            return field.type().trim();
+        }
+        int precision = field.precision() == null ? 18 : field.precision();
+        int scale = field.scale() == null ? 2 : field.scale();
+        if (precision < 1 || precision > 38 || scale < 0 || scale > precision) {
+            throw invalid("HTTP 字段 " + field.name() + "：小数总位数要在 1～38 之间，小数位不能超过总位数");
+        }
+        return str("decimal(" + precision + "," + scale + ")");
+    }
+
+    private static String httpJsonPath(String contentField, HttpField field) {
+        if (notBlank(field.jsonPath()) && field.jsonPath().contains("[*]")) {
+            return field.jsonPath().trim();
+        }
+        String prefix = notBlank(contentField) ? contentField.trim() : "$";
+        String relative = notBlank(field.jsonPath()) ? field.jsonPath().trim() : field.name();
+        if (relative.startsWith("$")) {
+            relative = relative.substring(1);
+        }
+        if (relative.startsWith(".")) {
+            relative = relative.substring(1);
+        }
+        return prefix + "[*]" + (relative.startsWith("[") ? relative : "." + relative);
+    }
+
+    /**
+     * Applies paging to the request params and body. Shared by the generated config and the preview,
+     * so both send the same request.
+     *
+     * @param page value of the page field: null writes the connector's {@code ${page}} placeholder,
+     *     the preview passes the first page number
+     */
+    static HttpRequestParts httpRequestParts(Map<String, String> params, String body, HttpPaging paging, String page) {
+        Map<String, String> result = params == null ? new LinkedHashMap<>() : new LinkedHashMap<>(params);
+        String resultBody = body;
+        if (paging != null && paging.mode() != null) {
+            switch (paging.mode()) {
+                case PAGE_NUMBER -> {
+                    String pageValue = page == null ? "${page}" : page;
+                    if (paging.pageLocation() == HttpPageLocation.BODY) {
+                        resultBody = pagedBody(body, paging, pageValue);
+                    } else {
+                        result.put(paging.pageField().trim(), pageValue);
+                        result.put(paging.pageSizeField().trim(), String.valueOf(paging.pageSize()));
+                    }
+                }
+                case CURSOR -> {
+                    if (paging.cursorField() != null) {
+                        result.remove(paging.cursorField().trim());
+                    }
+                }
+                case NONE -> {}
+            }
+        }
+        return new HttpRequestParts(result, resultBody);
+    }
+
+    /** A cursor response field as Jayway reads it: a bare name is a field of the root. */
+    static String cursorPath(String field) {
+        String text = field == null ? "" : field.trim();
+        return text.startsWith("$") ? text : "$." + text;
+    }
+
+    private static String pagedBody(String body, HttpPaging paging, String page) {
+        JsonNode parsed;
+        try {
+            parsed = OBJECT_MAPPER.readTree(notBlank(body) ? body : "{}");
+        } catch (RuntimeException e) {
+            throw invalid("分页 Body 必须是有效的 JSON 对象");
+        }
+        if (!(parsed instanceof ObjectNode object)) {
+            throw invalid("分页 Body 必须是 JSON 对象");
+        }
+        object.put(paging.pageField().trim(), page);
+        object.put(paging.pageSizeField().trim(), paging.pageSize());
+        return OBJECT_MAPPER.writeValueAsString(object);
+    }
+
+    private static void appendStringMap(StringBuilder hocon, String name, Map<String, String> values) {
+        hocon.append("    ").append(name).append(" = {\n");
+        values.forEach((key, value) -> hocon.append("      ").append(key(key)).append(" = ").append(str(value)).append('\n'));
+        hocon.append("    }\n");
+    }
+
+    private static List<HttpField> httpFields(WizardForm form, TableSpec table) {
+        List<HttpField> fields = form.source().http().fields();
+        if (table.allColumns()) {
+            return fields;
+        }
+        Map<String, HttpField> byName = new LinkedHashMap<>();
+        fields.forEach(f -> byName.put(f.name(), f));
+        return table.columns().stream().map(byName::get).toList();
     }
 
     /**
@@ -132,6 +376,7 @@ public final class WizardGenerator {
      * sink reads.
      */
     private static String appendTransforms(StringBuilder hocon, WizardForm form, Endpoints endpoints, boolean es) {
+        boolean http = HTTP.equals(endpoints.sourceType());
         Map<String, List<String>> json = new LinkedHashMap<>();
         Map<String, List<String>> regex = new LinkedHashMap<>();
         Map<String, List<String>> split = new LinkedHashMap<>();
@@ -140,10 +385,11 @@ public final class WizardGenerator {
         Map<String, Map<String, String>> fieldRenames = new LinkedHashMap<>();
         Map<String, String> tableRenames = new LinkedHashMap<>();
         for (TableSpec table : form.source().tables()) {
-            String path = tablePath(form, endpoints, table.name());
+            String path = tablePath(form, endpoints, table);
             List<String> synced = syncedColumns(form, endpoints, table);
             if (table.processed()) {
-                if (table.allColumns() && (endpoints.sourceColumns() == null || !endpoints.sourceColumns().containsKey(table.name()))) {
+                if (!http && table.allColumns()
+                        && (endpoints.sourceColumns() == null || !endpoints.sourceColumns().containsKey(table.name()))) {
                     throw invalid(table.name() + "：读不到源表的字段，无法生成字段处理");
                 }
                 String jsonOptions = FieldProcessing.jsonPathOptions(table);
@@ -170,7 +416,7 @@ public final class WizardGenerator {
                 fieldRenames.put(path, fields);
             }
             String target = targetName(form, table, es);
-            if (!target.equals(table.name())) {
+            if (!http && !target.equals(table.name())) {
                 tableRenames.put(path, target);
             }
         }
@@ -244,6 +490,9 @@ public final class WizardGenerator {
         if (!table.allColumns()) {
             return table.columns();
         }
+        if (HTTP.equals(endpoints.sourceType())) {
+            return form.source().http().fields().stream().map(HttpField::name).toList();
+        }
         List<String> known = endpoints.sourceColumns() == null ? null : endpoints.sourceColumns().get(table.name());
         if (known != null) {
             return known;
@@ -253,7 +502,8 @@ public final class WizardGenerator {
 
     /** True when the table's field names follow a rule or its values are processed, so its full column list is needed. */
     public static boolean needsColumns(WizardForm form, TableSpec table) {
-        return table.allColumns() && (table.fieldRule() != null || form.fieldRule() != null || table.processed());
+        return form.source().http() == null
+                && table.allColumns() && (table.fieldRule() != null || form.fieldRule() != null || table.processed());
     }
 
     private static void putIfRenamed(Map<String, String> renames, String from, String to) {
@@ -393,8 +643,9 @@ public final class WizardGenerator {
         if (form == null || form.source() == null || form.target() == null || form.sync() == null) {
             throw invalid("向导表单不完整");
         }
-        if (!MYSQL.equals(endpoints.sourceType()) && !POSTGRESQL.equals(endpoints.sourceType())) {
-            throw invalid("向导的源端只支持 MySQL 和 PostgreSQL");
+        boolean http = HTTP.equals(endpoints.sourceType());
+        if (!http && !MYSQL.equals(endpoints.sourceType()) && !POSTGRESQL.equals(endpoints.sourceType())) {
+            throw invalid("向导的源端只支持 MySQL、PostgreSQL 和 HTTP");
         }
         if (!List.of(MYSQL, POSTGRESQL, ELASTICSEARCH).contains(endpoints.targetType())) {
             throw invalid("向导的目标端只支持 MySQL、PostgreSQL 和 Elasticsearch");
@@ -402,7 +653,10 @@ public final class WizardGenerator {
         if (form.source().tables() == null || form.source().tables().isEmpty()) {
             throw invalid("请至少选择一张源表");
         }
-        if (!notBlank(form.source().namespace())) {
+        if (http && form.source().tables().size() != 1) {
+            throw invalid("HTTP 任务只能配置一个接口");
+        }
+        if (!http && !notBlank(form.source().namespace())) {
             throw invalid("请选择源端的库或 schema");
         }
         if (!ELASTICSEARCH.equals(endpoints.targetType()) && !notBlank(form.target().namespace())) {
@@ -419,7 +673,9 @@ public final class WizardGenerator {
         if (form.sync().mode() == null) {
             throw invalid("请选择同步方式");
         }
-        if (form.sync().mode() == SyncMode.INCREMENTAL) {
+        if (http) {
+            requireHttpShape(form);
+        } else if (form.sync().mode() == SyncMode.INCREMENTAL) {
             if (form.sync().window() == null) {
                 throw invalid("请选择增量的时间窗口");
             }
@@ -436,10 +692,93 @@ public final class WizardGenerator {
         }
     }
 
-    private static String tablePath(WizardForm form, Endpoints endpoints, String table) {
+    private static void requireHttpShape(WizardForm form) {
+        HttpSpec http = form.source().http();
+        if (http == null || !notBlank(http.path()) || http.method() == null) {
+            throw invalid("请填写 HTTP 接口路径并选择请求方法");
+        }
+        if (http.params() != null) {
+            http.params().forEach((name, value) -> {
+                if (!notBlank(name) || value == null) {
+                    throw invalid("HTTP 参数名和值不能为空");
+                }
+            });
+        }
+        if (http.fields() == null || http.fields().isEmpty()) {
+            throw invalid("请至少选择一个 HTTP 响应字段");
+        }
+        Map<String, HttpField> fields = new LinkedHashMap<>();
+        for (HttpField field : http.fields()) {
+            if (field == null || !notBlank(field.name()) || !notBlank(field.type())) {
+                throw invalid("HTTP 字段名和类型不能为空");
+            }
+            httpFieldType(field);
+            if (notBlank(field.jsonPath()) && !field.jsonPath().trim().startsWith("$")) {
+                throw invalid("HTTP 字段 " + field.name() + " 的 jsonPath 必须以 $ 开头");
+            }
+            if (fields.putIfAbsent(field.name(), field) != null) {
+                throw invalid("HTTP 字段重复：" + field.name());
+            }
+        }
+        TableSpec table = form.source().tables().get(0);
+        List<String> synced = table.allColumns() ? List.copyOf(fields.keySet()) : table.columns();
+        for (String column : synced) {
+            if (!fields.containsKey(column)) {
+                throw invalid("HTTP 同步字段不存在：" + column);
+            }
+        }
+        if (http.primaryKeys() != null) {
+            for (String primaryKey : http.primaryKeys()) {
+                if (!notBlank(primaryKey) || !synced.contains(primaryKey)) {
+                    throw invalid("HTTP 主键必须属于同步字段");
+                }
+            }
+        }
+        HttpPaging paging = http.paging();
+        if (paging == null) {
+            return;
+        }
+        if (paging.mode() == null) {
+            throw invalid("请选择 HTTP 分页方式");
+        }
+        switch (paging.mode()) {
+            case PAGE_NUMBER -> {
+                if (!notBlank(paging.pageField()) || paging.pageLocation() == null
+                        || paging.startPageNumber() == null || paging.startPageNumber() < 0
+                        || !notBlank(paging.pageSizeField()) || paging.pageSize() == null || paging.pageSize() <= 0) {
+                    throw invalid("请完整填写 HTTP 页码分页参数");
+                }
+                if (paging.pageField().trim().equals(paging.pageSizeField().trim())) {
+                    throw invalid("HTTP 页码和每页条数不能使用同一个参数名");
+                }
+                if (paging.totalPageSize() != null && paging.totalPageSize() < 0) {
+                    throw invalid("HTTP 总页数不能为负数");
+                }
+            }
+            case CURSOR -> {
+                if (paging.pageLocation() == HttpPageLocation.BODY) {
+                    throw invalid("HTTP 游标分页只支持 PARAMS");
+                }
+                if (!notBlank(paging.cursorField()) || !notBlank(paging.cursorResponseField())) {
+                    throw invalid("请完整填写 HTTP 游标分页参数");
+                }
+                try {
+                    HttpJsonPath.requireValid(cursorPath(paging.cursorResponseField()));
+                } catch (ConsoleException e) {
+                    throw invalid("HTTP 游标响应字段的路径不合法：" + paging.cursorResponseField());
+                }
+            }
+            case NONE -> {}
+        }
+    }
+
+    private static String tablePath(WizardForm form, Endpoints endpoints, TableSpec table) {
+        if (HTTP.equals(endpoints.sourceType())) {
+            return targetName(form, table, ELASTICSEARCH.equals(endpoints.targetType()));
+        }
         return POSTGRESQL.equals(endpoints.sourceType())
-                ? endpoints.sourceDatabase() + "." + form.source().namespace() + "." + table
-                : form.source().namespace() + "." + table;
+                ? endpoints.sourceDatabase() + "." + form.source().namespace() + "." + table.name()
+                : form.source().namespace() + "." + table.name();
     }
 
     static String qualified(String dbType, String namespace, String table) {
@@ -453,6 +792,17 @@ public final class WizardGenerator {
     }
 
     /** Advanced options: numbers, booleans, lists and objects written as-is, everything else quoted. */
+    private static void appendOptions(StringBuilder hocon, Map<String, String> options, Set<String> generated) {
+        if (options != null) {
+            options.forEach((key, value) -> {
+                if (key != null && value != null && !value.isBlank() && generated.contains(key.trim())) {
+                    throw invalid("高级参数不能设置由向导生成的 " + key.trim());
+                }
+            });
+        }
+        appendOptions(hocon, options);
+    }
+
     private static void appendOptions(StringBuilder hocon, Map<String, String> options) {
         if (options == null) {
             return;
@@ -464,6 +814,10 @@ public final class WizardGenerator {
             String v = value.trim();
             hocon.append("    ").append(key.trim()).append(" = ").append(RAW_VALUE.matcher(v).matches() ? v : str(v)).append('\n');
         });
+    }
+
+    private static String key(String value) {
+        return BARE_KEY.matcher(value).matches() ? value : str(value);
     }
 
     /** A HOCON quoted string; the text inside is never substituted by HOCON. */

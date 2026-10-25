@@ -130,6 +130,11 @@ public class JobController {
         return Result.ok(jobService.wizardPrecheck(id, body.form(), body.params()));
     }
 
+    @PostMapping("/{id}/wizard/http-preview")
+    public Result<WizardService.HttpPreviewResult> httpPreview(@PathVariable String id, @RequestBody WizardRequest body) {
+        return Result.ok(jobService.httpPreview(id, body.form(), body.params()));
+    }
+
     @PostMapping("/{id}/switch-to-script")
     public Result<JobView> switchToScript(@PathVariable String id) {
         return Result.ok(jobService.switchToScript(id));

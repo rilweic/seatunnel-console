@@ -87,7 +87,7 @@ export const projectApi = {
   saveParams: (id: string, items: ParamItem[]) => put<ParamItem[]>(`/projects/${id}/params`, items),
 }
 
-export type DatasourceType = 'MYSQL' | 'POSTGRESQL' | 'ELASTICSEARCH'
+export type DatasourceType = 'MYSQL' | 'POSTGRESQL' | 'ELASTICSEARCH' | 'HTTP'
 
 export interface DatasourceView extends Owned {
   id: string
@@ -232,8 +232,43 @@ export interface AddedField {
   scale?: number | null
 }
 
+export interface HttpSourceField {
+  name: string
+  type: string
+  jsonPath?: string | null
+  precision?: number | null
+  scale?: number | null
+}
+
+export interface HttpSourceSpec {
+  path: string
+  method: 'GET' | 'POST'
+  params?: Record<string, string>
+  body?: string | null
+  paging?: {
+    mode: 'NONE' | 'PAGE_NUMBER' | 'CURSOR'
+    pageField?: string | null
+    pageLocation?: 'PARAMS' | 'BODY' | null
+    startPageNumber?: number | null
+    pageSizeField?: string | null
+    pageSize?: number | null
+    totalPageSize?: number | null
+    cursorField?: string | null
+    cursorResponseField?: string | null
+  } | null
+  contentField?: string | null
+  fields: HttpSourceField[]
+  primaryKeys?: string[] | null
+}
+
+export interface HttpPreviewResult {
+  statusCode: number
+  elapsedMillis: number
+  body: string
+}
+
 export interface WizardForm {
-  source: { datasourceId: string; namespace: string; tables: WizardTable[] }
+  source: { datasourceId: string; namespace: string; tables: WizardTable[]; http?: HttpSourceSpec | null }
   target: {
     datasourceId: string
     namespace?: string | null
@@ -342,6 +377,8 @@ export const jobApi = {
   ) => post<VersionDetail>(`/jobs/${id}/versions`, body, LONG_TIMEOUT.check),
   wizardPrecheck: (id: string, body: { form: WizardForm; params?: Record<string, string> }) =>
     post<PrecheckResult>(`/jobs/${id}/wizard/precheck`, body, LONG_TIMEOUT.check),
+  httpPreview: (id: string, body: { form: WizardForm; params?: Record<string, string> }) =>
+    post<HttpPreviewResult>(`/jobs/${id}/wizard/http-preview`, body, LONG_TIMEOUT.check),
   switchToScript: (id: string) => post<JobView>(`/jobs/${id}/switch-to-script`),
   checkScript: (id: string, body: { hocon: string; params?: Record<string, string> }) =>
     post<PrecheckResult['checks']>(`/jobs/${id}/check`, body, LONG_TIMEOUT.check),

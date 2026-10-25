@@ -1,7 +1,10 @@
 package com.dataintegration.console.server.job.wizard;
 
 import com.dataintegration.console.common.ConsoleException;
+import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.datasource.CountRequest;
+import com.dataintegration.console.datasource.http.HttpPreviewRequest;
+import com.dataintegration.console.datasource.http.HttpPreviewResponse;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.server.datasource.DatasourceService;
@@ -16,6 +19,11 @@ import com.dataintegration.console.server.job.wizard.WizardGenerator.Endpoints;
 import com.dataintegration.console.server.job.wizard.WizardGenerator.Generated;
 
 import org.springframework.stereotype.Service;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -58,6 +66,8 @@ public class WizardService {
     }
 
     private static final Duration CHECK_TIMEOUT = Duration.ofSeconds(30);
+    private static final ObjectMapper JSON = JsonMapper.builder().build();
+    private static final Pattern HTTP_BARE_FIELD = Pattern.compile("[A-Za-z0-9_-]+");
 
     /**
      * Characters a target table or field name may not hold: dots and quotes would break table
@@ -74,6 +84,47 @@ public class WizardService {
         this.encryptKeys = encryptKeys;
     }
 
+    public record HttpPreviewResult(int statusCode, long elapsedMillis, String body) {}
+
+    /** Sends the first page exactly as the wizard is currently configured. */
+    public HttpPreviewResult previewHttp(WizardForm form, Map<String, String> variables) {
+        HttpPreviewResponse response = executeHttp(form, variables);
+        return new HttpPreviewResult(response.status(), response.elapsedMillis(), response.body());
+    }
+
+    private HttpPreviewResponse executeHttp(WizardForm form, Map<String, String> variables) {
+        if (form.source() == null || form.source().http() == null) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "请选择 HTTP 来源并填写请求");
+        }
+        WizardForm.HttpSpec http = form.source().http();
+        LocalDateTime now = LocalDateTime.now();
+        Map<String, String> values = variables == null ? Map.of() : variables;
+        Map<String, String> params = new LinkedHashMap<>();
+        if (http.params() != null) {
+            http.params().forEach((key, value) -> {
+                if (key != null && !key.isBlank() && value != null) {
+                    params.put(key.trim(), Variables.render(value, values, now));
+                }
+            });
+        }
+        String body = http.body() == null ? null : Variables.render(http.body(), values, now);
+        WizardForm.HttpPaging paging = http.paging();
+        String firstPage = null;
+        if (paging != null && paging.mode() == WizardForm.HttpPagingMode.PAGE_NUMBER) {
+            if (paging.pageField() == null || paging.pageField().isBlank()
+                    || paging.pageSizeField() == null || paging.pageSizeField().isBlank() || paging.pageSize() == null) {
+                throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "请完整填写页码和每页条数字段");
+            }
+            firstPage = String.valueOf(paging.startPageNumber() == null ? 1 : paging.startPageNumber());
+        }
+        // the same assembly as the generated config, with the first page in place of ${page}
+        WizardGenerator.HttpRequestParts request = WizardGenerator.httpRequestParts(params, body, paging, firstPage);
+        String path = http.path() == null ? null : Variables.render(http.path(), values, now);
+        return datasourceService.previewHttp(
+                form.source().datasourceId(),
+                new HttpPreviewRequest(path, http.method() == null ? "GET" : http.method().name(), request.params(), request.body()));
+    }
+
     public Endpoints endpoints(WizardForm form) {
         String sourceType = datasourceService.typeOf(form.source().datasourceId());
         String targetType = datasourceService.typeOf(form.target().datasourceId());
@@ -81,7 +132,9 @@ public class WizardService {
         Map<String, List<String>> sourceColumns = new LinkedHashMap<>();
         if (form.source().tables() != null) {
             for (TableSpec table : form.source().tables()) {
-                if (WizardGenerator.needsColumns(form, table)) {
+                if (WizardGenerator.HTTP.equals(sourceType) && form.source().http() != null) {
+                    sourceColumns.put(table.name(), form.source().http().fields().stream().map(WizardForm.HttpField::name).toList());
+                } else if (WizardGenerator.needsColumns(form, table)) {
                     try {
                         sourceColumns.put(table.name(), datasourceService.columns(
                                 form.source().datasourceId(), form.source().namespace(), table.name()).stream().map(ColumnMeta::name).toList());
@@ -133,6 +186,9 @@ public class WizardService {
     /** Returns the selected columns of every source table that exists, or null when the source is unusable. */
     private Map<String, List<ColumnMeta>> checkSource(
             WizardForm form, Endpoints endpoints, Map<String, String> variables, List<Check> checks) {
+        if (WizardGenerator.HTTP.equals(endpoints.sourceType())) {
+            return checkHttpSource(form, variables, checks);
+        }
         String ds = form.source().datasourceId();
         Map<String, TableMeta> tables;
         try {
@@ -194,6 +250,108 @@ public class WizardService {
             checkQuery(form, endpoints, table, variables, checks);
             List<ColumnMeta> synced = table.allColumns() ? columns : table.columns().stream().map(byName::get).toList();
             checkProcessing(table, synced, meta.primaryKeys(), checks);
+            if (!FieldProcessing.encryptedFields(table, synced.stream().map(ColumnMeta::name).toList()).isEmpty()
+                    && table.encryptKeyId() != null && !table.encryptKeyId().isBlank()) {
+                try {
+                    encryptKeys.requireUsable(table.encryptKeyId());
+                } catch (ConsoleException e) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：" + e.getMessage()));
+                }
+            }
+            selected.put(table.name(), synced);
+        }
+        return selected;
+    }
+
+    private Map<String, List<ColumnMeta>> checkHttpSource(
+            WizardForm form, Map<String, String> variables, List<Check> checks) {
+        WizardForm.HttpSpec http = form.source().http();
+        HttpPreviewResponse response;
+        JsonNode root;
+        try {
+            response = executeHttp(form, variables);
+            if (response.status() < 200 || response.status() >= 300) {
+                checks.add(new Check(Level.ERROR, "HTTP 请求返回状态 " + response.status()));
+                return null;
+            }
+            root = JSON.readTree(response.body());
+        } catch (ConsoleException | JacksonException e) {
+            checks.add(new Check(Level.ERROR, "HTTP 请求或 JSON 解析失败：" + e.getMessage()));
+            return null;
+        }
+        List<JsonNode> records = new ArrayList<>();
+        try {
+            JsonNode content = HttpJsonPath.read(root, http.contentField());
+            if (content == null || !content.isArray()) {
+                checks.add(new Check(Level.ERROR, "content_field 没有取到 JSON 数组"));
+                return null;
+            }
+            content.forEach(record -> {
+                if (records.size() < 20) {
+                    records.add(record);
+                }
+            });
+            if (records.isEmpty()) {
+                checks.add(new Check(Level.WARN, "第一页的数据数组为空，只按已确认字段生成配置"));
+            }
+            for (WizardForm.HttpField field : http.fields()) {
+                boolean implicitPath = field.jsonPath() == null || field.jsonPath().isBlank();
+                if (implicitPath && !HTTP_BARE_FIELD.matcher(field.name()).matches()) {
+                    throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                            "HTTP 字段 " + field.name() + " 含特殊字符，请填写明确的 jsonPath");
+                }
+                if (!implicitPath && !field.jsonPath().trim().startsWith("$")) {
+                    throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                            "HTTP 字段 " + field.name() + " 的 jsonPath 必须以 $ 开头");
+                }
+                String path = implicitPath ? field.name() : field.jsonPath();
+                HttpJsonPath.requireValid(path);
+                if (!records.isEmpty() && records.stream().noneMatch(record -> HttpJsonPath.read(record, path) != null)) {
+                    checks.add(new Check(Level.ERROR, "前几条记录里找不到字段 " + field.name() + "（" + path + "）"));
+                }
+            }
+            WizardForm.HttpPaging paging = http.paging();
+            if (paging != null && paging.mode() == WizardForm.HttpPagingMode.CURSOR) {
+                JsonNode cursor = HttpJsonPath.read(root, WizardGenerator.cursorPath(paging.cursorResponseField()));
+                if (cursor == null || cursor.isNull() || cursor.isContainer() || cursor.asString().isBlank()) {
+                    checks.add(new Check(Level.WARN, "第一页的响应里没有取到游标（" + paging.cursorResponseField()
+                            + "），运行时只会读取这一页"));
+                }
+            }
+        } catch (ConsoleException e) {
+            checks.add(new Check(Level.ERROR, e.getMessage()));
+            return null;
+        }
+
+        List<String> primaryKeys = http.primaryKeys() == null ? List.of() : http.primaryKeys();
+        List<ColumnMeta> columns = http.fields().stream()
+                .map(field -> new ColumnMeta(field.name(), field.type(), true, primaryKeys.contains(field.name()),
+                        "DATE".equals(field.type()) || "TIMESTAMP".equals(field.type())))
+                .toList();
+        Map<String, ColumnMeta> byName = columns.stream().collect(Collectors.toMap(ColumnMeta::name, Function.identity()));
+        Map<String, List<ColumnMeta>> selected = new LinkedHashMap<>();
+        boolean full = form.sync().mode() == SyncMode.FULL;
+        for (TableSpec table : form.source().tables()) {
+            if (!table.allColumns()) {
+                List<String> missing = table.columns().stream().filter(c -> !byName.containsKey(c)).toList();
+                if (!missing.isEmpty()) {
+                    checks.add(new Check(Level.ERROR, table.name() + "：字段不存在 " + String.join(", ", missing)));
+                    continue;
+                }
+            }
+            if (primaryKeys.isEmpty()) {
+                if (form.target().writeMode() == WriteMode.UPSERT) {
+                    checks.add(new Check(Level.WARN, table.name() + "：没有主键，只能按追加方式写入"));
+                }
+                if (full && form.target().dataMode() == DataMode.KEEP) {
+                    checks.add(new Check(Level.WARN, table.name() + "：没有主键又保留已有数据，每次全量运行都会再写入一遍，造成重复"));
+                }
+            } else if (form.target().writeMode() == WriteMode.UPSERT && !table.allColumns()
+                    && !table.columns().containsAll(primaryKeys)) {
+                checks.add(new Check(Level.ERROR, table.name() + "：按主键更新需要同步全部主键字段"));
+            }
+            List<ColumnMeta> synced = table.allColumns() ? columns : table.columns().stream().map(byName::get).toList();
+            checkProcessing(table, synced, primaryKeys, checks);
             if (!FieldProcessing.encryptedFields(table, synced.stream().map(ColumnMeta::name).toList()).isEmpty()
                     && table.encryptKeyId() != null && !table.encryptKeyId().isBlank()) {
                 try {

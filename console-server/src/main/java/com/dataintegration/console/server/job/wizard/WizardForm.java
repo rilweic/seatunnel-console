@@ -39,7 +39,57 @@ public record WizardForm(
     /**
      * @param namespace database (MySQL) or schema (PostgreSQL) holding the tables
      */
-    public record Source(String datasourceId, String namespace, List<TableSpec> tables) {}
+    public record Source(String datasourceId, String namespace, List<TableSpec> tables, HttpSpec http) {
+
+        public Source(String datasourceId, String namespace, List<TableSpec> tables) {
+            this(datasourceId, namespace, tables, null);
+        }
+    }
+
+    /** One HTTP endpoint and the fields confirmed from its response preview (§7.13). */
+    public record HttpSpec(
+            String path,
+            HttpMethod method,
+            Map<String, String> params,
+            String body,
+            HttpPaging paging,
+            String contentField,
+            List<HttpField> fields,
+            List<String> primaryKeys) {}
+
+    public enum HttpMethod {
+        GET,
+        POST
+    }
+
+    public record HttpField(String name, String type, String jsonPath, Integer precision, Integer scale) {
+
+        public HttpField(String name, String type, String jsonPath) {
+            this(name, type, jsonPath, null, null);
+        }
+    }
+
+    public record HttpPaging(
+            HttpPagingMode mode,
+            String pageField,
+            HttpPageLocation pageLocation,
+            Long startPageNumber,
+            String pageSizeField,
+            Integer pageSize,
+            Long totalPageSize,
+            String cursorField,
+            String cursorResponseField) {}
+
+    public enum HttpPagingMode {
+        NONE,
+        PAGE_NUMBER,
+        CURSOR
+    }
+
+    public enum HttpPageLocation {
+        PARAMS,
+        BODY
+    }
 
     /**
      * @param columns columns to sync, in order; null or empty means all

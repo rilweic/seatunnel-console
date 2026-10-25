@@ -22,6 +22,7 @@ const props = defineProps<{
   columns: Record<string, ColumnMeta[]>
   loading: boolean
   es: boolean
+  http?: boolean
 }>()
 
 const tableSearch = ref('')
@@ -325,7 +326,7 @@ function timeFields(t: WizardTable) {
       </div>
 
       <div class="table-settings">
-        <label>过滤条件
+        <label v-if="!http">过滤条件
           <el-input v-model="table.filter" placeholder="可选，不含 where，如 status = 1；可以使用变量" class="code" clearable />
         </label>
         <label v-if="encrypts">加密密钥

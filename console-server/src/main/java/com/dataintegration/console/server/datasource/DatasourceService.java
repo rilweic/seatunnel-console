@@ -12,6 +12,9 @@ import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.datasource.DataSourcePlugin;
 import com.dataintegration.console.datasource.DataSourcePlugins;
+import com.dataintegration.console.datasource.http.HttpDataSourcePlugin;
+import com.dataintegration.console.datasource.http.HttpPreviewRequest;
+import com.dataintegration.console.datasource.http.HttpPreviewResponse;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.crypto.SecretCipher;
@@ -193,6 +196,16 @@ public class DatasourceService {
             plugin.secretKeys().forEach(key -> props.computeIfPresent(key, (k, v) -> "******"));
         }
         return plugin.toConnectorOptions(connector, props);
+    }
+
+    /** Sends one HTTP request with the saved credentials; the response is never persisted. */
+    public HttpPreviewResponse previewHttp(String datasourceId, HttpPreviewRequest request) {
+        DatasourceEntity entity = requireEditable(datasourceId);
+        if (!"HTTP".equals(entity.getType())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "HTTP preview requires an HTTP datasource");
+        }
+        HttpDataSourcePlugin plugin = (HttpDataSourcePlugin) plugins.get(entity.getType());
+        return plugin.preview(decryptedProps(entity), request);
     }
 
     /** Runs a validation count against the datasource with its real credentials. */

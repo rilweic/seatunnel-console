@@ -8,16 +8,22 @@ const props = withDefaults(
     path?: (string | number)[]
     collapsed: Set<string>
     comma?: boolean
+    selectableArrays?: boolean
+    selectedPath?: string
   }>(),
-  { path: () => [], comma: false },
+  { path: () => [], comma: false, selectableArrays: false, selectedPath: '' },
 )
 
-const emit = defineEmits<{ toggle: [path: string] }>()
+const emit = defineEmits<{
+  toggle: [path: string]
+  select: [path: (string | number)[]]
+}>()
 
 const pathKey = computed(() => JSON.stringify(props.path))
 const isContainer = computed(() => props.value !== null && typeof props.value === 'object')
 const isArray = computed(() => Array.isArray(props.value))
 const collapsedHere = computed(() => props.collapsed.has(pathKey.value))
+const selectedHere = computed(() => isArray.value && props.selectedPath === pathKey.value)
 const entries = computed<{ key: string | number; value: unknown }[]>(() => {
   if (isArray.value) return (props.value as unknown[]).map((value, key) => ({ key, value }))
   if (isContainer.value) return Object.entries(props.value as Record<string, unknown>).map(([key, value]) => ({ key, value }))
@@ -61,6 +67,16 @@ function childPath(key: string | number) {
         </template>
       </template>
       <span v-else class="json-value" :class="valueKind">{{ displayValue }}</span>
+      <el-button
+        v-if="selectableArrays && isArray"
+        link
+        size="small"
+        :type="selectedHere ? 'success' : 'primary'"
+        class="select-array"
+        @click.stop="emit('select', path)"
+      >
+        {{ selectedHere ? '已选为数据数组' : '选为数据数组' }}
+      </el-button>
       <span v-if="comma && (!isContainer || collapsedHere)" class="punctuation">,</span>
     </div>
 
@@ -74,7 +90,10 @@ function childPath(key: string | number) {
           :path="childPath(entry.key)"
           :collapsed="collapsed"
           :comma="index < entries.length - 1"
+          :selectable-arrays="selectableArrays"
+          :selected-path="selectedPath"
           @toggle="emit('toggle', $event)"
+          @select="emit('select', $event)"
         />
       </div>
       <div v-show="!collapsedHere" class="json-line json-closing">
@@ -155,6 +174,11 @@ function childPath(key: string | number) {
   color: var(--el-text-color-placeholder);
   font-size: 11px;
   user-select: none;
+}
+
+.select-array {
+  margin-left: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .json-value {

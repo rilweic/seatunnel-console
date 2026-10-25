@@ -208,7 +208,8 @@ public class JobOverviewService {
 
     private Flow wizardFlow(WizardForm form) {
         List<String> tables = form.source().tables().stream().map(WizardForm.TableSpec::name).toList();
-        Endpoint source = endpoint(null, form.source().datasourceId(), form.source().namespace());
+        Endpoint source = endpoint(null, form.source().datasourceId(),
+                form.source().http() == null ? form.source().namespace() : form.source().http().path());
         WizardForm.Target t = form.target();
         String targetType = typeOf(t.datasourceId());
         boolean es = "ELASTICSEARCH".equals(targetType);

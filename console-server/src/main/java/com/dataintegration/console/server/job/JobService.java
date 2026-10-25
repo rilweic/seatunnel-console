@@ -458,6 +458,16 @@ public class JobService {
         return wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID));
     }
 
+    /** Sends the first page of an unsaved HTTP source with the same variables as a precheck. */
+    public WizardService.HttpPreviewResult httpPreview(String jobId, WizardForm form, Map<String, String> params) {
+        JobDefinition job = requireEditable(jobId);
+        if (!MODE_FORM.equals(job.getEditMode())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is not edited with the wizard");
+        }
+        requireOwnersDatasources(job, wizardDatasources(form));
+        return wizardService.previewHttp(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID));
+    }
+
     /**
      * One-way switch from the wizard to the script editor (docs/design.md §7.3). The current version
      * stays as it is; the next save is a plain script version.

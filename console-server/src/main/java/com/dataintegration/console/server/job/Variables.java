@@ -32,12 +32,12 @@ public final class Variables {
     public static final String PROJECT_NAME = "system.project.name";
 
     /**
-     * SeaTunnel's own sink placeholders (3.0 TablePlaceholder), filled per table by the engine. They
-     * are never console variables and are not reported as unresolved.
+     * SeaTunnel's own sink placeholders (3.0 TablePlaceholder), filled per table by the engine, and
+     * HTTP source pagination variables. They are never console variables and are not unresolved.
      */
     static final Set<String> SEATUNNEL_PLACEHOLDERS = Set.of(
             "database_name", "schema_name", "schema_full_name", "table_name", "table_full_name",
-            "primary_key", "unique_key", "field_names", "partition_keys");
+            "primary_key", "unique_key", "field_names", "partition_keys", "page", "cursor");
 
     private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*");
     private static final Pattern REFERENCE = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_.]*)}");
@@ -58,7 +58,7 @@ public final class Variables {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "parameter names starting with system. are reserved: " + key);
         }
         if (SEATUNNEL_PLACEHOLDERS.contains(key)) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "parameter name " + key + " is reserved by SeaTunnel as a table placeholder");
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "parameter name " + key + " is reserved by SeaTunnel");
         }
     }
 

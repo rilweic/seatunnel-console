@@ -87,6 +87,23 @@ class VariablesTest {
     }
 
     @Test
+    void httpPaginationNamesAreReservedAndNotUnresolved() {
+        assertThatThrownBy(() -> Variables.validateName("page"))
+                .isInstanceOf(ConsoleException.class)
+                .hasMessageContaining("reserved by SeaTunnel");
+        assertThatThrownBy(() -> Variables.validateName("cursor"))
+                .isInstanceOf(ConsoleException.class)
+                .hasMessageContaining("reserved by SeaTunnel");
+        assertThatThrownBy(() -> Variables.resolve(Map.of(), T, Map.of("page", "1")))
+                .isInstanceOf(ConsoleException.class);
+        assertThatThrownBy(() -> Variables.resolve(Map.of(), T, Map.of("cursor", "next")))
+                .isInstanceOf(ConsoleException.class);
+
+        assertThat(Variables.unresolved("${page} ${cursor} ${table_name} ${missing}"))
+                .containsExactly("missing");
+    }
+
+    @Test
     void parameterNamesAreChecked() {
         Variables.validateName("biz_dt");
         Variables.validateName("src.table");

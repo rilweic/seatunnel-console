@@ -53,7 +53,7 @@ public class ClusterHealthService {
 
     public record Health(List<Check> checks, List<MasterStatus> masters, List<EngineWorker> workers, Map<String, String> overview) {}
 
-    /** Connectors the wizard generates, always required. */
+    /** Database wizard connectors are always required; HTTP is checked when a live job uses it. */
     private static final List<String> WIZARD_CONNECTORS = List.of("source/Jdbc", "sink/Jdbc", "sink/Elasticsearch");
 
     private final EngineClient engineClient;
