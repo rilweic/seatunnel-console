@@ -202,7 +202,19 @@
 | P1 之后（2026-10-25 提前到 P2 前） | HTTP 接口（只作来源，§7.13） |
 | P3 | 按需扩展 |
 
-每种数据源类型要实现：测试连接、列出库/表/索引、读取表结构，以及"数据源 → 对应 connector 配置项"的翻译。例如 Jdbc 用 `url/driver/user/password`，CDC 用 `base-url/username/password`。
+每种数据源类型是 console-datasource 里的一个插件（`DataSourcePlugin`），要实现：校验和测试连接、列出库/表/索引、读取表结构、"数据源 → 对应 connector 配置项"的翻译（例如 Jdbc 用 `url/driver/user/password`，CDC 用 `base-url/username/password`）、列表里显示的地址，以及**能力声明**（`DataSourceCapabilities`，2026-10-26）：
+
+| 能力 | 含义 | MySQL / PG | ES | HTTP |
+|---|---|---|---|---|
+| 向导来源 / 目标 connector | 向导生成哪个 SeaTunnel source / sink，空表示向导不能用它做来源或目标（脚本仍可） | Jdbc / Jdbc | - / Elasticsearch | Http / - |
+| 有库 / schema 层 | 先选库或 schema 再选表 | 是 | 否 | 否 |
+| 多表 | 一个向导任务可以选多张表 | 是 | - | 否（一个任务一个接口） |
+| 计数方式 | 行数校验怎么数：SQL 计数 / 按索引计数 / 不能计数 | SQL | 索引 | 不能 |
+| 最大并行度 | 向导任务读它时最多用多少并行 | 8 | - | 1 |
+| 名字小写 | 目标名必须小写 | 否 | 是 | - |
+| JDBC 驱动 | 集群诊断要检查 worker 上的驱动 | 是 | 否 | 否 |
+
+JDBC 数据库另外声明 SQL 方言（`SqlDialect`：标识符怎么加引号、库/schema 在 `table_path` 里怎么写）。前端通过 `GET /api/datasources/types` 读取类型列表和能力，页面上不再写死类型名。
 
 ## 7. 任务配置
 
@@ -357,6 +369,18 @@ updated_at >= '$[yyyy-MM-dd-1] 00:00:00' and updated_at < '$[yyyy-MM-dd] 00:00:0
 **凭据检查扩展**（§6 第 6 条）：HTTP 下凭据常写在 Header 里，所以 Header 名 `Authorization`、`Cookie`、`X-API-Key`，以及名字含 key / token 的 Header，也算作凭据：任务配置（含脚本、高级参数）里直接写会拒绝保存，打码时一并替换。数据源公共 Header 与脚本共用同一套规则，password / secret / credential 等敏感名称也不能明文保存。JSON 格式的 Body 里键名像凭据且有值（如 `{"token":"..."}`）同样拒绝保存。任务的 Header 和参数不能和数据源的同名（Header 不分大小写）：API Key 可以叫 `appId` 这类看不出是凭据的名字，同名就会把认证换掉。认证只能放在数据源的专用字段里。
 
 **实现与验证**：数据源类型和测试连接 → 请求预览和字段推断 → 向导生成和预检查 → 凭据检查扩展。预览只发一次请求、最多读取 2 MB、默认不跟随重定向；单元测试和本地 mock HTTP 服务覆盖认证、GET/POST、字段推断和分页。真实 SeaTunnel 集群已验证 query 页码与 query 游标：均读取两页（第二页为空）并准确写入 2 条，嵌套 JSON 字段正常。集群健康检查的 Http 连接器只在现有任务实际使用时列为必需，不因为支持 HTTP 来源就要求所有集群安装。
+
+### 7.14 模块划分：数据源和向导按插件扩展（2026-10-26）
+
+目标是加一种数据源时只新增文件、不在已有代码里加分支（新增步骤见 CLAUDE.md「Adding a datasource type」）。分三层：
+
+1. **数据源插件**（console-datasource，按数据源类型）：连接、元数据、connector 配置项、地址和能力（§6.1）。加一种 JDBC 数据库只需要一个继承 `JdbcDataSourcePlugin` 的插件，复用或新增一个 `SqlDialect`
+2. **向导的来源和目标**（console-server `job/wizard/source`、`job/wizard/sink`，按 SeaTunnel connector）：`WizardSource`（`JdbcSource`、`HttpSource`）负责自己那部分表单、source 配置块和对实时数据源的预检查；`WizardSink`（`JdbcSink`、`ElasticsearchSink`）负责 sink 自己的配置项和行数校验的目标端。`WizardConnectors` 按插件声明的 connector 选出它们，JDBC 的方言由插件给出。`WizardGenerator` 只负责编排（source → 共用的 transform → sink）和所有任务共用的检查，`WizardService` 只做共用的预检查（字段是否存在、主键与写入方式、字段处理、目标表），都不再判断类型
+3. **前端**：数据源页按类型注册表单组件（`components/datasource/forms.ts`，JDBC 数据库共用 `JdbcFields`）；向导按 connector 注册（`components/wizard/connectors.ts`）：每种来源提供第①步组件（`JdbcSourceStep` 选库选表、`HttpSourceStep` 配请求和预览）、说明文字、取字段和检查第①步的方法；其余地方读能力（并行度上限、能否计数、有无库层、名字小写）
+
+表单里各来源自己的设置放在 `source.spec`，由对应的来源解析（HTTP 是 `HttpSpec`）。以前保存为 `source.http` 的版本照常读取，再保存时写成 `spec`。
+
+验证方式：`wizard-golden/` 下用旧格式保存的 8 份表单（MySQL、PG、ES、HTTP，含改名、字段处理和各种行数校验分支）生成的配置、校验和说明必须与基准文件逐字一致，重构前后没有变化；`WizardGoldenTest` 会自动对比。
 
 ## 8. 变量
 
@@ -541,3 +565,4 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 | 9 | 加密密钥由 console 管理，配置只引用 ID，提交时注入 | 密钥写进配置：违反"配置里不出现密钥"的原则 |
 | 10 | 离线调度最小间隔 2 分钟，补数只补已经到点的时间、同一任务同时只有一个未结束的补数 | 不限制：容易误配成每秒运行，或提前跑未来的日期 |
 | 11 | HTTP 来源：数据源存基础地址和认证，任务存接口请求；字段靠请求预览点选推断；增量靠参数里的时间变量 | 一个数据源对应一个接口：认证要重复配置；让用户手写 schema：新手写不出来 |
+| 12 | 数据源插件声明能力，向导的来源 / 目标按 SeaTunnel connector 做成插件，前端按类型注册表单、按 connector 注册向导步骤（§7.14） | 继续按类型加 if 分支：每加一种数据源都要改生成器、预检查和向导页面；后端描述字段由前端通用渲染：HTTP 认证这类联动要再造一套规则 |
