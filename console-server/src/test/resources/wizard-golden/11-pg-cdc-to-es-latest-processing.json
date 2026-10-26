@@ -1,0 +1,16 @@
+{
+  "endpoints": {"sourceType": "POSTGRESQL", "sourceDatabase": "app", "targetType": "ELASTICSEARCH", "targetDatabase": null,
+                "sourceColumns": {"customers": ["id", "name", "phone"]}},
+  "form": {
+    "source": {"datasourceId": "pg-ds", "namespace": "public", "tables": [
+      {"name": "customers", "columns": null, "filter": null, "incrementalField": null,
+       "processes": {"phone": {"mask": {"preset": "PHONE"}}}}
+    ]},
+    "target": {"datasourceId": "es-ds", "namespace": null, "tableName": null, "prefix": "cdc_", "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "CLEAR", "writeMode": "APPEND", "tableRule": null},
+    "sync": null,
+    "parallelism": 1, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null,
+    "stream": {"startup": "LATEST", "startupTimestamp": null, "schemaChanges": false, "dropColumns": false,
+               "skipDeletes": false, "checkpointSeconds": 30}
+  }
+}

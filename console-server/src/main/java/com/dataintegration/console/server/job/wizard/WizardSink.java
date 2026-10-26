@@ -30,6 +30,15 @@ public interface WizardSink {
         return null;
     }
 
+    /**
+     * Whether the sink applies every column change a real-time job passes on (add, modify, rename
+     * and drop); false when it only adds columns, like Elasticsearch, where the other changes stop
+     * the job (design.md §12 P2, 实测结论).
+     */
+    default boolean appliesAllColumnChanges() {
+        return true;
+    }
+
     /** Whether an existing target table is compared with the mapped fields (not for ES indices). */
     boolean comparesColumns();
 

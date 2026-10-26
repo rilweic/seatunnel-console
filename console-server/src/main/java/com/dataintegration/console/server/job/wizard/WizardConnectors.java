@@ -9,6 +9,7 @@ import com.dataintegration.console.datasource.http.HttpDataSourcePlugin;
 import com.dataintegration.console.datasource.jdbc.JdbcDataSourcePlugin;
 import com.dataintegration.console.server.job.wizard.sink.ElasticsearchSink;
 import com.dataintegration.console.server.job.wizard.sink.JdbcSink;
+import com.dataintegration.console.server.job.wizard.source.CdcSource;
 import com.dataintegration.console.server.job.wizard.source.HttpSource;
 import com.dataintegration.console.server.job.wizard.source.JdbcSource;
 
@@ -33,7 +34,21 @@ public final class WizardConnectors {
         return PLUGINS.get(type).capabilities();
     }
 
+    /** The source of an offline job. */
     public static WizardSource source(String type) {
+        return source(type, false);
+    }
+
+    /** The source of the form's job: the CDC source for a real-time job (design.md §12 P2). */
+    public static WizardSource source(String type, WizardForm form) {
+        return source(type, form != null && form.streaming());
+    }
+
+    public static WizardSource source(String type, boolean streaming) {
+        if (streaming) {
+            DataSourcePlugin plugin = supported(type, DataSourceCapabilities::streamSource, "实时同步源端");
+            return new CdcSource((JdbcDataSourcePlugin) plugin);
+        }
         DataSourcePlugin plugin = supported(type, DataSourceCapabilities::wizardSource, "源端");
         return switch (plugin.capabilities().sourceConnector()) {
             case JdbcDataSourcePlugin.JDBC_CONNECTOR -> new JdbcSource(((JdbcDataSourcePlugin) plugin).dialect());

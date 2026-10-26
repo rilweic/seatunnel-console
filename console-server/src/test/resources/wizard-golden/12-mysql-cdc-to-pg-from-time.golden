@@ -1,0 +1,40 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "STREAMING"
+  parallelism = 1
+  checkpoint.interval = 10000
+  checkpoint.retain-after-job-cancelled = true
+}
+
+source {
+  MySQL-CDC {
+    datasource_id = "src-ds"
+    database-names = ["source-cdc"]
+    table-names = [
+      "source-cdc.orders"
+    ]
+    startup.mode = "timestamp"
+    startup.timestamp = 1793000000000
+    schema-changes.enabled = true
+    schema-changes.include = ["add.column", "modify.column", "change.column"]
+    plugin_output = "source"
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "pg-ds"
+    database = "dw"
+    table = "ods.${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "ERROR_WHEN_SCHEMA_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["source"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+实时任务的数据一直在变，不做行数校验

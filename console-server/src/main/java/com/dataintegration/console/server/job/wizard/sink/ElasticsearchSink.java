@@ -33,6 +33,12 @@ public final class ElasticsearchSink implements WizardSink {
         }
     }
 
+    /** Only added columns become new fields; any other change fails the job (verified on 3.0.1). */
+    @Override
+    public boolean appliesAllColumnChanges() {
+        return false;
+    }
+
     @Override
     public boolean comparesColumns() {
         return false;

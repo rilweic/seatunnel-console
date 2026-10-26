@@ -1,0 +1,14 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "POSTGRESQL", "targetDatabase": "dw", "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "source-cdc", "tables": [
+      {"name": "orders", "columns": null, "filter": null, "incrementalField": null}
+    ]},
+    "target": {"datasourceId": "pg-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "ERROR", "dataMode": null, "writeMode": null, "tableRule": null},
+    "sync": null,
+    "parallelism": 1, "validation": false, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null,
+    "stream": {"startup": "TIMESTAMP", "startupTimestamp": 1793000000000, "schemaChanges": true, "dropColumns": false,
+               "skipDeletes": false, "checkpointSeconds": null}
+  }
+}

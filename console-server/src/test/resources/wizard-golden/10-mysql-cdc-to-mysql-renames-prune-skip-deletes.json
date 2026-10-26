@@ -1,0 +1,18 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "MYSQL", "targetDatabase": null,
+                "sourceColumns": {"orders": ["id", "customer_id", "amount", "remark", "secret"]}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "shop", "tables": [
+      {"name": "orders", "columns": ["id", "customer_id", "amount", "remark"], "filter": null, "incrementalField": null,
+       "fieldNames": {"customer_id": "cust_id"}},
+      {"name": "users", "columns": null, "filter": null, "incrementalField": null, "targetName": "dim_user"}
+    ]},
+    "target": {"datasourceId": "dst-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": null, "writeMode": null, "tableRule": null},
+    "sync": null,
+    "parallelism": 4, "validation": true, "sourceOptions": {"snapshot.split.size": "4096", "server-id": "6001-6004"}, "sinkOptions": {},
+    "fieldRule": null,
+    "stream": {"startup": "INITIAL", "startupTimestamp": null, "schemaChanges": true, "dropColumns": true,
+               "skipDeletes": true, "checkpointSeconds": null}
+  }
+}

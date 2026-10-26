@@ -231,7 +231,7 @@ public class JobOverviewService {
         DataSourceCapabilities from = capabilities(sourceType);
         WizardSource source = null;
         try {
-            source = sourceType == null ? null : WizardConnectors.source(sourceType);
+            source = sourceType == null ? null : WizardConnectors.source(sourceType, form);
         } catch (ConsoleException e) {
             // not a wizard source (any more)
         }

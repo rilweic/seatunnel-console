@@ -83,7 +83,7 @@ public class WizardService {
     public Endpoints endpoints(WizardForm form) {
         String sourceType = datasourceService.typeOf(form.source().datasourceId());
         String targetType = datasourceService.typeOf(form.target().datasourceId());
-        WizardSource source = WizardConnectors.source(sourceType);
+        WizardSource source = WizardConnectors.source(sourceType, form);
         WizardSink sink = WizardConnectors.sink(targetType);
         return new Endpoints(
                 sourceType,
@@ -108,6 +108,24 @@ public class WizardService {
             return new PrecheckResult(checks, null);
         }
 
+        if (!form.streaming()) {
+            checkBatchModes(form, checks);
+        }
+
+        WizardSource.Live live = new WizardSource.Live(datasourceService, variables);
+        Map<String, List<ColumnMeta>> sourceColumns = checkSource(form, endpoints, live, checks);
+        if (sourceColumns != null && checkNames(form, endpoints, sourceColumns, checks)) {
+            checkTarget(form, endpoints, sourceColumns, checks);
+        }
+        if (form.streaming() && sourceColumns != null) {
+            StreamPrecheck.check(form, endpoints, sourceColumns, checks);
+        }
+        generated.notes().forEach(n -> checks.add(new Check(Level.INFO, n)));
+        return new PrecheckResult(checks, generated);
+    }
+
+    /** Write and data modes of an offline job that conflict with its sync mode. */
+    private static void checkBatchModes(WizardForm form, List<Check> checks) {
         boolean full = form.sync().mode() == SyncMode.FULL;
         if (!full && form.target().dataMode() == DataMode.CLEAR) {
             checks.add(new Check(Level.ERROR, "增量同步不能选择\"清空后写入\"，否则每次只会留下最近一个时间窗口的数据"));
@@ -119,14 +137,6 @@ public class WizardService {
             checks.add(new Check(Level.WARN, "连续增量按追加写入：运行失败后，下一次会把没推进水位的窗口再同步一遍，"
                     + "失败前已经写入的部分会重复。建议按主键更新写入"));
         }
-
-        WizardSource.Live live = new WizardSource.Live(datasourceService, variables);
-        Map<String, List<ColumnMeta>> sourceColumns = checkSource(form, endpoints, live, checks);
-        if (sourceColumns != null && checkNames(form, endpoints, sourceColumns, checks)) {
-            checkTarget(form, endpoints, sourceColumns, checks);
-        }
-        generated.notes().forEach(n -> checks.add(new Check(Level.INFO, n)));
-        return new PrecheckResult(checks, generated);
     }
 
     /**
@@ -136,13 +146,16 @@ public class WizardService {
      */
     private Map<String, List<ColumnMeta>> checkSource(
             WizardForm form, Endpoints endpoints, WizardSource.Live live, List<Check> checks) {
-        WizardSource source = WizardConnectors.source(endpoints.sourceType());
+        WizardSource source = WizardConnectors.source(endpoints.sourceType(), form);
         Map<String, WizardSource.SourceTable> found = source.inspect(form, endpoints, live, checks);
         if (found == null) {
             return null;
         }
         Map<String, List<ColumnMeta>> selected = new LinkedHashMap<>();
-        boolean full = form.sync().mode() == SyncMode.FULL;
+        // a real-time job always writes by key and keeps the target's rows; its source checks the keys
+        boolean batch = !form.streaming();
+        boolean upsert = form.streaming() || form.target().writeMode() == WriteMode.UPSERT;
+        boolean full = batch && form.sync().mode() == SyncMode.FULL;
         for (TableSpec table : form.source().tables()) {
             WizardSource.SourceTable inspected = found.get(table.name());
             if (inspected == null) {
@@ -160,19 +173,19 @@ public class WizardService {
             }
             source.checkTable(form, endpoints, table, byName, live, checks);
             if (primaryKeys.isEmpty()) {
-                if (form.target().writeMode() == WriteMode.UPSERT) {
+                if (batch && form.target().writeMode() == WriteMode.UPSERT) {
                     checks.add(new Check(Level.WARN, table.name() + "：没有主键，只能按追加方式写入"));
                 }
                 if (full && form.target().dataMode() == DataMode.KEEP) {
                     checks.add(new Check(Level.WARN, table.name() + "：没有主键又保留已有数据，每次全量运行都会再写入一遍，造成重复"));
                 }
-            } else if (form.target().writeMode() == WriteMode.UPSERT && !table.allColumns()
+            } else if (upsert && !table.allColumns()
                     && !table.columns().containsAll(primaryKeys)) {
                 // The generated sink upserts by ${primary_key}; without the key columns the engine
                 // fails at start-up instead of here.
                 List<String> missingKeys = primaryKeys.stream().filter(k -> !table.columns().contains(k)).toList();
                 checks.add(new Check(Level.ERROR, table.name() + "：按主键更新需要主键字段，请在字段映射里恢复 "
-                        + String.join(", ", missingKeys) + "，或改为追加写入"));
+                        + String.join(", ", missingKeys) + (batch ? "，或改为追加写入" : "")));
             } else if (full && form.target().dataMode() == DataMode.KEEP && form.target().writeMode() == WriteMode.APPEND) {
                 checks.add(new Check(Level.WARN, table.name() + "：追加写入又保留已有数据，每次全量运行都会重复写入，建议改为 upsert"));
             }

@@ -76,16 +76,23 @@ public final class WizardGenerator {
 
     public static Generated generate(WizardForm form, Endpoints endpoints) {
         requireShape(form, endpoints);
-        WizardSource source = WizardConnectors.source(endpoints.sourceType());
+        WizardSource source = WizardConnectors.source(endpoints.sourceType(), form);
         WizardSink sink = WizardConnectors.sink(endpoints.targetType());
         DataSourceCapabilities from = WizardConnectors.capabilities(endpoints.sourceType());
         boolean lowerCase = WizardConnectors.capabilities(endpoints.targetType()).lowerCaseNames();
-        boolean upsert = form.target().writeMode() == WriteMode.UPSERT && source.upsertPossible(form);
+        // a real-time job applies updates and deletes, which needs the key (§12 P2)
+        boolean upsert = form.streaming() || (form.target().writeMode() == WriteMode.UPSERT && source.upsertPossible(form));
 
         StringBuilder hocon = new StringBuilder();
         hocon.append("# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑\n");
-        hocon.append("env {\n  job.mode = \"BATCH\"\n  parallelism = ")
-                .append(Math.min(Math.max(1, form.parallelism()), from.maxParallelism())).append("\n}\n\n");
+        hocon.append("env {\n  job.mode = ").append(form.streaming() ? "\"STREAMING\"" : "\"BATCH\"").append("\n  parallelism = ")
+                .append(Math.min(Math.max(1, form.parallelism()), from.maxParallelism())).append('\n');
+        if (form.streaming()) {
+            hocon.append("  checkpoint.interval = ").append(form.stream().checkpointMillis()).append('\n');
+            // a forced stop or a failure can then still restore from the latest checkpoint (§12 P2, Q26)
+            hocon.append("  checkpoint.retain-after-job-cancelled = true\n");
+        }
+        hocon.append("}\n\n");
         source.append(hocon, form, endpoints);
         String sinkInput = appendTransforms(hocon, form, endpoints, source, lowerCase);
 
@@ -93,13 +100,14 @@ public final class WizardGenerator {
         sink.appendHead(hocon, form, endpoints, upsert);
         hocon.append("    schema_save_mode = ").append(Hocon.str(form.target().schemaMode() == SchemaMode.ERROR
                 ? "ERROR_WHEN_SCHEMA_NOT_EXIST" : "CREATE_SCHEMA_WHEN_NOT_EXIST")).append('\n');
-        hocon.append("    data_save_mode = ").append(Hocon.str(form.target().dataMode() == DataMode.CLEAR ? "DROP_DATA" : "APPEND_DATA")).append('\n');
+        boolean clear = !form.streaming() && form.target().dataMode() == DataMode.CLEAR;
+        hocon.append("    data_save_mode = ").append(Hocon.str(clear ? "DROP_DATA" : "APPEND_DATA")).append('\n');
         Hocon.appendOptions(hocon, form.sinkOptions(), GENERATED_SINK_OPTIONS);
         hocon.append("    plugin_input = [").append(Hocon.str(sinkInput)).append("]\n  }\n}\n");
 
         List<String> notes = new ArrayList<>();
         ValidationSpec validation = null;
-        if (!from.countable()) {
+        if (!from.countable() || form.streaming()) {
             notes.add(source.uncountableNote());
         } else if (form.validation()) {
             validation = validation(form, endpoints, source, sink, lowerCase, notes);
@@ -120,6 +128,7 @@ public final class WizardGenerator {
         Map<String, List<String>> split = new LinkedHashMap<>();
         Map<String, List<String>> sql = new LinkedHashMap<>();
         Map<String, List<String>> encrypt = new LinkedHashMap<>();
+        Map<String, List<String>> pruned = new LinkedHashMap<>();
         Map<String, Map<String, String>> fieldRenames = new LinkedHashMap<>();
         Map<String, String> tableRenames = new LinkedHashMap<>();
         for (TableSpec table : form.source().tables()) {
@@ -143,6 +152,10 @@ public final class WizardGenerator {
                             + "], encrypt_key_id = " + str(table.encryptKeyId())));
                 }
             }
+            if (form.streaming() && !table.processed() && !table.allColumns()) {
+                pruned.put(path, List.of("exclude_fields = [" + String.join(", ",
+                        StreamTransforms.excludedColumns(table, endpoints.sourceColumns()).stream().map(Hocon::str).toList()) + "]"));
+            }
             Set<String> dropped = FieldProcessing.droppedSources(table);
             Map<String, String> fields = new LinkedHashMap<>();
             synced.stream().filter(c -> !dropped.contains(c)).forEach(c -> putIfRenamed(fields, c, targetField(form, table, c)));
@@ -161,6 +174,7 @@ public final class WizardGenerator {
         input = appendStage(t, "Split", input, "split_extracted", split);
         input = appendStage(t, "Sql", input, "processed", sql);
         input = appendStage(t, "FieldEncrypt", input, "encrypted", encrypt);
+        input = appendStage(t, "Filter", input, "pruned", pruned);
         if (!fieldRenames.isEmpty()) {
             t.append("  FieldRename {\n    plugin_input = [").append(str(input)).append("]\n    plugin_output = \"fields_renamed\"\n");
             t.append("    table_transform = [\n");
@@ -180,6 +194,9 @@ public final class WizardGenerator {
                     .append(", replacements_with_regex = [{ replace_from = \"^.*$\", replace_to = ").append(str(name)).append(" }] }\n"));
             t.append("    ]\n  }\n");
             input = "tables_renamed";
+        }
+        if (form.streaming() && form.stream().skipDeletes()) {
+            input = StreamTransforms.appendSkipDeletes(t, input);
         }
         if (!t.isEmpty()) {
             hocon.append("transform {\n").append(t).append("}\n\n");
@@ -259,7 +276,7 @@ public final class WizardGenerator {
 
     /** Incremental field of a table: its own, or the job-wide one. Null for full sync or a custom window. */
     public static String incrementalField(WizardForm form, TableSpec table) {
-        if (form.sync().mode() != SyncMode.INCREMENTAL || form.sync().window() == Window.CUSTOM) {
+        if (form.sync() == null || form.sync().mode() != SyncMode.INCREMENTAL || form.sync().window() == Window.CUSTOM) {
             return null;
         }
         return notBlank(table.incrementalField()) ? table.incrementalField().trim() : form.sync().field();
@@ -267,7 +284,7 @@ public final class WizardGenerator {
 
     /** The time window on the table's incremental field (or the custom condition), with variables. */
     public static String incrementalCondition(WizardForm form, SqlDialect dialect, TableSpec table) {
-        if (form.sync().mode() != SyncMode.INCREMENTAL) {
+        if (form.sync() == null || form.sync().mode() != SyncMode.INCREMENTAL) {
             return null;
         }
         if (form.sync().window() == Window.CUSTOM) {
@@ -312,10 +329,10 @@ public final class WizardGenerator {
 
     /** What every job needs; each source checks its own part ({@link WizardSource#requireShape}). */
     private static void requireShape(WizardForm form, Endpoints endpoints) {
-        if (form == null || form.source() == null || form.target() == null || form.sync() == null) {
+        if (form == null || form.source() == null || form.target() == null || (form.sync() == null && !form.streaming())) {
             throw invalid("向导表单不完整");
         }
-        WizardSource source = WizardConnectors.source(endpoints.sourceType());
+        WizardSource source = WizardConnectors.source(endpoints.sourceType(), form);
         WizardConnectors.sink(endpoints.targetType());
         if (form.source().tables() == null || form.source().tables().isEmpty()) {
             throw invalid("请至少选择一张源表");
@@ -331,10 +348,14 @@ public final class WizardGenerator {
                 throw invalid(table.name() + "：目标表名为空");
             }
         }
-        if (form.target().schemaMode() == null || form.target().dataMode() == null || form.target().writeMode() == null) {
+        if (form.target().schemaMode() == null) {
             throw invalid("请完成目标端选项");
         }
-        if (form.sync().mode() == null) {
+        // a real-time job always keeps the target's rows and writes by key, and has no sync mode
+        if (!form.streaming() && (form.target().dataMode() == null || form.target().writeMode() == null)) {
+            throw invalid("请完成目标端选项");
+        }
+        if (!form.streaming() && form.sync().mode() == null) {
             throw invalid("请选择同步方式");
         }
         source.requireShape(form);

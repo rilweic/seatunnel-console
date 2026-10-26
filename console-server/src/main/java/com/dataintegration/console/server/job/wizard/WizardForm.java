@@ -20,6 +20,8 @@ import java.util.Map;
  * @param sinkOptions advanced sink options, written as given
  * @param fieldRule how target field names derive from source field names, for tables without their
  *     own rule; null keeps them
+ * @param stream real-time settings; present exactly when the job is a real-time (STREAMING) job,
+ *     which reads its tables with the datasource's CDC source (design.md §12 P2)
  */
 public record WizardForm(
         Source source,
@@ -29,7 +31,20 @@ public record WizardForm(
         boolean validation,
         Map<String, String> sourceOptions,
         Map<String, String> sinkOptions,
-        NameRule fieldRule) {
+        NameRule fieldRule,
+        Stream stream) {
+
+    public WizardForm(
+            Source source,
+            Target target,
+            Sync sync,
+            int parallelism,
+            boolean validation,
+            Map<String, String> sourceOptions,
+            Map<String, String> sinkOptions,
+            NameRule fieldRule) {
+        this(source, target, sync, parallelism, validation, sourceOptions, sinkOptions, fieldRule, null);
+    }
 
     public WizardForm(
             Source source,
@@ -39,7 +54,11 @@ public record WizardForm(
             boolean validation,
             Map<String, String> sourceOptions,
             Map<String, String> sinkOptions) {
-        this(source, target, sync, parallelism, validation, sourceOptions, sinkOptions, null);
+        this(source, target, sync, parallelism, validation, sourceOptions, sinkOptions, null, null);
+    }
+
+    public boolean streaming() {
+        return stream != null;
     }
 
     /**
@@ -309,6 +328,38 @@ public record WizardForm(
     public enum WriteMode {
         UPSERT,
         APPEND
+    }
+
+    /**
+     * How a real-time job reads and applies changes (design.md §12 P2, 实测结论).
+     *
+     * @param startup where the CDC source starts reading
+     * @param startupTimestamp epoch millis to start from, for {@link Startup#TIMESTAMP}
+     * @param schemaChanges apply table-structure changes of the source to the target
+     * @param dropColumns also drop columns the source drops; otherwise the target keeps them
+     * @param skipDeletes do not delete on the target what the source deletes
+     * @param checkpointSeconds checkpoint interval; null means {@link #DEFAULT_CHECKPOINT_SECONDS}
+     */
+    public record Stream(
+            Startup startup,
+            Long startupTimestamp,
+            boolean schemaChanges,
+            boolean dropColumns,
+            boolean skipDeletes,
+            Integer checkpointSeconds) {
+
+        public static final int DEFAULT_CHECKPOINT_SECONDS = 10;
+
+        public int checkpointMillis() {
+            return (checkpointSeconds == null || checkpointSeconds < 1 ? DEFAULT_CHECKPOINT_SECONDS : checkpointSeconds) * 1000;
+        }
+    }
+
+    /** Where a real-time job starts: snapshot then changes, only new changes, or changes since a time. */
+    public enum Startup {
+        INITIAL,
+        LATEST,
+        TIMESTAMP
     }
 
     /**

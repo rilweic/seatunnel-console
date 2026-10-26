@@ -1,0 +1,55 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "STREAMING"
+  parallelism = 1
+  checkpoint.interval = 30000
+  checkpoint.retain-after-job-cancelled = true
+}
+
+source {
+  Postgres-CDC {
+    datasource_id = "pg-ds"
+    database-names = ["app"]
+    table-names = [
+      "app.public.customers"
+    ]
+    startup.mode = "latest"
+    decoding.plugin.name = "pgoutput"
+    plugin_output = "source"
+  }
+}
+
+transform {
+  Sql {
+    plugin_input = ["source"]
+    plugin_output = "processed"
+    table_match_regex = "(?!)"
+    query = "select id, name, CASE WHEN CHAR_LENGTH(TRY_CAST(phone AS STRING)) > 7 THEN CONCAT(LEFT(TRY_CAST(phone AS STRING), 3), REPEAT('*', CHAR_LENGTH(TRY_CAST(phone AS STRING)) - 7), RIGHT(TRY_CAST(phone AS STRING), 4)) ELSE TRY_CAST(phone AS STRING) END as phone from dual"
+    table_transform = [
+      { table_path = "app.public.customers", query = "select id, name, CASE WHEN CHAR_LENGTH(TRY_CAST(phone AS STRING)) > 7 THEN CONCAT(LEFT(TRY_CAST(phone AS STRING), 3), REPEAT('*', CHAR_LENGTH(TRY_CAST(phone AS STRING)) - 7), RIGHT(TRY_CAST(phone AS STRING), 4)) ELSE TRY_CAST(phone AS STRING) END as phone from dual" }
+    ]
+  }
+  TableRename {
+    plugin_input = ["processed"]
+    plugin_output = "tables_renamed"
+    table_transform = [
+      { table_path = "app.public.customers", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "cdc_customers" }] }
+    ]
+  }
+}
+
+sink {
+  Elasticsearch {
+    datasource_id = "es-ds"
+    index = "${table_name}"
+    primary_keys = ["${primary_key}"]
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["tables_renamed"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+实时任务的数据一直在变，不做行数校验

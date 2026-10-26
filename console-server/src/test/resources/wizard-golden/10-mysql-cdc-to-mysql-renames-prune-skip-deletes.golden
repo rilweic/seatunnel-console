@@ -1,0 +1,75 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "STREAMING"
+  parallelism = 4
+  checkpoint.interval = 10000
+  checkpoint.retain-after-job-cancelled = true
+}
+
+source {
+  MySQL-CDC {
+    datasource_id = "src-ds"
+    database-names = ["shop"]
+    table-names = [
+      "shop.orders"
+      "shop.users"
+    ]
+    startup.mode = "initial"
+    schema-changes.enabled = true
+    schema-changes.include = ["add.column", "modify.column", "change.column", "drop.column"]
+    snapshot.split.size = 4096
+    server-id = "6001-6004"
+    plugin_output = "source"
+  }
+}
+
+transform {
+  Filter {
+    plugin_input = ["source"]
+    plugin_output = "pruned"
+    table_match_regex = "(?!)"
+    exclude_fields = ["secret"]
+    table_transform = [
+      { table_path = "shop.orders", exclude_fields = ["secret"] }
+    ]
+  }
+  FieldRename {
+    plugin_input = ["pruned"]
+    plugin_output = "fields_renamed"
+    table_transform = [
+      { table_path = "shop.orders", specific = [
+          { field_name = "customer_id", target_name = "cust_id" }
+        ] }
+    ]
+  }
+  TableRename {
+    plugin_input = ["fields_renamed"]
+    plugin_output = "tables_renamed"
+    table_transform = [
+      { table_path = "shop.users", replacements_with_regex = [{ replace_from = "^.*$", replace_to = "dim_user" }] }
+    ]
+  }
+  FilterRowKind {
+    plugin_input = ["tables_renamed"]
+    plugin_output = "deletes_skipped"
+    exclude_kinds = ["DELETE"]
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "dst-ds"
+    database = "ods"
+    table = "${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["deletes_skipped"]
+  }
+}
+
+# ---- validation ----
+null
+# ---- notes ----
+实时任务的数据一直在变，不做行数校验
