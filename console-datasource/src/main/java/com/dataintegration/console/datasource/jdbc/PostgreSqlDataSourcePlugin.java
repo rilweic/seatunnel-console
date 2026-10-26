@@ -9,6 +9,9 @@ import java.util.Map;
 
 public class PostgreSqlDataSourcePlugin extends JdbcDataSourcePlugin {
 
+    /** SeaTunnel's PostgreSQL CDC source for real-time jobs. */
+    public static final String CDC_CONNECTOR = "Postgres-CDC";
+
     @Override
     public DataSourceType type() {
         return DataSourceType.POSTGRESQL;
@@ -16,7 +19,7 @@ public class PostgreSqlDataSourcePlugin extends JdbcDataSourcePlugin {
 
     @Override
     public DataSourceCapabilities capabilities() {
-        return new DataSourceCapabilities("PostgreSQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, CountBy.SQL, 8, false, true);
+        return new DataSourceCapabilities("PostgreSQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, CountBy.SQL, 8, false, true, CDC_CONNECTOR);
     }
 
     @Override

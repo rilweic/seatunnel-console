@@ -3,6 +3,7 @@ package com.dataintegration.console.engine.zeta;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.engine.ConnectorOption;
+import com.dataintegration.console.engine.EngineCheckpoints;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineWorker;
 import com.dataintegration.console.engine.MasterStatus;
@@ -198,9 +199,11 @@ public class ZetaRestClient implements EngineClient {
         if (request.restoreMode() != SubmitJobRequest.RestoreMode.NONE) {
             query.add("restoreMode=" + request.restoreMode().name());
             query.add("restoreSourceJobId=" + request.restoreSourceJobId());
-        } else if (request.jobId() != null) {
-            // Zeta accepts a caller-chosen id and ignores a second submission of a job that is
-            // already running, so trying the next master after a timeout cannot start it twice.
+        }
+        // Zeta accepts a caller-chosen id and ignores a second submission of a job that is already
+        // running, so trying the next master after a timeout cannot start it twice. A savepoint
+        // restore keeps the source job's id; a checkpoint restore runs under a new one (verified on 3.0.1).
+        if (request.jobId() != null && request.restoreMode() != SubmitJobRequest.RestoreMode.SAVEPOINT) {
             query.add("jobId=" + request.jobId());
         }
         JsonNode body =
@@ -256,7 +259,43 @@ public class ZetaRestClient implements EngineClient {
                         EngineJobStatus.parse(body.get("jobStatus").asString()),
                         textOrNull(body, "createTime"),
                         metrics,
-                        textOrNull(body, "errorMsg")));
+                        textOrNull(body, "errorMsg"),
+                        body.path("diagnostics").path("totalPipelineRestoreCount").asInt(0)));
+    }
+
+    @Override
+    public Optional<EngineCheckpoints> checkpoints(long jobId) {
+        // GET /jobs/checkpoints/{id} (verified on 3.0.1): {"pipelines": [{"counts": {"triggered", "completed",
+        // "failed", ...}, "latestCompleted": {"completedTimestamp", ...}, "latestFailed": {"triggerTimestamp",
+        // "failureReason", ...}}]}; empty objects when there is none
+        JsonNode body = send("/jobs/checkpoints/" + jobId, HttpRequest.newBuilder().GET(), "application/json");
+        JsonNode pipelines = body.path("pipelines");
+        if (!pipelines.isArray() || pipelines.isEmpty()) {
+            return Optional.empty();
+        }
+        int triggered = 0;
+        int completed = 0;
+        int failed = 0;
+        Long lastCompleted = null;
+        Long lastFailed = null;
+        String reason = null;
+        for (JsonNode pipeline : pipelines) {
+            JsonNode counts = pipeline.path("counts");
+            triggered += counts.path("triggered").asInt(0);
+            completed += counts.path("completed").asInt(0);
+            failed += counts.path("failed").asInt(0);
+            JsonNode done = pipeline.path("latestCompleted").path("completedTimestamp");
+            if (done.canConvertToLong() && (lastCompleted == null || done.asLong() > lastCompleted)) {
+                lastCompleted = done.asLong();
+            }
+            JsonNode failure = pipeline.path("latestFailed");
+            JsonNode failedAt = failure.path("triggerTimestamp");
+            if (failedAt.canConvertToLong() && (lastFailed == null || failedAt.asLong() > lastFailed)) {
+                lastFailed = failedAt.asLong();
+                reason = textOrNull(failure, "failureReason");
+            }
+        }
+        return Optional.of(new EngineCheckpoints(triggered, completed, failed, lastCompleted, lastFailed, reason));
     }
 
     @Override

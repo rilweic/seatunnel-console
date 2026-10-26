@@ -247,12 +247,16 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
 
     @Override
     public Map<String, Object> toConnectorOptions(String connector, Map<String, String> props) {
-        if (!JDBC_CONNECTOR.equals(connector)) {
+        boolean cdc = connector != null && connector.equals(capabilities().cdcConnector());
+        if (!JDBC_CONNECTOR.equals(connector) && !cdc) {
             throw Props.unsupportedConnector(type(), connector);
         }
         Map<String, Object> options = new LinkedHashMap<>();
         options.put("url", buildUrl(props));
-        options.put("driver", driverClass());
+        if (!cdc) {
+            // the CDC sources load their own driver and take no driver option
+            options.put("driver", driverClass());
+        }
         options.put("username", props.get("username"));
         if (props.get("password") != null) {
             options.put("password", props.get("password"));

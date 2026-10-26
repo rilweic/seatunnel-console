@@ -10,6 +10,9 @@ import java.util.Set;
 
 public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
 
+    /** SeaTunnel's MySQL CDC source for real-time jobs. */
+    public static final String CDC_CONNECTOR = "MySQL-CDC";
+
     @Override
     public DataSourceType type() {
         return DataSourceType.MYSQL;
@@ -17,7 +20,7 @@ public class MySqlDataSourcePlugin extends JdbcDataSourcePlugin {
 
     @Override
     public DataSourceCapabilities capabilities() {
-        return new DataSourceCapabilities("MySQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, CountBy.SQL, 8, false, true);
+        return new DataSourceCapabilities("MySQL", JDBC_CONNECTOR, JDBC_CONNECTOR, true, true, CountBy.SQL, 8, false, true, CDC_CONNECTOR);
     }
 
     @Override

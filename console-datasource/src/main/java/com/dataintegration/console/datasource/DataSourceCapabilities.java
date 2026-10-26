@@ -16,6 +16,8 @@ package com.dataintegration.console.datasource;
  * @param maxParallelism highest parallelism a wizard job reading from it may use
  * @param lowerCaseNames table names must be lower case (Elasticsearch indices)
  * @param jdbcDriver SeaTunnel workers need this type's JDBC driver, checked by the cluster diagnostics
+ * @param cdcConnector SeaTunnel CDC source connector real-time wizard jobs read it with, e.g.
+ *     {@code MySQL-CDC}; null when it cannot be a real-time source (design.md §12 P2)
  */
 public record DataSourceCapabilities(
         String label,
@@ -26,7 +28,21 @@ public record DataSourceCapabilities(
         CountBy countBy,
         int maxParallelism,
         boolean lowerCaseNames,
-        boolean jdbcDriver) {
+        boolean jdbcDriver,
+        String cdcConnector) {
+
+    public DataSourceCapabilities(
+            String label,
+            String sourceConnector,
+            String sinkConnector,
+            boolean namespaces,
+            boolean multiTable,
+            CountBy countBy,
+            int maxParallelism,
+            boolean lowerCaseNames,
+            boolean jdbcDriver) {
+        this(label, sourceConnector, sinkConnector, namespaces, multiTable, countBy, maxParallelism, lowerCaseNames, jdbcDriver, null);
+    }
 
     /** How a datasource counts rows (docs/design.md §10.3). */
     public enum CountBy {
@@ -42,6 +58,10 @@ public record DataSourceCapabilities(
 
     public boolean wizardSource() {
         return sourceConnector != null;
+    }
+
+    public boolean streamSource() {
+        return cdcConnector != null;
     }
 
     public boolean wizardTarget() {

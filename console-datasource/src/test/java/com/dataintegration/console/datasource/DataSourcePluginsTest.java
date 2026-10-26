@@ -53,6 +53,27 @@ class DataSourcePluginsTest {
     }
 
     @Test
+    void mysqlAndPostgresBackTheirCdcSourcesWithoutADriverOption() {
+        assertThat(plugins.get(DataSourceType.MYSQL).capabilities().cdcConnector()).isEqualTo("MySQL-CDC");
+        assertThat(plugins.get(DataSourceType.MYSQL)
+                        .toConnectorOptions("MySQL-CDC", Map.of("host", "db1", "database", "shop", "username", "u", "password", "p")))
+                .containsEntry("url", "jdbc:mysql://db1:3306/shop")
+                .containsEntry("username", "u")
+                .containsEntry("password", "p")
+                .doesNotContainKey("driver");
+        assertThat(plugins.get(DataSourceType.POSTGRESQL)
+                        .toConnectorOptions("Postgres-CDC", Map.of("host", "pg", "database", "dw", "username", "u")))
+                .containsEntry("url", "jdbc:postgresql://pg:5432/dw")
+                .doesNotContainKey("driver");
+        // each database backs only its own CDC source
+        assertThatThrownBy(() -> plugins.get(DataSourceType.MYSQL)
+                        .toConnectorOptions("Postgres-CDC", Map.of("host", "db", "username", "u")))
+                .isInstanceOf(ConsoleException.class);
+        assertThat(plugins.get(DataSourceType.ELASTICSEARCH).capabilities().streamSource()).isFalse();
+        assertThat(plugins.get(DataSourceType.HTTP).capabilities().streamSource()).isFalse();
+    }
+
+    @Test
     void elasticsearchSplitsHostsAndOmitsCredentialsWhenAnonymous() {
         DataSourcePlugin es = plugins.get(DataSourceType.ELASTICSEARCH);
 

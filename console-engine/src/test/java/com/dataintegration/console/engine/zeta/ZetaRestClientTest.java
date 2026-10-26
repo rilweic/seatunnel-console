@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
+import com.dataintegration.console.engine.EngineCheckpoints;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineJobStatus;
@@ -157,6 +158,53 @@ class ZetaRestClientTest {
         assertThat(info.get().status().isTerminal()).isTrue();
         assertThat(info.get().metrics()).containsEntry("SinkWriteCount", "10");
         assertThat(info.get().errorMessage()).isNull();
+    }
+
+    @Test
+    void jobInfoReadsPipelineRestoresFromDiagnostics() {
+        respond("/job-info/9", 200, """
+                {"jobId": "9", "jobStatus": "RUNNING", "metrics": {},
+                 "diagnostics": {"pipelines": [{"pipelineId": 1, "restoreCount": 2}], "totalPipelineRestoreCount": 2}}
+                """);
+
+        assertThat(client(List.of(baseUrl), null, null).jobInfo(9L).orElseThrow().pipelineRestores()).isEqualTo(2);
+    }
+
+    @Test
+    void checkpointRestoreRunsUnderTheCallersNewJobIdButASavepointRestoreKeepsTheOldOne() {
+        respond("/submit-job", 200, "{\"jobId\": 3}");
+        ZetaRestClient client = client(List.of(baseUrl), null, null);
+
+        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.CHECKPOINT, 1L, 3L));
+        assertThat(lastExchange.get().getRequestURI().getRawQuery())
+                .isEqualTo("format=hocon&jobName=j&restoreMode=CHECKPOINT&restoreSourceJobId=1&jobId=3");
+
+        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, 1L, 3L));
+        assertThat(lastExchange.get().getRequestURI().getRawQuery())
+                .isEqualTo("format=hocon&jobName=j&restoreMode=SAVEPOINT&restoreSourceJobId=1");
+    }
+
+    @Test
+    void checkpointsSumPipelinesAndKeepTheLatestOutcomes() {
+        respond("/jobs/checkpoints/5", 200, """
+                {"jobId": "5", "pipelines": [
+                  {"pipelineId": 1, "counts": {"triggered": 5, "completed": 4, "failed": 1},
+                   "latestCompleted": {"checkpointId": 4, "completedTimestamp": 2000},
+                   "latestFailed": {"checkpointId": 5, "triggerTimestamp": 2500, "failureReason": "CHECKPOINT_EXPIRED"}},
+                  {"pipelineId": 2, "counts": {"triggered": 2, "completed": 2, "failed": 0},
+                   "latestCompleted": {"checkpointId": 2, "completedTimestamp": 3000}, "latestFailed": {}}]}
+                """);
+
+        EngineCheckpoints checkpoints = client(List.of(baseUrl), null, null).checkpoints(5L).orElseThrow();
+
+        assertThat(checkpoints).isEqualTo(new EngineCheckpoints(7, 6, 1, 3000L, 2500L, "CHECKPOINT_EXPIRED"));
+    }
+
+    @Test
+    void noPipelinesMeansNoCheckpointStatistics() {
+        respond("/jobs/checkpoints/6", 200, "{\"jobId\": \"6\"}");
+
+        assertThat(client(List.of(baseUrl), null, null).checkpoints(6L)).isEmpty();
     }
 
     @Test

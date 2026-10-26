@@ -49,6 +49,11 @@ public interface EngineClient {
     /** Empty when the engine no longer knows the job, e.g. after history expiry. */
     Optional<EngineJobInfo> jobInfo(long jobId);
 
+    /** Checkpoint statistics of a job; empty when the engine has none for it. */
+    default Optional<EngineCheckpoints> checkpoints(long jobId) {
+        return Optional.empty();
+    }
+
     /**
      * Log files of a job across all engine nodes. Empty when the engine keeps no per-job logs, for
      * example when Zeta's log4j2 routing is not enabled or the files have expired.

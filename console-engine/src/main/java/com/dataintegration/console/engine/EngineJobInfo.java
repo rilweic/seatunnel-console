@@ -8,6 +8,8 @@ import java.util.Map;
  * @param metrics raw engine metrics (e.g. SourceReceivedCount, SinkWriteCount); keys are engine
  *     specific
  * @param errorMessage failure reason, null unless the job failed
+ * @param pipelineRestores how often the engine has restored the job's pipelines after a task
+ *     failure; the job still reports RUNNING meanwhile (Zeta gives up after a few and fails it)
  */
 public record EngineJobInfo(
         long jobId,
@@ -15,4 +17,11 @@ public record EngineJobInfo(
         EngineJobStatus status,
         String createTime,
         Map<String, String> metrics,
-        String errorMessage) {}
+        String errorMessage,
+        int pipelineRestores) {
+
+    public EngineJobInfo(
+            long jobId, String jobName, EngineJobStatus status, String createTime, Map<String, String> metrics, String errorMessage) {
+        this(jobId, jobName, status, createTime, metrics, errorMessage, 0);
+    }
+}

@@ -56,6 +56,8 @@ project ─┬─< project_param
 | `job_instance_event` | 运行实例详情页的时间线 |
 | `job_metric_sample` | 运行中每次轮询记一行引擎累计计数（读写行数、字节数），用来画吞吐量曲线（design.md §10.4）。最新的完整指标快照在 `job_instance_attempt.metrics_json` |
 | `encrypt_key` | 字段加密的密钥（design.md §7.11）。`key_cipher` 是用 `CONSOLE_SECRET_KEY` 加密后的 Base64 密钥，接口从不返回密钥本身；任务配置里只写 `encrypt_key_id`，提交运行时才在内存里换成密钥。只停用，不删除 |
+| `job_stream` | 实时任务（`job_type = STREAMING`）自己的设置和运行状态，和 `job_definition` 一对一（V11，design.md §12 P2）：失败自动重启的设置；源库上的复制身份（MySQL-CDC 的 server-id 段，每个任务 8 个，`server_id_start` 起；PG 的复制槽和 publication 名 `replication_name`）；下次启动能从哪里恢复（`restore_engine_job_id`、`restore_kind` 为 SAVEPOINT 或 CHECKPOINT、当时的版本 `restore_version_id`，以及恢复必然失败时的原因 `restore_blocked`）；监控最近看到的情况（当前运行 `current_instance_id`、最近读到数据的时间、最近一次 checkpoint 和异常、引擎自动恢复次数）。实时任务一次"启动 → 停止或失败"是一条 `job_instance`（`trigger_type = START`），其中每次自动重启是一条 attempt |
+| `stream_table_schema` | 实时任务启动时记下的源表和目标表结构（每张表、每一端一行），运行中定时和实际结构对比，发现表结构变更（V11） |
 
 ## 4. 运行实例
 
