@@ -579,13 +579,39 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 - **server-id / slot.name**：console 自动分配。MySQL 每个任务一段不重复的 server-id（长度 = 并行度），高级参数可手改；PG 的 slot 名为 `seatunnel_<任务 id 前缀>`。删除 PG 实时任务时先停作业，再用数据源账号 `pg_drop_replication_slot`（对话框默认勾选"同时删除复制槽"，失败时给出 SQL）
 - **启停**：停止默认带 savepoint，可强制停止；启动默认从 savepoint 恢复，可选最近的 checkpoint 或全新启动；用来源设置有变化的新版本启动时默认改为全新启动，并醒目提示会重新全量。失败自动重启默认关闭，打开后最多 3 次、间隔 30 秒、从最近的 checkpoint 恢复，连续运行 10 分钟后计数清零
 - **一致性**：`exactly_once = false`（至少一次 + 按主键 upsert），`checkpoint.interval` 默认 10 秒，高级参数可改
-- **表结构变更**：第③步"同步表结构变更"开关，新建时默认打开。MySQL 可选加列、改列类型、改列名（默认勾）和删列（默认不勾：目标列保留、之后写入为空，目标列 NOT NULL 且无默认值时预检查警告）；PG 只有加列。生成为 `schema-changes.include`。开关作用于整个 source，和字段映射 / 字段处理的配合规则先在集群上逐个实测 transform 再定：会让任务失败的组合禁止并说明，会静默丢失的给警告，屏蔽了字段的表新加的列默认同步
+- **表结构变更**：第③步"同步表结构变更"开关，新建时默认打开（按下面的实测结论，2026-10-26 修订）：
+  - 目标 MySQL / PG：加列、改类型、改名固定同步（`schema-changes.include = ["add.column", "modify.column", "change.column"]`，再加上可选的 `drop.column`）；只保留"同步删列"一个选项，默认不勾。不勾时目标列保留、之后写入为空，目标端 NOT NULL 的列预检查警告（SeaTunnel 自动建表不带默认值）。改名和改类型不能排除：排除后会静默写坏数据
+  - 目标 ES：只能同步加列。改名、改类型也放进 `include`，让任务明确失败而不是静默写坏；删列排除（ES 没有 NOT NULL，排除是安全的）
+  - 来源 PG：只有加列，改名 / 改类型 / 删列会让任务以 SE-07 停下
+  - 和字段处理二选一：开关打开时不能用 Sql 类字段处理（替换、脱敏、类型转换、新增和提取字段），反之亦然。字段加密、改字段名、改表名、屏蔽字段可以一起用；改过名和被屏蔽的列在第③步列出并提示"以后不能在源端改名、删除或改类型"
+  - 实时任务的屏蔽字段用 `Filter { exclude_fields }` 生成；"不同步删除"的 `FilterRowKind` 必须放在 transform 链的最后
+  - 开关旁说明：源端改列名请用 `CHANGE COLUMN`，MySQL 8 的 `RENAME COLUMN` 不会被同步
 - **表结构变更的反馈**：console 运行期间每 5 分钟对比源表、目标表与启动时记录的结构，变化写进事件时间线（例如"orders 新增列 remark → 目标端已同步 / 未同步及原因"），详情页表映射里标出有变化的表和逐列差异；因 DDL 失败时写明哪张表哪条 DDL 和处理办法。之后打开向导按源表当前结构显示字段并标出新增 / 删除 / 改名，保存后才生成新版本
 - **延迟**：优先用引擎的 `CDCRecordEmitDelay`；`/job-info` 拿不到时只显示"最近一次读到数据的时间"
 - **详情页**：按钮 启动 / 停止、编辑、更多（复制 / 删除）；页签 概览（状态、运行时长、当前版本和"新版本待重启生效"、延迟、RPS 趋势、表级指标、同步链路、表结构变更）、启停历史（点进现有实例详情页）、版本。启动对话框选恢复方式并显示启动参数
 - **并行度**：1 / 2 / 4 / 8，默认 1，作用于全量快照阶段
 - **不做**：行数校验。脚本模式支持，检查 `job.mode = "STREAMING"`，凭据注入、打码和归属检查照旧
+- **checkpoint 保留**：console 给所有实时任务的 env 加 `checkpoint.retain-after-job-cancelled = true`，强制停止和失败后都能从 checkpoint 恢复
+- **DDL 导致的失败**：启动对话框默认"全新启动"并说明原因，从 checkpoint 恢复置灰（会重放同一条 DDL 再次失败）
+- **自动恢复中的状态**：`/job-info` 在 pipeline 自动恢复期间仍是 RUNNING；console 读 `diagnostics.pipelines[].restoreCount`，大于 0 时显示"运行中（异常，正在自动恢复第 n/3 次）"，记事件并计入异常数
 - **代码组织**：按模块拆分（CDC 来源是新的 `WizardSource`，流任务的启停、监控、结构对比各自成类），不往已有的批处理类里堆分支
+
+#### P2 实测结论（2026-10-26，SeaTunnel 3.0.1-SNAPSHOT 单节点，直接向 Zeta 提交）
+
+| 源端 DDL | MySQL → MySQL | MySQL → PG | MySQL → ES | PG → MySQL |
+|---|---|---|---|---|
+| 加列 | 同步 | 同步 | 同步 | 同步 |
+| 改类型 | 同步 | 同步 | 任务失败 | 任务失败（SE-07） |
+| 改名 `CHANGE COLUMN` / PG `RENAME COLUMN` | 同步 | 同步 | 任务失败 | 任务失败（SE-07） |
+| 改名 MySQL `RENAME COLUMN` | **被忽略**：之后这一列写成 NULL，再对它做 DDL 任务失败 | - | - | - |
+| 删列 | 同步 | 同步 | 任务失败 | 任务失败（SE-07） |
+
+- 从 `include` 排除某类 DDL：排除删列时目标列保留、写 NULL（目标 NOT NULL 时失败）；**排除改名或改类型会静默写坏数据**（改名后的列在目标端为 NULL；int→bigint 后超范围的值溢出成负数写入），任务仍是 RUNNING
+- transform：TableRename、FieldEncrypt 对各种 DDL 都正常（加密跟着改名后的列走）；FieldRename 对改过名的那一列做改名或删除时任务失败；`Filter { exclude_fields }` 新列照常同步，对被屏蔽的列做 DDL 任务失败；Sql 遇到加列时 pipeline 失败一次再自动恢复、新列在目标端为 NULL，表里任何一列改名或删除任务失败；`FilterRowKind` 放在其他 transform 前面时遇到改名会失败，放在最后正常
+- 启停：savepoint 停止后用 `restoreMode=SAVEPOINT&restoreSourceJobId=<原 id>` 恢复，沿用原 jobId、不重新全量；`restoreMode=CHECKPOINT` 恢复得到新 jobId，只有设置了 `checkpoint.retain-after-job-cancelled` 的作业在强制停止后还有 checkpoint；失败的作业保留 checkpoint，但 DDL 导致的失败恢复后重放同一条 DDL 再次失败；新版本加了表再从 savepoint 恢复时，目标表不会自动创建，作业反复失败
+- 指标：`/job-info` 没有 CDC 延迟指标（`CDCRecordEmitDelay` 不在其中），延迟只能显示"最近一次读到数据的时间"
+- PG：非超级用户不能建 `FOR ALL TABLES` 的 publication，要用 `debezium { publication.autocreate.mode = "filtered", publication.name = ... }`；任务停止后复制槽和 publication 都留在库里，删除任务时两者都要清理
+- 库名带 `-`（如 `source-cdc`）对 MySQL-CDC、Postgres-CDC 和 Jdbc sink 都没有问题
 
 ### P3 扩展
 
