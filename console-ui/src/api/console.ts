@@ -517,6 +517,18 @@ export interface StreamView {
   lastRunMessage: string | null
   /** table-structure changes noticed while running, newest first; WARN when the target did not follow */
   schemaChanges: { time: string; level: 'INFO' | 'WARN' | 'ERROR'; message: string }[]
+  /** per table, its column changes since the latest start; tables without changes are left out */
+  tableChanges: TableSchemaChanges[]
+}
+
+export interface TableSchemaChanges {
+  /** source table, as in the job's table mapping */
+  table: string
+  targetName: string
+  /** when the source table was last read */
+  checkedAt: string
+  /** status: what happened on the target or why it did not follow; problem: someone has to act */
+  changes: { change: string; status: string | null; problem: boolean }[]
 }
 
 export interface StreamSummary {

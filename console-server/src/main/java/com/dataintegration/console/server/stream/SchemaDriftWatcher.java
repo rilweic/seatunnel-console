@@ -4,10 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
-import com.dataintegration.console.datasource.jdbc.PostgreSqlDataSourcePlugin;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.JobService;
-import com.dataintegration.console.server.job.wizard.WizardConnectors;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
 import com.dataintegration.console.server.job.wizard.WizardGenerator;
@@ -19,7 +17,7 @@ import com.dataintegration.console.server.persistence.mapper.JobStreamMapper;
 import com.dataintegration.console.server.persistence.mapper.StreamTableSchemaMapper;
 import com.dataintegration.console.server.run.RunEventType;
 import com.dataintegration.console.server.run.RunRecorder.Level;
-import com.dataintegration.console.server.stream.SchemaDiff.Renamed;
+import com.dataintegration.console.server.stream.SchemaFollow.ColumnChange;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,16 +30,14 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Notices table-structure changes of running real-time jobs (docs/design.md §12 P2, Q16): every few
  * minutes the source and target tables of each running wizard job are read and compared with what
  * was seen before; a change goes into the run's timeline with whether the target followed and, if
  * not, why. Only running jobs are read, one table at a time, so a stopped console of many jobs
- * costs the databases nothing.
+ * costs the databases nothing. What the tables looked like when the run started is kept too, so
+ * the detail page can show each table's changes since (§12 P2, 表结构变更的反馈).
  */
 @Component
 public class SchemaDriftWatcher {
@@ -72,15 +68,19 @@ public class SchemaDriftWatcher {
     public void watch() {
         for (JobStream stream : streams.selectList(new LambdaQueryWrapper<JobStream>().isNotNull(JobStream::getCurrentInstanceId))) {
             try {
-                check(stream.getJobDefinitionId());
+                check(stream.getJobDefinitionId(), false);
             } catch (RuntimeException e) {
                 log.warn("Checking table structures of real-time job {} failed: {}", stream.getJobDefinitionId(), e.toString());
             }
         }
     }
 
-    /** Compares the job's tables with what was seen last; the first look only records them (also called at start). */
-    public void check(String jobId) {
+    /**
+     * Compares the job's tables with what was seen last; the first look only records them.
+     *
+     * @param starting called as a run starts: what is seen now becomes what the run started with
+     */
+    public void check(String jobId, boolean starting) {
         JobStream stream = streams.selectById(jobId);
         if (stream == null || stream.getCurrentInstanceId() == null) {
             return;
@@ -92,6 +92,7 @@ public class SchemaDriftWatcher {
         }
         WizardForm form = objectMapper.readValue(version.getFormJson(), WizardForm.class);
         DataSourceCapabilities target = datasources.capabilitiesOf(form.target().datasourceId());
+        SchemaFollow follow = follow(form);
         for (TableSpec table : form.source().tables()) {
             String targetName = WizardGenerator.targetName(form, table, target.lowerCaseNames());
             List<ColumnMeta> source = read(form.source().datasourceId(), form.source().namespace(), table.name());
@@ -99,12 +100,12 @@ public class SchemaDriftWatcher {
             if (source == null) {
                 continue;
             }
-            List<ColumnMeta> sourceBefore = remember(jobId, table.name(), SOURCE, source);
-            List<ColumnMeta> sinkBefore = sink == null ? null : remember(jobId, table.name(), TARGET, sink);
+            List<ColumnMeta> sourceBefore = remember(jobId, table.name(), SOURCE, source, starting);
+            List<ColumnMeta> sinkBefore = sink == null ? null : remember(jobId, table.name(), TARGET, sink, starting);
             if (sourceBefore != null) {
                 SchemaDiff changes = SchemaDiff.between(sourceBefore, source);
                 if (!changes.empty()) {
-                    report(instance, form, table, targetName, changes, sink);
+                    report(instance, follow, table, targetName, changes, sink);
                     continue;
                 }
             }
@@ -126,12 +127,57 @@ public class SchemaDriftWatcher {
         }
     }
 
-    /** Stores what is seen now and returns what was seen before; null on the first look. */
-    private List<ColumnMeta> remember(String jobId, String table, String side, List<ColumnMeta> now) {
-        LambdaQueryWrapper<StreamTableSchema> key = new LambdaQueryWrapper<StreamTableSchema>()
+    /**
+     * A table's column changes since the job's latest start and whether the target followed each,
+     * per table of the form the run uses; tables without changes are left out. Reads only what the
+     * watcher stored, no database.
+     */
+    public List<TableChanges> sinceStart(String jobId, WizardForm form) {
+        List<TableChanges> out = new ArrayList<>();
+        SchemaFollow follow = null;
+        for (TableSpec table : form.source().tables()) {
+            StreamTableSchema source = schemas.selectOne(key(jobId, table.name(), SOURCE));
+            if (source == null || source.getStartColumnsJson() == null) {
+                continue;
+            }
+            SchemaDiff changes = SchemaDiff.between(columns(source.getStartColumnsJson()), columns(source.getColumnsJson()));
+            if (changes.empty()) {
+                continue;
+            }
+            follow = follow == null ? follow(form) : follow;
+            StreamTableSchema target = schemas.selectOne(key(jobId, table.name(), TARGET));
+            out.add(new TableChanges(table.name(), follow.targetName(table), source.getCapturedAt(),
+                    follow.assess(table, changes, target == null ? null : columns(target.getColumnsJson()))));
+        }
+        return out;
+    }
+
+    /** Drops what was seen of a deleted job's tables. */
+    public void forget(String jobId) {
+        schemas.delete(new LambdaQueryWrapper<StreamTableSchema>().eq(StreamTableSchema::getJobDefinitionId, jobId));
+    }
+
+    /** @param checkedAt when the source table was last read */
+    public record TableChanges(String table, String targetName, LocalDateTime checkedAt, List<ColumnChange> changes) {}
+
+    private SchemaFollow follow(WizardForm form) {
+        return new SchemaFollow(form, datasources.typeOf(form.source().datasourceId()), datasources.typeOf(form.target().datasourceId()));
+    }
+
+    private List<ColumnMeta> columns(String json) {
+        return objectMapper.readValue(json, COLUMNS);
+    }
+
+    private static LambdaQueryWrapper<StreamTableSchema> key(String jobId, String table, String side) {
+        return new LambdaQueryWrapper<StreamTableSchema>()
                 .eq(StreamTableSchema::getJobDefinitionId, jobId)
                 .eq(StreamTableSchema::getTableName, table)
                 .eq(StreamTableSchema::getSide, side);
+    }
+
+    /** Stores what is seen now and returns what was seen before; null on the first look. */
+    private List<ColumnMeta> remember(String jobId, String table, String side, List<ColumnMeta> now, boolean starting) {
+        LambdaQueryWrapper<StreamTableSchema> key = key(jobId, table, side);
         StreamTableSchema before = schemas.selectOne(key);
         StreamTableSchema row = new StreamTableSchema();
         row.setJobDefinitionId(jobId);
@@ -139,100 +185,22 @@ public class SchemaDriftWatcher {
         row.setSide(side);
         row.setColumnsJson(objectMapper.writeValueAsString(now));
         row.setCapturedAt(LocalDateTime.now());
+        if (starting || before == null) {
+            row.setStartColumnsJson(row.getColumnsJson());
+        }
         if (before == null) {
             schemas.insert(row);
             return null;
         }
         schemas.update(row, key);
-        return objectMapper.readValue(before.getColumnsJson(), COLUMNS);
+        return columns(before.getColumnsJson());
     }
 
     /** One event per changed source table: each change, and whether the target followed. */
-    private void report(JobInstance instance, WizardForm form, TableSpec table, String targetName, SchemaDiff changes, List<ColumnMeta> sink) {
-        Set<String> targetColumns = sink == null ? Set.of() : sink.stream().map(c -> c.name().toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
-        Expect expect = new Expect(form, datasources.typeOf(form.source().datasourceId()), datasources.typeOf(form.target().datasourceId()));
-        List<String> lines = new ArrayList<>();
-        boolean problem = false;
-        for (ColumnMeta c : changes.added()) {
-            boolean there = targetColumns.contains(c.name().toLowerCase(Locale.ROOT));
-            lines.add("新增列 " + c.name() + " " + c.type() + " → " + (there ? "目标端已同步" : expect.notYet(expect.adds(), "目标端没有加这一列")));
-            problem |= !there && !expect.adds();
-        }
-        for (Renamed r : changes.renamed()) {
-            String to = WizardGenerator.targetField(form, table, r.from()).equals(r.from()) ? r.to() : null;
-            boolean there = to != null && targetColumns.contains(to.toLowerCase(Locale.ROOT));
-            String text;
-            if (to == null) {
-                text = "这一列在任务里改了名，任务可能已经因此失败，需要修改任务后全新启动";
-            } else if (there) {
-                text = "目标端已同步";
-            } else if (expect.renames() && targetColumns.contains(r.from().toLowerCase(Locale.ROOT))) {
-                text = "改名未同步，目标端还是 " + r.from() + "，之后写入的这一列在目标端为空（MySQL 8 的 RENAME COLUMN 不会被同步，请用 CHANGE COLUMN）；"
-                        + "需要手动修改目标表，或修改任务后全新启动";
-            } else {
-                text = expect.notYet(expect.renames(), "目标端没有改名");
-            }
-            lines.add("列改名 " + r.from() + " → " + r.to() + " → " + text);
-            problem |= !there;
-        }
-        for (SchemaDiff.Retyped r : changes.retyped()) {
-            lines.add("列 " + r.column() + " 类型 " + r.from() + " → " + r.to() + (expect.retypes() ? "" : " → " + expect.why()));
-            problem |= !expect.retypes();
-        }
-        for (ColumnMeta c : changes.dropped()) {
-            boolean kept = targetColumns.contains(WizardGenerator.targetField(form, table, c.name()).toLowerCase(Locale.ROOT));
-            String text = !kept ? "目标端已删除这一列"
-                    : expect.drops() ? expect.notYet(true, "") : "目标端保留这一列，之后写入空值";
-            lines.add("删除列 " + c.name() + " → " + text);
-        }
+    private void report(JobInstance instance, SchemaFollow follow, TableSpec table, String targetName, SchemaDiff changes, List<ColumnMeta> sink) {
+        List<ColumnChange> assessed = follow.assess(table, changes, sink);
+        boolean problem = assessed.stream().anyMatch(ColumnChange::problem);
         runs.recorder().event(instance.getId(), instance.getAttemptCount(), RunEventType.SCHEMA_CHANGE, problem ? Level.WARN : Level.INFO,
-                "源表 " + table.name() + "（目标 " + targetName + "）结构变了：" + String.join("；", lines));
-    }
-
-    /** What the job passes on to the target, per its settings and connectors (§12 P2, Q24). */
-    private static final class Expect {
-
-        private final boolean on;
-        private final boolean postgres;
-        private final boolean allChanges;
-        private final boolean drops;
-
-        Expect(WizardForm form, String sourceType, String targetType) {
-            on = form.stream() != null && form.stream().schemaChanges();
-            postgres = PostgreSqlDataSourcePlugin.CDC_CONNECTOR.equals(WizardConnectors.capabilities(sourceType).cdcConnector());
-            allChanges = WizardConnectors.sink(targetType).appliesAllColumnChanges();
-            drops = on && !postgres && allChanges && form.stream().dropColumns();
-        }
-
-        boolean adds() {
-            return on;
-        }
-
-        boolean renames() {
-            return on && !postgres && allChanges;
-        }
-
-        boolean retypes() {
-            return renames();
-        }
-
-        boolean drops() {
-            return drops;
-        }
-
-        String why() {
-            if (!on) {
-                return "没有打开同步表结构变更，需要修改任务后重启";
-            }
-            if (postgres) {
-                return "PostgreSQL 只同步加列，任务会停下，需要修改任务后全新启动";
-            }
-            return "目标是 Elasticsearch，只同步加列，任务会停下，需要处理后全新启动";
-        }
-
-        /** For a change that should reach the target: it does when the table next has a row change. */
-        String notYet(boolean expected, String fallback) {
-            return expected ? "目标端还没有变化（一般在这张表下一次有数据变更时同步）" : (fallback.isEmpty() ? "" : fallback + "：") + why();
-        }
+                "源表 " + table.name() + "（目标 " + targetName + "）结构变了：" + String.join("；", assessed.stream().map(ColumnChange::line).toList()));
     }
 }

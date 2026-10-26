@@ -1,15 +1,18 @@
 <script setup lang="ts">
 /**
  * What a job syncs, on the job overview (design.md §10.4): source → processing → target, how it
- * writes, and which table goes where with what is done to it.
+ * writes, and which table goes where with what is done to it. For a real-time job, the tables
+ * whose structure changed since it started are listed first, each change with whether the target
+ * followed (design.md §12 P2, 表结构变更的反馈).
  */
 import { Box, Operation, Search } from '@element-plus/icons-vue'
 import { computed, ref } from 'vue'
 
-import type { FlowEndpoint, FlowSettings, JobFlow, StreamSettings } from '@/api/console'
+import type { FlowEndpoint, FlowSettings, JobFlow, StreamSettings, TableSchemaChanges } from '@/api/console'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
+import { formatTime } from '@/utils/format'
 
-const props = defineProps<{ flow: JobFlow; versionNo: number | null }>()
+const props = defineProps<{ flow: JobFlow; versionNo: number | null; tableChanges?: TableSchemaChanges[] }>()
 
 const { label: typeLabel } = useDatasourceTypes()
 
@@ -18,9 +21,16 @@ const showAll = ref(false)
 const tableFilter = ref('')
 
 const empty = computed(() => props.flow.sources.length === 0 && props.flow.sinks.length === 0)
+const changesOf = computed(() => new Map((props.tableChanges ?? []).map((c) => [c.table, c])))
+const changedCount = computed(() => props.flow.tables.filter((t) => changesOf.value.has(t.source)).length)
+const needsAction = (table: string) => !!changesOf.value.get(table)?.changes.some((c) => c.problem)
+/** Changed tables first, those needing action before the rest. */
+const rank = (table: string) => (needsAction(table) ? 0 : changesOf.value.has(table) ? 1 : 2)
+
 const filteredTables = computed(() => {
   const q = tableFilter.value.trim().toLowerCase()
-  return q ? props.flow.tables.filter((t) => t.source.toLowerCase().includes(q) || t.target.toLowerCase().includes(q)) : props.flow.tables
+  const tables = q ? props.flow.tables.filter((t) => t.source.toLowerCase().includes(q) || t.target.toLowerCase().includes(q)) : props.flow.tables
+  return changedCount.value ? [...tables].sort((a, b) => rank(a.source) - rank(b.source)) : tables
 })
 const shownTables = computed(() => (showAll.value || tableFilter.value.trim() ? filteredTables.value : filteredTables.value.slice(0, FOLDED)))
 
@@ -132,7 +142,10 @@ function endpointName(e: FlowEndpoint): string {
 
       <div v-if="flow.tables.length" class="mapping">
         <div class="mapping-head">
-          <span class="mapping-title">表映射<span class="count">{{ flow.tables.length }} 张</span></span>
+          <span class="mapping-title">
+            表映射<span class="count">{{ flow.tables.length }} 张</span>
+            <span v-if="changedCount" class="count changed">{{ changedCount }} 张启动后结构有变化，排在前面；运行中每 5 分钟对比一次</span>
+          </span>
           <el-input
             v-if="flow.tables.length > FOLDED"
             v-model="tableFilter"
@@ -144,7 +157,12 @@ function endpointName(e: FlowEndpoint): string {
         </div>
         <el-table :data="shownTables" size="small" class="mapping-table" empty-text="没有匹配的表">
           <el-table-column label="源表" min-width="200" show-overflow-tooltip>
-            <template #default="{ row }"><span class="mono">{{ row.source }}</span></template>
+            <template #default="{ row }">
+              <span class="mono">{{ row.source }}</span>
+              <el-tag v-if="changesOf.has(row.source)" size="small" :type="needsAction(row.source) ? 'warning' : 'info'" disable-transitions class="changed-tag">
+                {{ needsAction(row.source) ? '结构有变化 · 需要处理' : '结构有变化' }}
+              </el-tag>
+            </template>
           </el-table-column>
           <el-table-column width="36" align="center">
             <template #default><span class="arrow">→</span></template>
@@ -157,8 +175,14 @@ function endpointName(e: FlowEndpoint): string {
           </el-table-column>
           <el-table-column label="说明" min-width="280">
             <template #default="{ row }">
-              <span v-if="!row.notes.length" class="none" title="原样同步">—</span>
+              <span v-if="!row.notes.length && !changesOf.has(row.source)" class="none" title="原样同步">—</span>
               <span v-for="n in row.notes" :key="n" class="note-tag" :title="n">{{ n }}</span>
+              <ul v-if="changesOf.has(row.source)" class="col-changes">
+                <li v-for="(c, i) in changesOf.get(row.source)!.changes" :key="i" :class="{ problem: c.problem }">
+                  <span class="change">{{ c.change }}</span><template v-if="c.status"> → {{ c.status }}</template>
+                </li>
+                <li class="checked">{{ formatTime(changesOf.get(row.source)!.checkedAt) }} 对比</li>
+              </ul>
             </template>
           </el-table-column>
         </el-table>
@@ -480,5 +504,34 @@ function endpointName(e: FlowEndpoint): string {
   .settings {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+.count.changed {
+  color: var(--el-color-warning-dark-2);
+}
+
+.changed-tag {
+  margin-left: 6px;
+}
+
+.col-changes {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+  color: var(--el-text-color-regular);
+}
+
+.col-changes .change {
+  font-weight: 500;
+}
+
+.col-changes .problem {
+  color: var(--el-color-warning-dark-2);
+}
+
+.col-changes .checked {
+  color: var(--el-text-color-secondary);
 }
 </style>

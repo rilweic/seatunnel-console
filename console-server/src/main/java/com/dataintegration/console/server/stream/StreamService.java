@@ -21,6 +21,7 @@ import com.dataintegration.console.server.run.RunRecorder.Level;
 import com.dataintegration.console.server.run.RunStatus;
 import com.dataintegration.console.server.stream.RestorePlan.Asked;
 import com.dataintegration.console.server.stream.RestorePlan.Decision;
+import com.dataintegration.console.server.stream.SchemaDriftWatcher.TableChanges;
 
 import org.springframework.stereotype.Service;
 
@@ -79,7 +80,8 @@ public class StreamService {
             String lastRunId,
             String lastRunStatus,
             String lastRunMessage,
-            List<SchemaChange> schemaChanges) {}
+            List<SchemaChange> schemaChanges,
+            List<TableChanges> tableChanges) {}
 
     /** A table-structure change the watcher noticed (§12 P2, Q16); level WARN when the target did not follow. */
     public record SchemaChange(LocalDateTime time, String level, String message) {}
@@ -153,7 +155,14 @@ public class StreamService {
                 last == null ? null : last.getId(),
                 last == null ? null : last.getStatus(),
                 last == null ? null : last.getErrorMessage(),
-                runs.schemaEvents(jobId, 10).stream().map(e -> new SchemaChange(e.getCreatedAt(), e.getLevel(), e.getMessage())).toList());
+                runs.schemaEvents(jobId, 10).stream().map(e -> new SchemaChange(e.getCreatedAt(), e.getLevel(), e.getMessage())).toList(),
+                tableChanges(jobId, last));
+    }
+
+    /** Each table's changes since the latest start, by the form that start runs; none for scripts or before a start. */
+    private List<TableChanges> tableChanges(String jobId, JobInstance last) {
+        WizardForm form = last == null ? null : form(jobService.requireVersion(last.getJobVersionId()));
+        return form == null ? List.of() : schemaWatcher.sinceStart(jobId, form);
     }
 
     /** States of the listed jobs, by job id; offline jobs are left out. */
@@ -233,7 +242,7 @@ public class StreamService {
         }
         try {
             // what the tables look like now, so changes from here on are noticed
-            schemaWatcher.check(jobId);
+            schemaWatcher.check(jobId, true);
         } catch (RuntimeException e) {
             // the watcher tries again on its next round
         }
@@ -291,6 +300,7 @@ public class StreamService {
         JobStream stream = identity.require(jobId);
         String source = sourceDatasource(job);
         jobService.delete(jobId, deleteRuns);
+        schemaWatcher.forget(jobId);
         if (!dropReplication || source == null || stream.getReplicationName() == null
                 || datasources.plugin(datasources.typeOf(source)).cdcSupport() == null) {
             return List.of();

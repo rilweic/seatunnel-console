@@ -16,5 +16,7 @@ public class StreamTableSchema {
     /** SOURCE or TARGET */
     private String side;
     private String columnsJson;
+    /** the structure when the job's latest start began; changes since are shown on its detail page */
+    private String startColumnsJson;
     private LocalDateTime capturedAt;
 }

@@ -111,7 +111,7 @@ watch(() => props.view, () => (now.value = Date.now()))
       </ul>
     </template>
 
-    <JobFlowCard v-if="overview" :flow="overview.flow" :version-no="job.currentVersionNo" />
+    <JobFlowCard v-if="overview" :flow="overview.flow" :version-no="job.currentVersionNo" :table-changes="view.tableChanges" />
   </div>
 </template>
 
