@@ -24,6 +24,9 @@ public class JobStream {
     private Integer serverIdStart;
     private String replicationName;
     private String currentInstanceId;
+    private String stopRequested;
+    private LocalDateTime stopRequestedAt;
+    private LocalDateTime restartAt;
     private String restoreEngineJobId;
     private String restoreKind;
     private String restoreVersionId;

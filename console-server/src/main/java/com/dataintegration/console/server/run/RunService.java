@@ -10,6 +10,7 @@ import com.dataintegration.console.server.job.SyncWindow;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
+import com.dataintegration.console.server.stream.StreamRunType;
 import com.dataintegration.console.server.run.RunRecorder.Level;
 import com.dataintegration.console.server.scheduler.ScheduledTrigger;
 import com.dataintegration.console.server.scheduler.TriggerParam;
@@ -163,6 +164,10 @@ public class RunService {
      *     no run to stop yet, still prevents the run.
      */
     public String start(NewRun run, BooleanSupplier stillWanted) {
+        if (JobService.TYPE_STREAMING.equals(run.job().getJobType())) {
+            // runs, reruns and backfills are offline; a real-time job is started from its own page (§12 P2)
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "实时任务请在任务页启动");
+        }
         return handOver(record(run), run, stillWanted);
     }
 
@@ -259,7 +264,11 @@ public class RunService {
      */
     public void stop(String instanceId) {
         String reason = "stopped by " + username();
-        jobService.requireEditableIncludingDeleted(recorder.requireInstance(instanceId).getJobDefinitionId());
+        JobInstance target = recorder.requireInstance(instanceId);
+        jobService.requireEditableIncludingDeleted(target.getJobDefinitionId());
+        if (StreamRunType.START.equals(target.getTriggerType())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "实时任务请在任务页停止");
+        }
         if (recorder.cancelPending(instanceId, reason)) {
             recorder.event(instanceId, null, RunEventType.FINISHED, Level.WARN, RunStatus.CANCELED + ": " + reason);
             return;

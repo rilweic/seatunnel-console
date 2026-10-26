@@ -41,13 +41,13 @@ final class StreamPrecheck {
         for (TableSpec table : form.source().tables()) {
             List<ColumnMeta> columns = sourceColumns.get(table.name());
             if (columns != null) {
-                checkTable(form, table, columns, stream, allChanges && !onlyAdds, checks);
+                checkTable(form, table, columns, endpoints.sourceColumns(), stream, allChanges && !onlyAdds, checks);
             }
         }
     }
 
-    private static void checkTable(WizardForm form, TableSpec table, List<ColumnMeta> synced, Stream stream, boolean dropsApplied,
-            List<Check> checks) {
+    private static void checkTable(WizardForm form, TableSpec table, List<ColumnMeta> synced, Map<String, List<String>> known,
+            Stream stream, boolean dropsApplied, List<Check> checks) {
         // renamed and pruned columns are handled by transforms that fail the job on a change to them
         List<String> fragile = new ArrayList<>();
         for (ColumnMeta column : synced) {
@@ -55,8 +55,8 @@ final class StreamPrecheck {
                 fragile.add(column.name() + "（改名为 " + WizardGenerator.targetField(form, table, column.name()) + "）");
             }
         }
-        if (!table.allColumns()) {
-            fragile.add("没有同步的字段");
+        if (!table.allColumns() && known != null && known.get(table.name()) != null) {
+            known.get(table.name()).stream().filter(c -> !table.columns().contains(c)).forEach(c -> fragile.add(c + "（不同步）"));
         }
         if (!fragile.isEmpty()) {
             checks.add(new Check(Level.WARN, table.name() + "：这些列以后不能在源端改名、删除或改类型，否则任务会失败：" + String.join("、", fragile)));

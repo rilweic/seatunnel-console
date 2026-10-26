@@ -372,4 +372,18 @@ class HoconTemplateTest {
         assertThat(script.explicitSecrets()).containsExactly("transform.FieldEncrypt.key");
         assertThat(script.renderMasked((connector, id) -> Map.of())).doesNotContain("c2VjcmV0").contains("******");
     }
+
+    @Test
+    void envOptionsKeepTheirDottedNamesAsSingleKeysBecauseZetaLooksThemUpByFullName() {
+        String rendered = HoconTemplate.parse("""
+                env { job.mode = "STREAMING", checkpoint.interval = 10000, checkpoint.retain-after-job-cancelled = true }
+                source { FakeSource { plugin_output = "s" } }
+                sink { Console { plugin_input = ["s"] } }
+                """).render((connector, id) -> java.util.Map.of());
+
+        assertThat(rendered)
+                .contains("\"checkpoint.retain-after-job-cancelled\":true")
+                .contains("\"checkpoint.interval\":10000")
+                .contains("\"job.mode\":\"STREAMING\"");
+    }
 }

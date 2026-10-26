@@ -95,7 +95,7 @@ public class BatchJobRunner {
      * An engine job id for a fresh submission. Zeta's own ids come from a Hazelcast flake id
      * generator and stay far below 2^62; ids from here start there, so the two never meet.
      */
-    static long newJobId() {
+    public static long newJobId() {
         return ThreadLocalRandom.current().nextLong(1L << 62, Long.MAX_VALUE);
     }
 

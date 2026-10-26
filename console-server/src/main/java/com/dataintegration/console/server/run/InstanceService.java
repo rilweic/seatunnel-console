@@ -7,6 +7,7 @@ import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.common.PageResult;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
+import com.dataintegration.console.server.stream.StreamRunType;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
 import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
 import com.dataintegration.console.server.persistence.entity.JobMetricSample;
@@ -316,6 +317,8 @@ public class InstanceService {
         return new LambdaQueryWrapper<JobInstance>()
                 .eq(blank(projectId), JobInstance::getProjectId, projectId)
                 .eq(blank(jobId), JobInstance::getJobDefinitionId, jobId)
+                // the run list is about offline runs; a real-time job's starts show on its own page (§12 P2)
+                .ne(!blank(jobId), JobInstance::getTriggerType, StreamRunType.START)
                 .apply(blank(jobName), "job_definition_id in (select id from job_definition where name like {0})",
                         "%" + Pages.literal(jobName) + "%")
                 .eq(blank(status), JobInstance::getStatus, status)

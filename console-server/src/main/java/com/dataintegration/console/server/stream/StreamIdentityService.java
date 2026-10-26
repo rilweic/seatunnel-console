@@ -4,6 +4,7 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.datasource.jdbc.MySqlDataSourcePlugin;
 import com.dataintegration.console.datasource.jdbc.PostgreSqlDataSourcePlugin;
+import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.persistence.entity.JobStream;
 import com.dataintegration.console.server.persistence.mapper.JobStreamMapper;
 
@@ -63,6 +64,19 @@ public class StreamIdentityService {
             throw new ConsoleException(ErrorCodes.NOT_FOUND, "not a real-time job: " + jobId);
         }
         return stream;
+    }
+
+    /** What rendering adds to the job's CDC source blocks; nothing for an offline job. */
+    public JobConfigRenderer.ConnectorExtras extras(String jobId) {
+        JobStream stream = mapper.selectById(jobId);
+        return stream == null
+                ? JobConfigRenderer.NO_EXTRAS
+                : (connector, template) -> sourceOptions(stream, connector, template.parallelism());
+    }
+
+    /** The job's stream row, or null for an offline job. */
+    public JobStream find(String jobId) {
+        return mapper.selectById(jobId);
     }
 
     /**

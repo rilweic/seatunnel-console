@@ -596,6 +596,15 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 - **自动恢复中的状态**：`/job-info` 在 pipeline 自动恢复期间仍是 RUNNING；console 读 `diagnostics.pipelines[].restoreCount`，大于 0 时显示"运行中（异常，正在自动恢复第 n/3 次）"，记事件并计入异常数
 - **代码组织**：按模块拆分（CDC 来源是新的 `WizardSource`，流任务的启停、监控、结构对比各自成类），不往已有的批处理类里堆分支
 
+#### P2 实现说明（2026-10-27）
+
+- **代码位置**：CDC 来源是 `job/wizard/source/CdcSource`，实时任务专用的 transform 和预检查在 `StreamTransforms`、`StreamPrecheck`；启停、监控和恢复都在 `stream/` 包：`StreamService`（启动、停止、设置、删除）、`StreamMonitor`（定时跟踪引擎作业）、`StreamSubmitter`（渲染并提交）、`StreamRuns`（运行记录）、`StreamIdentityService`（server-id 段和复制槽名）、`CdcReadiness`（实时同步条件）；纯规则 `RestorePlan`、`AutoRestartPolicy`、`CheckpointHealth`、`StreamFailure` 单独测试。数据源的检查在 console-datasource 的 `CdcSupport`（`MySqlCdcSupport`、`PostgresCdcSupport`）
+- **恢复位置跟着 checkpoint 走**：运行中的作业一旦完成过 checkpoint，`job_stream.restore_*` 就指向它；还没完成过的（例如全量阶段就失败）保持启动时的位置（savepoint，或者没有）。所以失败、强制停止后的恢复和自动重启都从"最近一次真正完成的 checkpoint"开始，没有就全新启动。正常停止记 savepoint
+- **env 里的选项按完整名字传**：console 渲染配置时 `checkpoint.interval` 这类带点的 env 选项保持为一个键。标准 HOCON 会把它解析成嵌套对象，而 Zeta 按完整名字查 env（`checkpoint.retain-after-job-cancelled`），嵌套后不生效（2026-10-27 实测发现并修复）。connector 选项按路径读取，嵌套没有影响
+- **全新启动前重新预检查**：向导任务全新启动时按源表、目标表的当前结构再跑一遍预检查，有错误就拒绝启动并说明（比如源表改了列名，映射里的字段已经不存在），而不是等引擎在写入时失败。从保存的位置恢复时不检查
+- **性能取舍**（Q30、Q31）：状态每 10 秒查一次（只查运行中的任务）；计数、吞吐量采样和 checkpoint 状态每 60 秒一次（`console.stream.sample-interval`），所以"最近读到数据的时间"和 checkpoint 时间的精度是一分钟；复制槽占用的 WAL 只在打开已停止任务的详情时查；启动时的条件检查每次启动做一次
+- 运行记录列表和"运行中的批量运行在 console 重启后记为失败"都不包括实时任务的运行（`trigger_type = START`）；离线任务的立即运行、重跑、补数和调度接口拒绝实时任务
+
 #### P2 实测结论（2026-10-26，SeaTunnel 3.0.1-SNAPSHOT 单节点，直接向 Zeta 提交）
 
 | 源端 DDL | MySQL → MySQL | MySQL → PG | MySQL → ES | PG → MySQL |

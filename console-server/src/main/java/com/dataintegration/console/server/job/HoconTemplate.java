@@ -446,6 +446,9 @@ public final class HoconTemplate {
 
     private String render(OptionsResolver resolver, KeyResolver keys, boolean mask) {
         ConfigObject root = config.root();
+        if (root.get("env") instanceof ConfigObject env) {
+            root = root.withValue("env", flatEnv(env));
+        }
         if (root.get("transform") != null && (keys != null || mask)) {
             root = root.withValue("transform", injectKeys(root.get("transform"), keys, mask, false));
         }
@@ -460,6 +463,33 @@ public final class HoconTemplate {
             root = root.withValue(section, rewritten);
         }
         return (mask ? maskSecrets(root) : root).render(ConfigRenderOptions.concise());
+    }
+
+    /**
+     * The env block with dotted option names as single keys ({@code "checkpoint.interval"}), as
+     * SeaTunnel's own parser leaves them. Parsed here, {@code checkpoint.interval = 1} becomes a
+     * nested object, which Zeta does not find where it looks up env options by their full name
+     * (e.g. {@code checkpoint.retain-after-job-cancelled}, verified on 3.0.1).
+     */
+    static ConfigObject flatEnv(ConfigObject env) {
+        Map<String, ConfigValue> flat = new LinkedHashMap<>();
+        flatten("", env, flat);
+        ConfigObject result = ConfigValueFactory.fromMap(Map.of());
+        for (Map.Entry<String, ConfigValue> entry : flat.entrySet()) {
+            result = result.withValue(entry.getKey(), entry.getValue());
+        }
+        return result;
+    }
+
+    private static void flatten(String prefix, ConfigObject object, Map<String, ConfigValue> into) {
+        for (Map.Entry<String, ConfigValue> entry : object.entrySet()) {
+            String key = prefix + entry.getKey();
+            if (entry.getValue() instanceof ConfigObject nested && !nested.isEmpty()) {
+                flatten(key + ".", nested, into);
+            } else {
+                into.put(key, entry.getValue());
+            }
+        }
     }
 
     /**

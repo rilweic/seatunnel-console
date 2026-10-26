@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
+import com.dataintegration.console.server.stream.StreamRunType;
 import com.dataintegration.console.server.run.RunRecorder.Level;
 
 import org.slf4j.Logger;
@@ -23,7 +24,8 @@ import java.util.List;
  *
  * <ul>
  *   <li>at startup, RUNNING runs belonged to the previous process (the console is single-instance)
- *       and are marked FAILED; the engine job may still be running and is named in the message
+ *       and are marked FAILED; the engine job may still be running and is named in the message.
+ *       Streaming runs are not: {@code stream.StreamMonitor} picks them up again
  *   <li>PENDING runs that XXL-JOB never started within the grace period are marked FAILED. A run
  *       queued behind another run of its job (XXL-JOB runs one job's triggers one at a time) is not
  *       stale: the grace period counts from when the job last had a run going
@@ -50,7 +52,10 @@ public class RunReconciler {
     @EventListener(ApplicationReadyEvent.class)
     public void failOrphanedRuns() {
         List<JobInstance> running = instanceMapper.selectList(
-                new LambdaQueryWrapper<JobInstance>().eq(JobInstance::getStatus, RunStatus.RUNNING.name()));
+                new LambdaQueryWrapper<JobInstance>()
+                        .eq(JobInstance::getStatus, RunStatus.RUNNING.name())
+                        // streaming runs live on in the engine; the stream monitor carries on with them
+                        .ne(JobInstance::getTriggerType, StreamRunType.START));
         for (JobInstance instance : running) {
             recorder.failOrphaned(instance, "console restarted while this run was being monitored; "
                     + "check the SeaTunnel cluster for the engine job of the last attempt");

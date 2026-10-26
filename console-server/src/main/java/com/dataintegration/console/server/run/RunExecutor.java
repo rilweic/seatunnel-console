@@ -75,8 +75,7 @@ public class RunExecutor {
     private final JobScheduleMapper scheduleMapper;
     private final WatermarkService watermarks;
     private final EngineClient engineClient;
-    private final EngineLogService engineLogService;
-    private final LogStorage logStorage;
+    private final AttemptLogArchiver logArchiver;
     private final ObjectMapper objectMapper;
     private final BatchJobRunner runner;
 
@@ -92,8 +91,7 @@ public class RunExecutor {
             JobScheduleMapper scheduleMapper,
             WatermarkService watermarks,
             EngineClient engineClient,
-            EngineLogService engineLogService,
-            LogStorage logStorage,
+            AttemptLogArchiver logArchiver,
             ObjectMapper objectMapper,
             @Value("${console.run.poll-interval:2s}") Duration pollInterval) {
         this.recorder = recorder;
@@ -104,8 +102,7 @@ public class RunExecutor {
         this.scheduleMapper = scheduleMapper;
         this.watermarks = watermarks;
         this.engineClient = engineClient;
-        this.engineLogService = engineLogService;
-        this.logStorage = logStorage;
+        this.logArchiver = logArchiver;
         this.objectMapper = objectMapper;
         this.runner = new BatchJobRunner(engineClient, pollInterval);
     }
@@ -259,32 +256,8 @@ public class RunExecutor {
         attempt.setErrorMessage(RunRecorder.clip(outcome.errorMessage()));
         attempt.setFinishedAt(LocalDateTime.now());
         recorder.update(attempt);
-        archiveLog(instance, attempt, outcome.engineJobId());
+        logArchiver.archive(instance.getId(), attempt, outcome.engineJobId());
         return outcome;
-    }
-
-    /** Pulls the attempt's SeaTunnel log from all engine nodes before Zeta deletes it (after one day by default). */
-    private void archiveLog(JobInstance instance, JobInstanceAttempt attempt, long engineJobId) {
-        try {
-            EngineLogService.CollectedLog collected = engineLogService.collect(engineJobId);
-            if (collected.fileCount() == 0) {
-                recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.LOG_ARCHIVED, Level.WARN,
-                        "SeaTunnel returned no job log; enable per-job logs on every node "
-                                + "(rootLogger.appenderRef.file.ref = routingAppender in config/log4j2.properties)");
-                return;
-            }
-            attempt.setLogStorageKey(logStorage.write(attempt.getId(), java.time.LocalDate.now(), collected.text()));
-            attempt.setLogSizeBytes((long) collected.text().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
-            attempt.setLogTruncated(collected.truncated());
-            attempt.setLogArchivedAt(LocalDateTime.now());
-            recorder.update(attempt);
-            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.LOG_ARCHIVED, Level.INFO,
-                    "archived SeaTunnel log from " + collected.fileCount() + " node(s)");
-        } catch (RuntimeException e) {
-            log.warn("Archiving log of engine job {} failed: {}", engineJobId, e.toString());
-            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.LOG_ARCHIVED, Level.WARN,
-                    "could not archive SeaTunnel log: " + e.getMessage());
-        }
     }
 
     /**

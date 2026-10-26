@@ -29,6 +29,8 @@ import com.dataintegration.console.server.persistence.mapper.ProjectMapper;
 import com.dataintegration.console.server.project.ProjectService;
 import com.dataintegration.console.server.run.RunCleanupService;
 import com.dataintegration.console.server.scheduler.XxlJobAdminClient;
+import com.dataintegration.console.server.stream.CdcReadiness;
+import com.dataintegration.console.server.stream.StreamIdentityService;
 import com.dataintegration.console.server.user.UserDirectory;
 import com.dataintegration.console.server.web.Pages;
 
@@ -60,6 +62,8 @@ public class JobService {
     private static final Logger log = LoggerFactory.getLogger(JobService.class);
 
     public static final String TYPE_BATCH = "BATCH";
+    /** A real-time job (docs/design.md §12 P2), started and stopped by stream.StreamService. */
+    public static final String TYPE_STREAMING = "STREAMING";
     public static final String MODE_SCRIPT = "SCRIPT";
     public static final String MODE_FORM = "FORM";
 
@@ -137,6 +141,8 @@ public class JobService {
     private final BackfillBatchMapper backfillMapper;
     private final EncryptKeyService encryptKeys;
     private final RunCleanupService runCleanup;
+    private final StreamIdentityService streams;
+    private final CdcReadiness cdcReadiness;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -156,7 +162,9 @@ public class JobService {
             JobInstanceMapper instanceMapper,
             BackfillBatchMapper backfillMapper,
             EncryptKeyService encryptKeys,
-            RunCleanupService runCleanup) {
+            RunCleanupService runCleanup,
+            StreamIdentityService streams,
+            CdcReadiness cdcReadiness) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -175,10 +183,17 @@ public class JobService {
         this.backfillMapper = backfillMapper;
         this.encryptKeys = encryptKeys;
         this.runCleanup = runCleanup;
+        this.streams = streams;
+        this.cdcReadiness = cdcReadiness;
     }
 
     /** @param mine only the current user's jobs */
     public PageResult<JobView> list(String projectId, String keyword, boolean mine, Integer page, Integer size) {
+        return list(projectId, keyword, mine, null, page, size);
+    }
+
+    /** @param jobType BATCH or STREAMING (the offline and real-time menus); null for both */
+    public PageResult<JobView> list(String projectId, String keyword, boolean mine, String jobType, Integer page, Integer size) {
         Page<JobDefinition> result =
                 jobMapper.selectPage(
                         Pages.of(page, size),
@@ -186,6 +201,7 @@ public class JobService {
                                 .eq(projectId != null && !projectId.isBlank(), JobDefinition::getProjectId, projectId)
                                 .like(keyword != null && !keyword.isBlank(), JobDefinition::getName, Pages.literal(keyword))
                                 .eq(mine, JobDefinition::getCreatedBy, CurrentUser.idOrNull())
+                                .eq(jobType != null && !jobType.isBlank(), JobDefinition::getJobType, jobType)
                                 .orderByDesc(JobDefinition::getUpdatedAt));
         Map<String, Integer> versionNos = versionNos(result.getRecords());
         Map<String, String> projectNames =
@@ -205,8 +221,8 @@ public class JobService {
 
     public JobView create(String projectId, String name, String jobType, String editMode, String description) {
         projectService.requireEditable(projectId);
-        if (!TYPE_BATCH.equals(jobType)) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "only BATCH jobs are supported in this version");
+        if (!TYPE_BATCH.equals(jobType) && !TYPE_STREAMING.equals(jobType)) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "job type must be BATCH or STREAMING");
         }
         JobDefinition job = new JobDefinition();
         job.setProjectId(projectId);
@@ -219,6 +235,9 @@ public class JobService {
         job.setDescription(description);
         job.setCreatedBy(CurrentUser.idOrNull());
         jobMapper.insert(job);
+        if (TYPE_STREAMING.equals(jobType)) {
+            streams.create(job.getId());
+        }
         return view(job, null);
     }
 
@@ -354,8 +373,10 @@ public class JobService {
             if (form == null) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is edited with the wizard; send the form");
             }
+            requireFormType(job, form);
             requireOwnersDatasources(job, wizardDatasources(form));
-            WizardService.PrecheckResult check = wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), null));
+            WizardService.PrecheckResult check = withCdcReadiness(job, form,
+                    wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), null)));
             if (!check.passed()) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "预检查未通过：" + String.join("；", check.errors()));
             }
@@ -380,6 +401,9 @@ public class JobService {
         String mode = template.jobMode();
         if (TYPE_BATCH.equals(job.getJobType()) && mode != null && !TYPE_BATCH.equalsIgnoreCase(mode)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "env.job.mode must be BATCH for a batch job, got " + mode);
+        }
+        if (TYPE_STREAMING.equals(job.getJobType()) && !TYPE_STREAMING.equalsIgnoreCase(mode)) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "实时任务的 env.job.mode 必须是 STREAMING" + (mode == null ? "" : "，当前是 " + mode));
         }
         Set<String> datasourceIds = new LinkedHashSet<>();
         for (DatasourceRef ref : template.datasourceRefs()) {
@@ -462,8 +486,28 @@ public class JobService {
         if (!MODE_FORM.equals(job.getEditMode())) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is not edited with the wizard");
         }
+        requireFormType(job, form);
         requireOwnersDatasources(job, wizardDatasources(form));
-        return wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID));
+        return withCdcReadiness(job, form,
+                wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID)));
+    }
+
+    /** A real-time job's form carries the stream settings, an offline job's does not. */
+    private static void requireFormType(JobDefinition job, WizardForm form) {
+        if (form.streaming() != TYPE_STREAMING.equals(job.getJobType())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT,
+                    form.streaming() ? "离线任务的表单不能带实时同步设置" : "实时任务的表单缺少实时同步设置");
+        }
+    }
+
+    /** For a real-time job, whether its source database is set up for CDC (§12 P2, Q30); a failure stops saving. */
+    private WizardService.PrecheckResult withCdcReadiness(JobDefinition job, WizardForm form, WizardService.PrecheckResult result) {
+        if (!form.streaming() || result.generated() == null) {
+            return result;
+        }
+        List<WizardService.Check> checks = new ArrayList<>(cdcReadiness.wizardChecks(streams.find(job.getId()), form));
+        checks.addAll(result.checks());
+        return new WizardService.PrecheckResult(checks, result.generated());
     }
 
     /** Sends the first page of an unsaved HTTP source with the same variables as a precheck. */
@@ -521,8 +565,9 @@ public class JobService {
     public PreviewResult preview(
             String jobId, String hocon, Map<String, String> params, Map<String, String> startupParams, LocalDateTime scheduledTime) {
         JobDefinition job = requireEditable(jobId);
-        JobConfigRenderer.Rendered rendered = renderer.render(
-                job, hocon, params, startupParams, scheduledTime == null ? LocalDateTime.now() : scheduledTime, PREVIEW_INSTANCE_ID, false);
+        LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
+        JobConfigRenderer.Rendered rendered = renderer.render(job, hocon, params, startupParams, time, PREVIEW_INSTANCE_ID,
+                JobConfigRenderer.nextWindow(job, time), false, streams.extras(jobId));
         return new PreviewResult(rendered.variables(), rendered.masked(), List.copyOf(rendered.unresolved()));
     }
 

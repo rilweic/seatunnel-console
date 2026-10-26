@@ -91,6 +91,9 @@ public class ScheduleService {
 
     public ScheduleView save(String jobId, ScheduleCommand command) {
         JobDefinition job = jobService.requireEditable(jobId);
+        if (JobService.TYPE_STREAMING.equals(job.getJobType())) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "实时任务没有调度，在任务页启动和停止");
+        }
         XxlJobAdminClient client = requireClient();
         CronSchedule.parseSchedule(command.cron(), LocalDateTime.now());
         if (command.enabled() && job.getCurrentVersionId() == null) {
