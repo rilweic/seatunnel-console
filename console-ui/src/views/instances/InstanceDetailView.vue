@@ -55,6 +55,9 @@ function onLogKeydown(event: KeyboardEvent) {
 
 const instance = computed(() => detail.value?.instance)
 const active = computed(() => (instance.value ? isActive(instance.value.status) : false))
+/** A start of a real-time job: started and stopped from its job page, never rerun (design.md §12 P2). */
+const realtime = computed(() => instance.value?.triggerType === 'START')
+const jobPath = computed(() => (realtime.value ? '/realtime/' : '/jobs/') + instance.value?.jobDefinitionId)
 
 const variables = computed(() => {
   try {
@@ -74,10 +77,11 @@ async function loadDetail() {
   detail.value = loaded
   if (first) {
     const i = detail.value.instance
+    const start = i.triggerType === 'START'
     setBreadcrumb([
-      { title: '运行记录', to: listUrl('/instances') },
-      { title: i.jobName ?? '已删除的任务', to: i.jobDeleted ? undefined : `/jobs/${i.jobDefinitionId}` },
-      { title: `${triggerText[i.triggerType]}运行 · ${formatTime(i.scheduledTime).slice(5, 16)}` },
+      start ? { title: '实时同步', to: listUrl('/realtime') } : { title: '运行记录', to: listUrl('/instances') },
+      { title: i.jobName ?? '已删除的任务', to: i.jobDeleted ? undefined : `${start ? '/realtime/' : '/jobs/'}${i.jobDefinitionId}` },
+      { title: `${start ? '启动' : triggerText[i.triggerType] + '运行'} · ${formatTime(i.scheduledTime).slice(5, 16)}` },
     ])
   }
   const attempts = detail.value.attempts
@@ -227,20 +231,21 @@ onBeforeUnmount(() => {
       </div>
       <div class="head">
         <div class="title">
-          <BackButton :fallback="instance.jobDeleted ? '/instances' : `/jobs/${instance.jobDefinitionId}/runs`" />
+          <BackButton :fallback="instance.jobDeleted ? '/instances' : realtime ? `${jobPath}/history` : `${jobPath}/runs`" />
           <el-tag :type="statusTag[instance.status as RunStatus]" size="large">{{ statusText[instance.status as RunStatus] }}</el-tag>
-          <router-link v-if="!instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}`" class="job">{{ instance.jobName }}</router-link>
+          <router-link v-if="!instance.jobDeleted" :to="jobPath" class="job">{{ instance.jobName }}</router-link>
           <span v-else class="job">{{ instance.jobName ?? '已删除的任务' }}</span>
           <el-tag v-if="instance.jobDeleted" type="info">已删除</el-tag>
-          <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
+          <span class="muted">v{{ instance.versionNo }} · {{ realtime ? '实时任务启动' : triggerText[instance.triggerType] + '运行' }}<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
           <el-tooltip v-if="instance.windowEnd" content="这次运行读取的同步窗口（连续增量），左闭右开；重试和重跑都读同一个窗口" placement="bottom">
             <span class="muted">同步窗口 [{{ instance.windowStart ? formatTime(instance.windowStart) : '最早' }}, {{ formatTime(instance.windowEnd) }})</span>
           </el-tooltip>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
           <router-link v-if="instance.backfillBatchId && !instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">查看补数批次</router-link>
         </div>
-        <div>
-          <el-button v-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>
+        <div class="actions">
+          <router-link v-if="realtime" :to="jobPath" class="muted">在任务页启动和停止</router-link>
+          <el-button v-else-if="active" type="danger" plain :loading="stopping" :disabled="!instance.editable" @click="stop">停止</el-button>
           <el-button v-else :disabled="!instance.editable" @click="rerunDialog = { visible: true, useLatestVersion: false, loading: false }">重跑</el-button>
           <el-button @click="refresh">刷新</el-button>
         </div>
@@ -381,13 +386,19 @@ onBeforeUnmount(() => {
 .head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 16px;
   margin-bottom: 16px;
+}
+
+.actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
 }
 
 @media (max-width: 700px) {
   .head {
-    align-items: flex-start;
     flex-direction: column;
     gap: 12px;
   }
@@ -395,9 +406,11 @@ onBeforeUnmount(() => {
 
 .title {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
   margin-left: -6px;
 }
 

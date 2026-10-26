@@ -4,6 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { datasourceApi, type DatasourceView } from '@/api/console'
+import CdcCheckDialog from '@/components/CdcCheckDialog.vue'
+import DatasourceTypeIcon from '@/components/DatasourceTypeIcon.vue'
 import { datasourceForms } from '@/components/datasource/forms'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 import { useUserStore } from '@/stores/user'
@@ -11,7 +13,10 @@ import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
-const { types, label: typeLabel } = useDatasourceTypes()
+const { types, label: typeLabel, capabilities } = useDatasourceTypes()
+/** The datasource whose real-time (CDC) conditions are being checked. */
+const cdcChecking = ref<DatasourceView | null>(null)
+const cdcOpen = computed({ get: () => cdcChecking.value !== null, set: (open) => { if (!open) cdcChecking.value = null } })
 /** Types the server supports and this page has a form for, in the server's order. */
 const creatableTypes = computed(() => types.value.filter((t) => datasourceForms[t.type]))
 
@@ -146,14 +151,18 @@ onMounted(load)
       </el-radio-group>
         <el-input v-model="query.keyword" placeholder="搜索名称" clearable class="search" @change="apply()" />
         <el-select v-model="query.type" placeholder="全部类型" clearable class="type" @change="apply()">
-          <el-option v-for="t in types" :key="t.type" :label="t.capabilities.label" :value="t.type" />
+          <el-option v-for="t in types" :key="t.type" :label="t.capabilities.label" :value="t.type">
+            <span class="type-option"><DatasourceTypeIcon :type="t.type" />{{ t.capabilities.label }}</span>
+          </el-option>
         </el-select>
       </div>
     </div>
     <el-table v-loading="loading" :data="rows">
       <el-table-column prop="name" label="名称" min-width="160" />
-      <el-table-column label="类型" width="130">
-        <template #default="{ row }">{{ typeLabel(row.type) }}</template>
+      <el-table-column label="类型" width="160">
+        <template #default="{ row }">
+          <span class="type-option"><DatasourceTypeIcon :type="row.type" />{{ typeLabel(row.type) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="地址" min-width="220" show-overflow-tooltip>
         <template #default="{ row }">{{ row.address }}</template>
@@ -164,9 +173,10 @@ onMounted(load)
       <el-table-column label="创建人" width="120">
         <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="290" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" :disabled="!row.editable" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="capabilities(row.type)?.cdcConnector" link type="primary" :disabled="!row.editable" @click="cdcChecking = row">实时同步条件</el-button>
           <el-button link type="primary" @click="copyId(row)">复制 ID</el-button>
           <el-button link type="danger" :disabled="!row.editable" @click="remove(row)">删除</el-button>
         </template>
@@ -182,6 +192,7 @@ onMounted(load)
       @current-change="apply(false)"
     />
   </el-card>
+  <CdcCheckDialog v-model="cdcOpen" :datasource="cdcChecking" />
 
   <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑数据源' : '新建数据源'" width="560px">
     <el-form label-width="90px">
@@ -189,9 +200,18 @@ onMounted(load)
         <el-input v-model="dialog.name" maxlength="64" />
       </el-form-item>
       <el-form-item label="类型" required>
-        <el-radio-group v-model="dialog.type" :disabled="!!dialog.id" @change="dialog.props = initialProps(dialog.type)">
-          <el-radio-button v-for="t in creatableTypes" :key="t.type" :value="t.type">{{ t.capabilities.label }}</el-radio-button>
-        </el-radio-group>
+        <el-select
+          v-model="dialog.type"
+          class="type-select"
+          filterable
+          :disabled="!!dialog.id"
+          @change="dialog.props = initialProps(dialog.type)"
+        >
+          <template #prefix><DatasourceTypeIcon v-if="dialog.type" :type="dialog.type" /></template>
+          <el-option v-for="t in creatableTypes" :key="t.type" :label="t.capabilities.label" :value="t.type">
+            <span class="type-option"><DatasourceTypeIcon :type="t.type" />{{ t.capabilities.label }}</span>
+          </el-option>
+        </el-select>
       </el-form-item>
       <component
         :is="form.component"
@@ -236,5 +256,15 @@ onMounted(load)
 
 .scope {
   flex: none;
+}
+
+.type-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.type-select {
+  width: 100%;
 }
 </style>
