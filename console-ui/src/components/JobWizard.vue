@@ -541,7 +541,7 @@ onMounted(async () => {
             <el-select v-model="form.sync.field" placeholder="所有表共用的时间字段" clearable filterable class="w320">
               <el-option v-for="f in commonTimeFields" :key="f" :label="f" :value="f" />
             </el-select>
-            <span class="tip">只列出所有选中表都有的时间字段；个别表可以在下面的字段映射里单独指定</span>
+            <span v-if="form.source.tables.length > 1" class="tip">只列出所有选中表都有的时间字段；个别表可以在下面的字段映射里单独指定</span>
           </el-form-item>
           <el-form-item v-else label="增量条件">
             <ConditionEditor v-model="form.sync.customCondition" :job-id="jobId" :params="() => toMap(params)" :readonly="readonly" />

@@ -48,6 +48,12 @@ watch(current, () => {
 const table = computed(() => props.form.source.tables.find((t) => t.name === current.value) ?? null)
 const upsert = computed(() => props.form.target.writeMode === 'UPSERT')
 const incremental = computed(() => props.form.sync.mode === 'INCREMENTAL' && props.form.sync.window !== 'CUSTOM')
+/**
+ * A table's own incremental field only matters beside other tables (the shared one covers a single
+ * table), but stays visible while it is set, so an override is never in effect unseen.
+ */
+const ownIncrementalField = (table: WizardTable) =>
+  incremental.value && (props.form.source.tables.length > 1 || !!table.incrementalField)
 
 const visibleTables = computed(() => {
   const q = tableSearch.value.trim().toLowerCase()
@@ -338,7 +344,7 @@ function timeFields(t: WizardTable) {
           </el-select>
           <span v-if="keys && !keys.length" class="error">还没有可用的密钥，请管理员在「运维管理 → 加密密钥」里新建</span>
         </label>
-        <label v-if="incremental">增量字段
+        <label v-if="ownIncrementalField(table)">增量字段
           <el-select
             v-model="table.incrementalField"
             :placeholder="form.sync.field ? `使用共用字段 ${form.sync.field}` : '选择时间字段'"
