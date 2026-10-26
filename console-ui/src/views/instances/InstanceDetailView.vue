@@ -75,7 +75,7 @@ async function loadDetail() {
   if (first) {
     const i = detail.value.instance
     setBreadcrumb([
-      { title: '运行实例', to: listUrl('/instances') },
+      { title: '运行记录', to: listUrl('/instances') },
       { title: i.jobName ?? '已删除的任务', to: i.jobDeleted ? undefined : `/jobs/${i.jobDefinitionId}` },
       { title: `${triggerText[i.triggerType]}运行 · ${formatTime(i.scheduledTime).slice(5, 16)}` },
     ])

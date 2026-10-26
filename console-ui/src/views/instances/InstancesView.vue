@@ -197,7 +197,7 @@ onBeforeUnmount(() => {
 
 <template>
   <el-card shadow="never">
-    <PageHeader title="运行实例" description="所有任务的运行记录，包括手动、定时、重跑和补数。点击一行查看事件时间线和 SeaTunnel 作业日志。">
+    <PageHeader title="运行记录" description="离线同步任务每次运行的记录，包括手动、定时、重跑和补数。点击一行查看事件时间线和 SeaTunnel 作业日志。">
       <el-button :icon="Refresh" @click="load()">刷新</el-button>
     </PageHeader>
     <div class="toolbar">

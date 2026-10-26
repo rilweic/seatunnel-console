@@ -17,7 +17,7 @@ const router = createRouter({
         { path: 'dashboard', component: () => import('@/views/DashboardView.vue'), meta: { title: '概览' } },
         { path: 'projects', component: () => import('@/views/ProjectsView.vue'), meta: { title: '项目', list: true } },
         { path: 'datasources', component: () => import('@/views/DatasourcesView.vue'), meta: { title: '数据源', list: true } },
-        { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '任务', list: true } },
+        { path: 'jobs', component: () => import('@/views/jobs/JobsView.vue'), meta: { title: '离线同步', list: true } },
         {
           // Tabs and sections are part of the path (the first one has none), so refresh and links keep them.
           path: 'jobs/:id/edit/:section(schedule|basic)?',
@@ -29,7 +29,8 @@ const router = createRouter({
           component: () => import('@/views/jobs/JobDetailView.vue'),
           meta: { title: '任务详情', menu: '/jobs' },
         },
-        { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行实例', list: true } },
+        { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行记录', list: true } },
+        { path: 'realtime', component: () => import('@/views/ComingSoon.vue'), meta: { title: '实时同步', list: true } },
         {
           path: 'instances/:id',
           component: () => import('@/views/instances/InstanceDetailView.vue'),

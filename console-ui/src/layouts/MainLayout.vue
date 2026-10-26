@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Lightning, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -47,8 +47,9 @@ const menuGroups = computed(() => [
   {
     title: '数据同步',
     items: [
-      { path: '/jobs', title: '任务', icon: Tickets },
-      { path: '/instances', title: '运行实例', icon: Timer },
+      { path: '/jobs', title: '离线同步', icon: Tickets },
+      { path: '/realtime', title: '实时同步', icon: Lightning },
+      { path: '/instances', title: '运行记录', icon: Timer },
     ],
   },
   {

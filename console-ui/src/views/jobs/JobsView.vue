@@ -99,7 +99,7 @@ onMounted(() => {
 
 <template>
   <el-card shadow="never">
-    <PageHeader title="任务" description="离线同步任务。点击任务进入配置、版本、调度、补数和运行记录。">
+    <PageHeader title="离线同步" description="按时运行的批量同步任务。点击任务进入配置、版本、调度、补数和运行记录。">
       <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
     </PageHeader>
     <div class="toolbar">

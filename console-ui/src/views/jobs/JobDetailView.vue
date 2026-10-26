@@ -48,7 +48,7 @@ const runTip = computed(() => (!job.value?.editable ? NOT_EDITABLE : !job.value.
 
 async function load() {
   job.value = (await jobApi.get(jobId)).job
-  setBreadcrumb([{ title: '任务', to: listUrl('/jobs') }, { title: job.value.name }])
+  setBreadcrumb([{ title: '离线同步', to: listUrl('/jobs') }, { title: job.value.name }])
 }
 
 function onBackfillCreated() {

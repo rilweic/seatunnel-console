@@ -66,7 +66,7 @@ async function onConfigSaved() {
 
 function crumbs() {
   setBreadcrumb([
-    { title: '任务', to: listUrl('/jobs') },
+    { title: '离线同步', to: listUrl('/jobs') },
     { title: job.value!.name, to: `/jobs/${jobId}` },
     { title: '编辑' },
   ])
