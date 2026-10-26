@@ -116,6 +116,12 @@ public class ClusterHealthService {
             checks.add(new Check("SeaTunnel", "Worker 节点", Status.ERROR, "集群没有可用的 worker 节点，作业无法运行"));
         } else {
             checks.add(new Check("SeaTunnel", "Worker 节点", Status.OK, workers.size() + " 个"));
+            if (workers.size() > 1) {
+                // the REST API does not tell where checkpoints are stored, so this cannot be checked (§12 P2, Q31)
+                checks.add(new Check("实时任务", "checkpoint 存储", Status.WARN,
+                        "多节点集群的 checkpoint 必须放在 HDFS / S3 / OSS 等共享存储上（seatunnel.yaml 的 checkpoint.storage），"
+                                + "放在本地磁盘时作业换到别的节点后无法恢复。console 读不到这项配置，请自行确认"));
+            }
         }
 
         Map<String, Set<String>> usage = connectorUsage();

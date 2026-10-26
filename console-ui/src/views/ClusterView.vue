@@ -103,7 +103,7 @@ onMounted(load)
     </el-card>
 
     <el-card shadow="never">
-      <PageHeader title="运行诊断" description="在集群上提交几个很小的作业，确认快速检查看不到的两件事：每个节点是否按作业输出日志（routingAppender），以及每个 MySQL / PostgreSQL 数据源的 JDBC 驱动是否就位、worker 能否连上数据库。一般十几秒完成。">
+      <PageHeader title="运行诊断" description="在集群上提交几个很小的作业，确认快速检查看不到的几件事：每个节点是否按作业输出日志（routingAppender）；每个 MySQL / PostgreSQL 数据源的 JDBC 驱动是否就位、worker 能否连上数据库；实时任务需要的 checkpoint 和 savepoint 能否正常保存和恢复。一般半分钟内完成。">
         <el-button type="primary" :icon="VideoPlay" :loading="diagnosing" @click="diagnose">运行诊断</el-button>
       </PageHeader>
       <div v-if="diagnosing" class="muted">诊断作业运行中…</div>

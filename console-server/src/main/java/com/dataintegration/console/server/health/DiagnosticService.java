@@ -57,8 +57,11 @@ public class DiagnosticService {
     private final EngineClient engineClient;
     private final DatasourceService datasourceService;
     private final DatasourceMapper datasourceMapper;
+    private final StreamProbe streamProbe;
 
-    public DiagnosticService(EngineClient engineClient, DatasourceService datasourceService, DatasourceMapper datasourceMapper) {
+    public DiagnosticService(EngineClient engineClient, DatasourceService datasourceService, DatasourceMapper datasourceMapper,
+            StreamProbe streamProbe) {
+        this.streamProbe = streamProbe;
         this.engineClient = engineClient;
         this.datasourceService = datasourceService;
         this.datasourceMapper = datasourceMapper;
@@ -94,6 +97,9 @@ public class DiagnosticService {
                                     + "。检查每个节点 lib/ 下是否有对应的 JDBC 驱动，以及 worker 能否访问数据库"),
                     probes, results);
         }
+
+        // runs while the batch probes do; it takes a few checkpoints and a stop and start
+        results.add(streamProbe.run());
 
         long deadline = System.currentTimeMillis() + TIMEOUT.toMillis();
         List<Probe> pending = new ArrayList<>(probes);
