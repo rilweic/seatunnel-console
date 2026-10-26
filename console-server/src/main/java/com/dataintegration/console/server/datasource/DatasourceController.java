@@ -3,6 +3,7 @@ package com.dataintegration.console.server.datasource;
 import com.dataintegration.console.common.PageResult;
 import com.dataintegration.console.common.Result;
 import com.dataintegration.console.datasource.ConnectionTestResult;
+import com.dataintegration.console.datasource.cdc.CdcCheck;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 import com.dataintegration.console.datasource.DataSourcePlugins;
@@ -111,6 +112,12 @@ public class DatasourceController {
     @PostMapping("/{id}/test")
     public Result<ConnectionTestResult> testSaved(@PathVariable String id) {
         return Result.ok(datasourceService.testSaved(id));
+    }
+
+    /** 检查实时同步条件: binlog / logical replication and the account's rights (docs/design.md §12 P2). */
+    @PostMapping("/{id}/cdc-check")
+    public Result<List<CdcCheck>> cdcCheck(@PathVariable String id) {
+        return Result.ok(datasourceService.cdcCheck(id));
     }
 
     @Configuration(proxyBeanMethods = false)

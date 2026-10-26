@@ -7,6 +7,8 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.common.PageResult;
 import com.dataintegration.console.datasource.ConnectionTestResult;
+import com.dataintegration.console.datasource.cdc.CdcCheck;
+import com.dataintegration.console.datasource.cdc.CdcSupport;
 import com.dataintegration.console.datasource.CountRequest;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
@@ -228,6 +230,41 @@ public class DatasourceService {
     public List<ColumnMeta> columns(String datasourceId, String namespace, String table) {
         DatasourceEntity entity = requireEditable(datasourceId);
         return plugins.get(entity.getType()).columns(decryptedProps(entity), namespace, table);
+    }
+
+    /** Whether the datasource is set up for real-time jobs (docs/design.md §12 P2), for its page. */
+    public List<CdcCheck> cdcCheck(String id) {
+        DatasourceEntity entity = requireEditable(id);
+        return cdcSupport(entity).check(decryptedProps(entity), CdcSupport.Scope.server());
+    }
+
+    /**
+     * The same for a job's tables, called by prechecks and starts that have checked the job's
+     * rights already (the job may only use its creator's datasources).
+     */
+    public List<CdcCheck> cdcCheck(String id, CdcSupport.Scope scope) {
+        DatasourceEntity entity = require(id);
+        return cdcSupport(entity).check(decryptedProps(entity), scope);
+    }
+
+    /** A job's replication resource on the datasource, or null when there is none. */
+    public CdcSupport.Replication replication(String id, String name) {
+        DatasourceEntity entity = require(id);
+        return cdcSupport(entity).replication(decryptedProps(entity), name);
+    }
+
+    /** Drops a deleted job's replication resources; returns the SQL left to run by hand. */
+    public List<String> dropReplication(String id, String name) {
+        DatasourceEntity entity = require(id);
+        return cdcSupport(entity).dropReplication(decryptedProps(entity), name);
+    }
+
+    private CdcSupport cdcSupport(DatasourceEntity entity) {
+        CdcSupport support = plugins.get(entity.getType()).cdcSupport();
+        if (support == null) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, entity.getType() + " 数据源不能作为实时同步的来源");
+        }
+        return support;
     }
 
     /** A saved, non-secret property such as the PostgreSQL database name. */

@@ -280,7 +280,7 @@ public abstract class JdbcDataSourcePlugin implements DataSourcePlugin {
         return base + (trimmed.startsWith("?") ? trimmed : "?" + trimmed);
     }
 
-    private static String rootMessage(Throwable e) {
+    static String rootMessage(Throwable e) {
         Throwable root = e;
         while (root.getCause() != null && root.getCause() != root) {
             root = root.getCause();

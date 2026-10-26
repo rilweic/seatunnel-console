@@ -68,15 +68,51 @@ public class JobConfigRenderer {
             String instanceId,
             SyncWindow window,
             boolean withSecrets) {
+        return render(job, hocon, jobParams, startupParams, scheduledTime, instanceId, window, withSecrets, NO_EXTRAS);
+    }
+
+    /** Options a job adds to its connector blocks besides the datasource's, by connector. */
+    public interface ConnectorExtras {
+        Map<String, Object> options(String connector, HoconTemplate template);
+    }
+
+    public static final ConnectorExtras NO_EXTRAS = (connector, template) -> Map.of();
+
+    /**
+     * @param extras options the job adds to a block that references a datasource, e.g. a
+     *     streaming job's CDC identity (stream.StreamIdentityService); options the block writes
+     *     itself still win
+     */
+    public Rendered render(
+            JobDefinition job,
+            String hocon,
+            Map<String, String> jobParams,
+            Map<String, String> startupParams,
+            LocalDateTime scheduledTime,
+            String instanceId,
+            SyncWindow window,
+            boolean withSecrets,
+            ConnectorExtras extras) {
         Map<String, String> variables = variables(job, jobParams, startupParams, scheduledTime, instanceId, window);
         String text = Variables.render(hocon, variables, scheduledTime);
         HoconTemplate template = HoconTemplate.parse(text);
         requireCreatorsDatasources(job, template);
-        String masked = template.renderMasked((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, true));
+        String masked = template.renderMasked((connector, dsId) -> withExtras(
+                datasourceService.connectorOptions(dsId, connector, true), extras.options(connector, template)));
         String config = withSecrets
-                ? template.render((connector, dsId) -> datasourceService.connectorOptions(dsId, connector, false), encryptKeys::reveal)
+                ? template.render((connector, dsId) -> withExtras(
+                        datasourceService.connectorOptions(dsId, connector, false), extras.options(connector, template)), encryptKeys::reveal)
                 : null;
         return new Rendered(variables, config, masked, Variables.unresolved(text), template);
+    }
+
+    private static Map<String, Object> withExtras(Map<String, Object> options, Map<String, Object> extras) {
+        if (extras.isEmpty()) {
+            return options;
+        }
+        Map<String, Object> merged = new LinkedHashMap<>(options);
+        merged.putAll(extras);
+        return merged;
     }
 
     /**

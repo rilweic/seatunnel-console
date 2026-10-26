@@ -1,5 +1,6 @@
 package com.dataintegration.console.datasource;
 
+import com.dataintegration.console.datasource.cdc.CdcSupport;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
 
@@ -52,6 +53,11 @@ public interface DataSourcePlugin {
      *     {@code DATASOURCE_CONNECT_FAILED} when the count cannot be taken
      */
     long count(Map<String, String> props, CountRequest request);
+
+    /** CDC checks and replication resources; null when the type cannot be read by a real-time job. */
+    default CdcSupport cdcSupport() {
+        return null;
+    }
 
     /** Databases (MySQL) or schemas (PostgreSQL) a job can choose from; empty when there is no such level (ES). */
     List<String> namespaces(Map<String, String> props);

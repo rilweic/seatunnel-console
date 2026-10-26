@@ -398,6 +398,15 @@ public final class HoconTemplate {
         return config.hasPath("env.job.mode") ? config.getString("env.job.mode") : null;
     }
 
+    /** {@code env.parallelism}, or 1 when not set or not a number (SeaTunnel's default). */
+    public int parallelism() {
+        try {
+            return config.hasPath("env.parallelism") ? config.getInt("env.parallelism") : 1;
+        } catch (RuntimeException e) {
+            return 1;
+        }
+    }
+
     public List<DatasourceRef> datasourceRefs() {
         List<DatasourceRef> refs = new ArrayList<>();
         forEachBlock((section, connector, block) -> {
