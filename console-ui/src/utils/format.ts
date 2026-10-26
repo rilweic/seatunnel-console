@@ -48,6 +48,7 @@ export const triggerText: Record<string, string> = {
   MANUAL: '手动',
   RERUN: '重跑',
   BACKFILL: '补数',
+  START: '实时任务启动',
 }
 
 export function isActive(status: RunStatus): boolean {

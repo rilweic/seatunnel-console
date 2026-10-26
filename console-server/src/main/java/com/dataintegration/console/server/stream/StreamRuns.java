@@ -84,6 +84,7 @@ public class StreamRuns {
                 .set(JobStream::getPipelineRestores, 0)
                 .set(JobStream::getCheckpointProblem, null)
                 .set(JobStream::getCheckpointAt, null)
+                .set(JobStream::getLastReadAt, null)
                 .eq(JobStream::getJobDefinitionId, jobId)
                 .isNull(JobStream::getCurrentInstanceId)) > 0;
     }

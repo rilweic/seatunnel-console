@@ -35,6 +35,35 @@ sink {
 }
 `
 
+/** A real-time job (design.md §12 P2): a CDC source, and the console adds the replication identity at start. */
+const STREAMING_STARTER = `env {
+  job.mode = "STREAMING"
+  parallelism = 1
+  checkpoint.interval = 10000
+  # 强制停止或失败后仍能从最近的 checkpoint 恢复
+  checkpoint.retain-after-job-cancelled = true
+}
+
+source {
+  MySQL-CDC {
+    # 用上方「插入数据源」按钮插入；server-id（PostgreSQL 是复制槽）由 console 在启动时按任务分配
+    datasource_id = ""
+    database-names = ["your_db"]
+    table-names = ["your_db.your_table"]
+    startup.mode = "initial"
+    plugin_output = "src"
+  }
+}
+
+sink {
+  Console {
+    plugin_input = ["src"]
+  }
+}
+`
+
+const streaming = computed(() => props.job.jobType === 'STREAMING')
+
 function emptyValidation(): ValidationSpec {
   return { enabled: false, source: { mode: 'AUTO' }, target: { mode: 'SQL' }, failOnMismatch: false }
 }
@@ -60,12 +89,12 @@ function replacePerTable() {
 
 /** Saved only when enabled, so turning it off removes it from the next version. */
 function validationPayload(): ValidationSpec | null {
-  return validation.value.enabled ? validation.value : null
+  return validation.value.enabled && !streaming.value ? validation.value : null
 }
 
 function reset(version: VersionDetail | null) {
   savedHocon.value = version?.hocon ?? ''
-  hocon.value = version?.hocon ?? STARTER
+  hocon.value = version?.hocon ?? (streaming.value ? STREAMING_STARTER : STARTER)
   jobParams.value = toRows(version?.params)
   savedParams.value = JSON.stringify(toMap(jobParams.value))
   validation.value = version?.validation ?? emptyValidation()
@@ -75,7 +104,7 @@ reset(props.version)
 
 const dirty = computed(
   () =>
-    hocon.value !== (savedHocon.value || STARTER) ||
+    hocon.value !== (savedHocon.value || (streaming.value ? STREAMING_STARTER : STARTER)) ||
     JSON.stringify(toMap(jobParams.value)) !== savedParams.value ||
     JSON.stringify(validationPayload()) !== savedValidation.value,
 )
@@ -229,6 +258,7 @@ onMounted(async () => {
   </div>
   <ParamsEditor v-model="jobParams" />
 
+  <template v-if="!streaming">
   <div class="section-title">
     行数校验
     <el-switch v-model="validation.enabled" class="inline-switch" />
@@ -305,6 +335,7 @@ onMounted(async () => {
     <li class="tip">在数据源上用 <code>where 1 = 0</code> 执行一遍每个 Jdbc source 的查询，提前发现表名、字段、语法错误；不会读取数据。</li>
   </ul>
 
+  </template>
   <div class="save-bar">
     <el-button @click="openPreview">预览渲染结果</el-button>
     <el-button :loading="scriptCheck.loading" @click="checkScript">检查配置</el-button>

@@ -67,9 +67,10 @@ public class JobOverviewService {
      * source without keys appends, runs single-threaded and is not counted).
      *
      * @param mode FULL or INCREMENTAL; window DAY, HOUR or CUSTOM; incrementalField the job-wide one
+     * @param stream a real-time job's settings, in place of the mode (design.md §12 P2); null offline
      */
     public record Settings(String mode, String window, String incrementalField, String writeMode, String dataMode,
-            String schemaMode, int parallelism, boolean validation) {}
+            String schemaMode, int parallelism, boolean validation, WizardForm.Stream stream) {}
 
     /** @param notes what happens to this table, e.g. "过滤 status = 1", "脱敏 1 个字段" */
     public record TableFlow(String source, String target, List<String> notes) {}
@@ -246,18 +247,19 @@ public class JobOverviewService {
         Endpoint sinkEnd = endpoint(null, t.datasourceId(), target != null && !target.namespaces() ? null : t.namespace(),
                 t.schemaMode() == WizardForm.SchemaMode.ERROR ? "目标不存在时报错" : "目标不存在时自动创建");
 
-        boolean incremental = form.sync().mode() == WizardForm.SyncMode.INCREMENTAL;
-        boolean upsert = t.writeMode() == WizardForm.WriteMode.UPSERT && (source == null || source.upsertPossible(form));
+        boolean incremental = !form.streaming() && form.sync() != null && form.sync().mode() == WizardForm.SyncMode.INCREMENTAL;
+        boolean upsert = form.streaming() || (t.writeMode() == WizardForm.WriteMode.UPSERT && (source == null || source.upsertPossible(form)));
         int parallelism = Math.min(Math.max(1, form.parallelism()), from == null ? form.parallelism() : from.maxParallelism());
         Settings settings = new Settings(
-                form.sync().mode() == null ? null : form.sync().mode().name(),
+                form.streaming() || form.sync() == null || form.sync().mode() == null ? null : form.sync().mode().name(),
                 incremental && form.sync().window() != null ? form.sync().window().name() : null,
                 incremental ? form.sync().field() : null,
                 upsert ? "UPSERT" : "APPEND",
-                t.dataMode() == null ? null : t.dataMode().name(),
+                form.streaming() || t.dataMode() == null ? null : t.dataMode().name(),
                 t.schemaMode() == null ? null : t.schemaMode().name(),
                 parallelism,
-                form.validation() && (from == null || from.countable()));
+                !form.streaming() && form.validation() && (from == null || from.countable()),
+                form.stream());
 
         Totals totals = new Totals();
         List<TableFlow> tables = form.source().tables().stream()

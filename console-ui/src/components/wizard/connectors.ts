@@ -31,6 +31,8 @@ export interface WizardSourceUi {
   handledOptions: string[]
   /** What is missing on step ①, or null. */
   stepProblem: (form: WizardForm) => string | null
+  /** For a real-time source: what its CDC connector can do (design.md §12 P2, 实测结论). */
+  stream?: { startFromTime: boolean; onlyAddedColumns: boolean }
   /** Columns of the selected tables for step ③; `known` holds those already loaded. */
   loadColumns: (form: WizardForm, known: Record<string, ColumnMeta[]>) => Promise<Record<string, ColumnMeta[]>>
   text: {
@@ -47,6 +49,8 @@ export interface WizardSourceUi {
 export interface WizardSinkUi {
   /** What a table is called on this target: 目标表, 索引. */
   tableWord: string
+  /** Applies every column change a real-time job passes on; Elasticsearch only adds fields. */
+  allColumnChanges: boolean
 }
 
 const clean = (v?: string | null) => (v && v.trim() ? v.trim() : null)
@@ -134,9 +138,34 @@ export const wizardSources: Record<string, WizardSourceUi> = {
   },
 }
 
+/**
+ * Real-time jobs (design.md §12 P2), by the CDC connector the datasource declares: tables are
+ * picked as for Jdbc, but read through the binlog / WAL, so there are no filters or incremental fields.
+ */
+const cdcSource: WizardSourceUi = {
+  ...wizardSources.Jdbc!,
+  incremental: false,
+  handledOptions: ['url', 'username', 'password', 'database-names', 'schema-name', 'table-names', 'table-pattern',
+    'startup.mode', 'startup.timestamp', 'schema-changes.enabled', 'schema-changes.include', 'schema-changes.exclude',
+    'decoding.plugin.name', 'slot.name'],
+  text: {
+    intro: '选择数据源和库，再勾选需要实时同步的表。表必须有主键：更新和删除按主键写到目标端。',
+    fields: '选择从哪里开始同步、是否同步表结构变更，并按需调整每张表的字段。',
+    fieldsHelp: '每张表同步哪些字段、写成什么名字。实时同步不支持过滤条件',
+    run: '设置全量阶段的并行度和 checkpoint 间隔。',
+    parallelismHelp: '只作用于全量阶段：按主键把表切成分片同时读。之后的增量变更按顺序读取。并行度越高对源库压力越大。',
+    validationHelp: '实时任务的数据一直在变，不做行数校验。',
+  },
+}
+
+export const wizardStreamSources: Record<string, WizardSourceUi> = {
+  'MySQL-CDC': { ...cdcSource, stream: { startFromTime: true, onlyAddedColumns: false } },
+  'Postgres-CDC': { ...cdcSource, stream: { startFromTime: false, onlyAddedColumns: true } },
+}
+
 export const wizardSinks: Record<string, WizardSinkUi> = {
-  Jdbc: { tableWord: '目标表' },
-  Elasticsearch: { tableWord: '索引' },
+  Jdbc: { tableWord: '目标表', allColumnChanges: true },
+  Elasticsearch: { tableWord: '索引', allColumnChanges: false },
 }
 
 /** Sink options the wizard sets itself or takes from the datasource, for every sink. */

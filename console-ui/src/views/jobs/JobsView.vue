@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { jobApi, projectApi, type JobView, type ProjectView, type RunStatus } from '@/api/console'
 import { formatTime, statusTag, statusText } from '@/utils/format'
 import CopyJobDialog from '@/components/CopyJobDialog.vue'
+import CreateJobDialog from '@/components/CreateJobDialog.vue'
 import DeleteJobDialog from '@/components/DeleteJobDialog.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
@@ -29,7 +30,7 @@ const loading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const result = await jobApi.list(query)
+    const result = await jobApi.list({ ...query, jobType: 'BATCH' })
     rows.value = result.items
     total.value = result.total
   } finally {
@@ -41,42 +42,14 @@ async function loadProjects() {
   projects.value = (await projectApi.list({ size: 200 })).items
 }
 
-const dialog = reactive({
-  visible: false,
-  projectId: '',
-  name: '',
-  editMode: 'FORM' as 'FORM' | 'SCRIPT',
-  description: '',
-  saving: false,
-})
+const createOpen = ref(false)
 
 function openCreate() {
   if (ownProjects.value.length === 0) {
     ElMessage.warning('你还没有自己的项目，请先在「项目」中新建一个')
     return
   }
-  Object.assign(dialog, { visible: true, projectId: ownProjects.value.find((p) => p.id === query.projectId)?.id ?? ownProjects.value[0]!.id, name: '', editMode: 'FORM', description: '' })
-}
-
-async function create() {
-  if (!dialog.name.trim() || !dialog.projectId) {
-    ElMessage.warning('请选择项目并填写任务名称')
-    return
-  }
-  dialog.saving = true
-  try {
-    const job = await jobApi.create({
-      projectId: dialog.projectId,
-      name: dialog.name,
-      jobType: 'BATCH',
-      editMode: dialog.editMode,
-      description: dialog.description || undefined,
-    })
-    dialog.visible = false
-    router.push(`/jobs/${job.id}/edit`)
-  } finally {
-    dialog.saving = false
-  }
+  createOpen.value = true
 }
 
 function remove(row: JobView) {
@@ -172,34 +145,7 @@ onMounted(() => {
     />
   </el-card>
 
-  <el-dialog v-model="dialog.visible" title="新建离线任务" width="520px">
-    <el-form label-width="80px">
-      <el-form-item label="项目" required>
-        <el-select v-model="dialog.projectId" class="full" placeholder="只能在自己的项目里建任务">
-          <el-option v-for="p in ownProjects" :key="p.id" :label="p.name" :value="p.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="名称" required>
-        <el-input v-model="dialog.name" maxlength="128" />
-      </el-form-item>
-      <el-form-item label="编辑方式">
-        <el-radio-group v-model="dialog.editMode">
-          <el-radio value="FORM">向导（推荐）</el-radio>
-          <el-radio value="SCRIPT">脚本</el-radio>
-        </el-radio-group>
-        <div class="mode-tip">
-          {{ dialog.editMode === 'FORM' ? '一步步选择数据源、表和同步方式，自动生成配置。支持 MySQL / PostgreSQL 到 MySQL / PostgreSQL / ES。以后可以转为脚本。' : '直接编写 SeaTunnel 的 HOCON 配置，适合向导不支持的连接器和写法。' }}
-        </div>
-      </el-form-item>
-      <el-form-item label="描述">
-        <el-input v-model="dialog.description" type="textarea" maxlength="512" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dialog.visible = false">取消</el-button>
-      <el-button type="primary" :loading="dialog.saving" @click="create">创建并编辑</el-button>
-    </template>
-  </el-dialog>
+  <CreateJobDialog v-model="createOpen" job-type="BATCH" :projects="ownProjects" :default-project-id="query.projectId" />
   <CopyJobDialog v-model="copyOpen" :job="copying" />
   <DeleteJobDialog v-model="deleteDialog.visible" :job-name="deleteDialog.job?.name ?? ''" @confirm="confirmRemove" />
 </template>
@@ -226,9 +172,6 @@ onMounted(() => {
   width: 240px;
 }
 
-.full {
-  width: 100%;
-}
 
 .name {
   font-weight: 500;
@@ -250,12 +193,6 @@ onMounted(() => {
   font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
 }
 
-.mode-tip {
-  margin-top: 4px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--el-text-color-secondary);
-}
 
 .scope {
   flex: none;

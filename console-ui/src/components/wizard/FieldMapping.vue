@@ -26,6 +26,8 @@ const props = defineProps<{
   lowerCase: boolean
   /** The source reads with a per-table filter (JDBC). */
   filters: boolean
+  /** Why value processing, extracted and added fields are not offered now; null when they are. */
+  processingBlocked?: string | null
 }>()
 
 const tableSearch = ref('')
@@ -326,8 +328,12 @@ function timeFields(t: WizardTable) {
           {{ table.name }} <el-icon class="arrow"><Right /></el-icon> <b>{{ targetTableName(form, table, lowerCase) }}</b>
         </div>
         <div class="bar-actions">
-          <el-button :icon="CirclePlus" @click="openAdd(null)">新增字段</el-button>
-          <el-button :icon="Scissor" @click="openExtract(null)">提取字段</el-button>
+          <el-tooltip :disabled="!processingBlocked" :content="processingBlocked ?? ''" placement="top">
+            <span class="blockable">
+              <el-button :icon="CirclePlus" :disabled="!!processingBlocked" @click="openAdd(null)">新增字段</el-button>
+              <el-button :icon="Scissor" :disabled="!!processingBlocked" @click="openExtract(null)">提取字段</el-button>
+            </span>
+          </el-tooltip>
           <el-button :icon="EditPen" @click="ruleOpen = true">字段名规则</el-button>
           <el-button :disabled="!checked.length" @click="mask(checked)">屏蔽</el-button>
           <el-button :disabled="!checked.length" @click="restore(checked)">恢复</el-button>
@@ -401,7 +407,10 @@ function timeFields(t: WizardTable) {
         <el-table-column label="操作" width="170">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button v-if="!row.masked" link type="primary" @click="processing = row">处理</el-button>
+              <el-tooltip v-if="!row.masked && processingBlocked" :content="processingBlocked" placement="top">
+                <span><el-button link type="primary" disabled>处理</el-button></span>
+              </el-tooltip>
+              <el-button v-else-if="!row.masked" link type="primary" @click="processing = row">处理</el-button>
               <el-button v-if="row.masked" link type="primary" @click="restore([row.name])">恢复</el-button>
               <el-tooltip v-else-if="lockedKey(row)" content="按主键 upsert 需要主键字段" placement="top">
                 <span><el-button link type="primary" disabled>屏蔽</el-button></span>
@@ -591,6 +600,11 @@ function timeFields(t: WizardTable) {
 .bar-actions {
   display: flex;
   gap: 0;
+}
+
+.blockable {
+  display: inline-flex;
+  margin-right: 12px;
 }
 
 .table-settings {

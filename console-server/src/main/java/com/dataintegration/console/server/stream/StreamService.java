@@ -28,6 +28,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -79,6 +80,16 @@ public class StreamService {
             String lastRunStatus,
             String lastRunMessage) {}
 
+    /**
+     * A job's state for the real-time list: what {@link StreamView} says, without engine or
+     * datasource calls.
+     *
+     * @param lastRunStatus the latest start's status; FAILED while stopped means the job needs attention
+     */
+    public record StreamSummary(
+            String state, LocalDateTime startedAt, LocalDateTime lastReadAt, String checkpointProblem, String lastRunStatus,
+            String lastRunMessage) {}
+
     /** @param restore where to start from; AUTO when not given */
     public record StartRequest(Asked restore, Map<String, String> startupParams) {}
 
@@ -109,18 +120,7 @@ public class StreamService {
         JobInstance current = stream.getCurrentInstanceId() == null ? null : runs.recorder().requireInstance(stream.getCurrentInstanceId());
         JobInstanceAttempt attempt = current == null ? null : runs.latestAttempt(current.getId());
         JobInstance last = current != null ? current : lastRun(jobId);
-        String state;
-        if (current == null) {
-            state = "STOPPED";
-        } else if (stream.getStopRequested() != null) {
-            state = "STOPPING";
-        } else if (stream.getRestartAt() != null) {
-            state = "RESTARTING";
-        } else if (stream.getPipelineRestores() != null && stream.getPipelineRestores() > 0) {
-            state = "RECOVERING";
-        } else {
-            state = "RUNNING";
-        }
+        String state = state(stream);
         return new StreamView(
                 jobId,
                 state,
@@ -146,6 +146,35 @@ public class StreamService {
                 last == null ? null : last.getId(),
                 last == null ? null : last.getStatus(),
                 last == null ? null : last.getErrorMessage());
+    }
+
+    /** States of the listed jobs, by job id; offline jobs are left out. */
+    public Map<String, StreamSummary> summaries(List<String> jobIds) {
+        Map<String, StreamSummary> result = new LinkedHashMap<>();
+        for (String jobId : jobIds) {
+            JobStream stream = identity.find(jobId);
+            if (stream == null) {
+                continue;
+            }
+            JobInstance last = runs.lastRun(jobId);
+            result.put(jobId, new StreamSummary(state(stream), last == null || stream.getCurrentInstanceId() == null ? null : last.getStartedAt(),
+                    stream.getLastReadAt(), stream.getCheckpointProblem(),
+                    last == null ? null : last.getStatus(), last == null ? null : last.getErrorMessage()));
+        }
+        return result;
+    }
+
+    private static String state(JobStream stream) {
+        if (stream.getCurrentInstanceId() == null) {
+            return "STOPPED";
+        }
+        if (stream.getStopRequested() != null) {
+            return "STOPPING";
+        }
+        if (stream.getRestartAt() != null) {
+            return "RESTARTING";
+        }
+        return stream.getPipelineRestores() != null && stream.getPipelineRestores() > 0 ? "RECOVERING" : "RUNNING";
     }
 
     /** Starts the job's current version, restoring from where the last run ended unless asked otherwise. */

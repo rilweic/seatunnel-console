@@ -105,6 +105,18 @@ export interface DatasourceCapabilities {
   maxParallelism: number
   lowerCaseNames: boolean
   jdbcDriver: boolean
+  /** SeaTunnel CDC source real-time jobs read it with, e.g. MySQL-CDC; null when it cannot be a real-time source. */
+  cdcConnector: string | null
+}
+
+/** One condition for real-time (CDC) reads, from {@link datasourceApi.cdcCheck} (design.md §12 P2). */
+export interface CdcCheck {
+  item: string
+  level: 'OK' | 'WARN' | 'ERROR'
+  actual: string | null
+  message: string
+  /** SQL or a setting to apply by hand; null when the condition holds. */
+  fix: string | null
 }
 
 export interface DatasourceTypeView {
@@ -159,6 +171,7 @@ export const datasourceApi = {
   remove: (id: string) => del<void>(`/datasources/${id}`),
   test: (body: { datasourceId?: string; type: DatasourceType; props: Record<string, string> }) =>
     post<ConnectionTestResult>('/datasources/test', body),
+  cdcCheck: (id: string) => post<CdcCheck[]>(`/datasources/${id}/cdc-check`, undefined, LONG_TIMEOUT.check),
 }
 
 export interface JobView extends Owned {
@@ -302,16 +315,31 @@ export interface WizardForm {
     prefix?: string | null
     suffix?: string | null
     schemaMode: 'CREATE' | 'ERROR'
+    /** ignored for a real-time job, which always keeps the target's rows and writes by key */
     dataMode: 'KEEP' | 'CLEAR'
     writeMode: 'UPSERT' | 'APPEND'
     tableRule?: NameRule | null
   }
+  /** ignored for a real-time job, which has {@link stream} instead */
   sync: { mode: 'FULL' | 'INCREMENTAL'; window?: IncrementalWindow | null; field?: string | null; customCondition?: string | null }
   parallelism: number
   validation: boolean
   sourceOptions?: Record<string, string>
   sinkOptions?: Record<string, string>
   fieldRule?: NameRule | null
+  /** Present exactly for a real-time job (design.md §12 P2). */
+  stream?: StreamSettings | null
+}
+
+/** How a real-time job reads and applies changes (WizardForm.Stream on the server). */
+export interface StreamSettings {
+  startup: 'INITIAL' | 'LATEST' | 'TIMESTAMP'
+  /** epoch millis, for TIMESTAMP */
+  startupTimestamp?: number | null
+  schemaChanges: boolean
+  dropColumns: boolean
+  skipDeletes: boolean
+  checkpointSeconds?: number | null
 }
 
 export interface PrecheckResult {
@@ -396,10 +424,10 @@ export interface IncrementalView {
 }
 
 export const jobApi = {
-  list: (params: { projectId?: string; keyword?: string; mine?: boolean; page?: number; size?: number }) =>
+  list: (params: { projectId?: string; keyword?: string; mine?: boolean; jobType?: JobView['jobType']; page?: number; size?: number }) =>
     get<PageResult<JobView>>('/jobs', params),
   get: (id: string) => get<{ job: JobView; currentVersion: VersionDetail | null }>(`/jobs/${id}`),
-  create: (body: { projectId: string; name: string; jobType: 'BATCH'; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
+  create: (body: { projectId: string; name: string; jobType: JobView['jobType']; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
     post<JobView>('/jobs', body),
   update: (id: string, body: { name: string; description?: string | null; projectId?: string }) => put<JobView>(`/jobs/${id}`, body),
   copy: (id: string, body: { name: string; projectId: string }) =>
@@ -443,6 +471,68 @@ export const jobApi = {
     put<IncrementalView>(`/jobs/${id}/incremental`, body),
 }
 
+/** A real-time job's state (StreamService on the server, design.md §12 P2). */
+export type StreamState = 'STOPPED' | 'RUNNING' | 'RECOVERING' | 'RESTARTING' | 'STOPPING'
+
+export interface StreamRestartSettings {
+  autoRestart: boolean
+  maxRestarts: number
+  restartIntervalSeconds: number
+}
+
+export interface StreamView {
+  jobId: string
+  state: StreamState
+  currentInstanceId: string | null
+  runningVersionId: string | null
+  /** the running version is not the job's current one */
+  newVersionPending: boolean
+  attemptNo: number | null
+  engineJobId: string | null
+  stopRequested: 'SAVEPOINT' | 'FORCE' | null
+  stopRequestedAt: string | null
+  restartAt: string | null
+  startedAt: string | null
+  lastReadAt: string | null
+  checkpointAt: string | null
+  checkpointProblem: string | null
+  pipelineRestores: number
+  restoreKind: 'SAVEPOINT' | 'CHECKPOINT' | null
+  restoreEngineJobId: string | null
+  restoreBlocked: string | null
+  /** the current version reads or writes differently from the restore point's version */
+  sourceChanged: boolean
+  settings: StreamRestartSettings
+  /** the PostgreSQL slot a stopped job keeps, with the WAL it holds */
+  replication: { name: string; active: boolean; retainedBytes: number } | null
+  lastRunId: string | null
+  lastRunStatus: RunStatus | null
+  lastRunMessage: string | null
+}
+
+export interface StreamSummary {
+  state: StreamState
+  startedAt: string | null
+  lastReadAt: string | null
+  checkpointProblem: string | null
+  lastRunStatus: RunStatus | null
+  lastRunMessage: string | null
+}
+
+export type StreamRestore = 'AUTO' | 'SAVEPOINT' | 'CHECKPOINT' | 'FRESH'
+
+export const streamApi = {
+  view: (jobId: string) => get<StreamView>(`/streams/${jobId}`),
+  summaries: (jobIds: string[]) => get<Record<string, StreamSummary>>('/streams', { jobIds: jobIds.join(',') }),
+  start: (jobId: string, body: { restore: StreamRestore; startupParams?: Record<string, string> }) =>
+    post<StreamView>(`/streams/${jobId}/start`, body, LONG_TIMEOUT.check),
+  stop: (jobId: string, force = false) => post<StreamView>(`/streams/${jobId}/stop`, { force }),
+  settings: (jobId: string, body: StreamRestartSettings) => put<StreamView>(`/streams/${jobId}/settings`, body),
+  /** @returns SQL left to run by hand when the slot or publication could not be dropped */
+  remove: (jobId: string, deleteRuns: boolean, dropReplication: boolean) =>
+    del<string[]>(`/streams/${jobId}?deleteRuns=${deleteRuns}&dropReplication=${dropReplication}`),
+}
+
 export type BlockStrategy = 'SERIAL_EXECUTION' | 'DISCARD_LATER' | 'COVER_EARLY'
 export type MisfireStrategy = 'DO_NOTHING' | 'FIRE_ONCE_NOW'
 
@@ -481,7 +571,7 @@ export interface InstanceView {
   jobName: string | null
   jobDeleted: boolean
   versionNo: number | null
-  triggerType: 'SCHEDULE' | 'MANUAL' | 'RERUN' | 'BACKFILL'
+  triggerType: 'SCHEDULE' | 'MANUAL' | 'RERUN' | 'BACKFILL' | 'START'
   status: RunStatus
   attemptCount: number
   scheduledTime: string
@@ -638,6 +728,8 @@ export interface FlowSettings {
   schemaMode: 'CREATE' | 'ERROR' | null
   parallelism: number
   validation: boolean
+  /** a real-time job's settings, in place of the mode (design.md §12 P2) */
+  stream: StreamSettings | null
 }
 
 /** What the current version syncs (JobOverviewService.Flow). */

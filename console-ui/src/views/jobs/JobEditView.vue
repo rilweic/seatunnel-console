@@ -18,6 +18,7 @@ import { toRows } from '@/utils/params'
 import BasicInfo from './edit/BasicInfo.vue'
 import ScheduleConfig from './edit/ScheduleConfig.vue'
 import ScriptConfig from './edit/ScriptConfig.vue'
+import StreamRunSettings from '../realtime/StreamRunSettings.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,6 +27,9 @@ const jobId = route.params.id as string
 const job = ref<JobView | null>(null)
 const version = ref<VersionDetail | null>(null)
 const isWizard = computed(() => job.value?.editMode === 'FORM')
+/** Real-time jobs live under /realtime and have run settings instead of a schedule (design.md §12 P2). */
+const streaming = computed(() => route.path.startsWith('/realtime/'))
+const base = computed(() => (streaming.value ? `/realtime/${jobId}` : `/jobs/${jobId}`))
 const wizardParams = ref<ParamRow[]>([])
 /** Remounts the config editor after a save or a mode switch, so it starts from what was saved. */
 const configKey = ref(0)
@@ -34,7 +38,7 @@ const configKey = ref(0)
 const section = ref((route.params.section as string) || 'config')
 const wizardStep = ref(Math.max(0, Math.min(4, Number(route.query.step) - 1 || 0)))
 watch([section, wizardStep], () => {
-  const path = section.value === 'config' ? `/jobs/${jobId}/edit` : `/jobs/${jobId}/edit/${section.value}`
+  const path = section.value === 'config' ? `${base.value}/edit` : `${base.value}/edit/${section.value}`
   const query = section.value === 'config' && isWizard.value && wizardStep.value > 0 ? { step: String(wizardStep.value + 1) } : {}
   router.replace({ path, query })
 })
@@ -42,14 +46,19 @@ watch([section, wizardStep], () => {
 const dirty = reactive({ config: false, schedule: false, basic: false })
 const anyDirty = computed(() => dirty.config || dirty.schedule || dirty.basic)
 const dirtyNames = computed(() =>
-  [dirty.config && '同步配置', dirty.schedule && '调度', dirty.basic && '基本信息'].filter(Boolean).join('、'),
+  [dirty.config && '同步配置', dirty.schedule && (streaming.value ? '运行设置' : '调度'), dirty.basic && '基本信息'].filter(Boolean).join('、'),
 )
 
 async function load() {
   const detail = await jobApi.get(jobId)
   if (!detail.job.editable) {
     ElMessage.warning('只有创建人或管理员可以编辑这个任务')
-    router.replace(`/jobs/${jobId}`)
+    router.replace(base.value)
+    return
+  }
+  if ((detail.job.jobType === 'STREAMING') !== streaming.value) {
+    // opened under the other menu's path, e.g. an old link
+    router.replace(`${detail.job.jobType === 'STREAMING' ? '/realtime' : '/jobs'}/${jobId}/edit`)
     return
   }
   job.value = detail.job
@@ -66,8 +75,8 @@ async function onConfigSaved() {
 
 function crumbs() {
   setBreadcrumb([
-    { title: '离线同步', to: listUrl('/jobs') },
-    { title: job.value!.name, to: `/jobs/${jobId}` },
+    streaming.value ? { title: '实时同步', to: listUrl('/realtime') } : { title: '离线同步', to: listUrl('/jobs') },
+    { title: job.value!.name, to: base.value },
     { title: '编辑' },
   ])
 }
@@ -125,10 +134,11 @@ onMounted(load)
   <el-card v-if="job" shadow="never" class="edit-card">
     <div class="head">
       <div>
-        <div class="name"><BackButton :fallback="`/jobs/${jobId}`" />编辑任务：{{ job.name }}</div>
+        <div class="name"><BackButton :fallback="base" />编辑{{ streaming ? '实时' : '' }}任务：{{ job.name }}</div>
         <div class="meta">
           {{ job.projectName }} · {{ isWizard ? '向导配置' : '脚本配置' }} · 当前版本 {{ job.currentVersionNo ? `v${job.currentVersionNo}` : '未保存' }}
-          · 同步配置每次保存生成一个新版本，调度和基本信息单独保存
+          · 同步配置每次保存生成一个新版本，{{ streaming ? '运行设置' : '调度' }}和基本信息单独保存
+          <template v-if="streaming">；新版本在任务重启后生效</template>
         </div>
       </div>
       <div class="actions">
@@ -148,6 +158,7 @@ onMounted(load)
           :owner-id="job.ownerId"
           :readonly="false"
           :initial-form="version?.form ?? null"
+          :streaming="streaming"
           @saved="onConfigSaved"
           @dirty="(d: boolean) => (dirty.config = d)"
         />
@@ -160,7 +171,11 @@ onMounted(load)
           @dirty="(d: boolean) => (dirty.config = d)"
         />
       </el-tab-pane>
-      <el-tab-pane name="schedule">
+      <el-tab-pane v-if="streaming" name="settings">
+        <template #label>运行设置<span v-if="dirty.schedule" class="dot" /></template>
+        <StreamRunSettings :job="job" @dirty="(d: boolean) => (dirty.schedule = d)" />
+      </el-tab-pane>
+      <el-tab-pane v-else name="schedule">
         <template #label>调度<span v-if="dirty.schedule" class="dot" /></template>
         <ScheduleConfig :job="job" @dirty="(d: boolean) => (dirty.schedule = d)" />
       </el-tab-pane>

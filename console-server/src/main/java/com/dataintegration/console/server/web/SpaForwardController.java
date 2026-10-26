@@ -19,6 +19,7 @@ public class SpaForwardController {
         "/projects/**",
         "/datasources/**",
         "/jobs/**",
+        "/realtime/**",
         "/instances/**",
         "/cluster/**"
     })

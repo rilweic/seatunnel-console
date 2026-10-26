@@ -30,7 +30,17 @@ const router = createRouter({
           meta: { title: '任务详情', menu: '/jobs' },
         },
         { path: 'instances', component: () => import('@/views/instances/InstancesView.vue'), meta: { title: '运行记录', list: true } },
-        { path: 'realtime', component: () => import('@/views/ComingSoon.vue'), meta: { title: '实时同步', list: true } },
+        { path: 'realtime', component: () => import('@/views/realtime/RealtimeJobsView.vue'), meta: { title: '实时同步', list: true } },
+        {
+          path: 'realtime/:id/edit/:section(settings|basic)?',
+          component: () => import('@/views/jobs/JobEditView.vue'),
+          meta: { title: '编辑实时任务', menu: '/realtime' },
+        },
+        {
+          path: 'realtime/:id/:tab(history|versions)?',
+          component: () => import('@/views/realtime/RealtimeDetailView.vue'),
+          meta: { title: '实时任务详情', menu: '/realtime' },
+        },
         {
           path: 'instances/:id',
           component: () => import('@/views/instances/InstanceDetailView.vue'),

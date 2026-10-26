@@ -19,6 +19,7 @@ import {
   type IncrementalView,
   type NameRule,
   type PrecheckResult,
+  type StreamSettings,
   type WizardForm,
 } from '@/api/console'
 import HelpTip from '@/components/HelpTip.vue'
@@ -30,17 +31,25 @@ import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNames
 
 import AdvancedOptions from './wizard/AdvancedOptions.vue'
 import ConditionEditor from './wizard/ConditionEditor.vue'
-import { HANDLED_SINK_OPTIONS, wizardSinks, wizardSources, type SourceContext } from './wizard/connectors'
+import { HANDLED_SINK_OPTIONS, wizardSinks, wizardSources, wizardStreamSources, type SourceContext } from './wizard/connectors'
 import FieldMapping from './wizard/FieldMapping.vue'
+import StreamSyncSettings from './wizard/StreamSyncSettings.vue'
 import TableMapping from './wizard/TableMapping.vue'
 
-const props = defineProps<{ jobId: string; ownerId: string | null; readonly: boolean; initialForm: WizardForm | null }>()
+const props = defineProps<{
+  jobId: string
+  ownerId: string | null
+  readonly: boolean
+  initialForm: WizardForm | null
+  /** a real-time job: CDC sources, stream settings instead of the sync mode (design.md §12 P2) */
+  streaming?: boolean
+}>()
 const params = defineModel<ParamRow[]>('params', { required: true })
 const emit = defineEmits<{ saved: [versionNo: number]; dirty: [dirty: boolean] }>()
 
 /** Bound by the job page, which keeps it in the URL. */
 const step = defineModel<number>('step', { default: 0 })
-const steps = ['来源', '目标', '字段与同步方式', '并行度与校验', '预检查与预览']
+const steps = computed(() => ['来源', '目标', '字段与同步方式', props.streaming ? '并行度与 checkpoint' : '并行度与校验', '预检查与预览'])
 
 const { types, ready: typesReady, capabilities, label: typeLabel } = useDatasourceTypes()
 const datasources = ref<DatasourceView[]>([])
@@ -48,18 +57,24 @@ const typeOf = (id: string) => datasources.value.find((d) => d.id === id)?.type
 const sourceCaps = computed(() => capabilities(typeOf(form.source.datasourceId)))
 const targetCaps = computed(() => capabilities(typeOf(form.target.datasourceId)))
 /** The source's screens and checks, or undefined until a source is chosen. */
-const sourceUi = computed(() => wizardSources[sourceCaps.value?.sourceConnector ?? ''])
+const sourceUi = computed(() =>
+  props.streaming ? wizardStreamSources[sourceCaps.value?.cdcConnector ?? ''] : wizardSources[sourceCaps.value?.sourceConnector ?? ''],
+)
+/** The SeaTunnel source connector the job is generated with. */
+const sourcePlugin = computed(() => (props.streaming ? sourceCaps.value?.cdcConnector : sourceCaps.value?.sourceConnector) ?? '')
 const sinkUi = computed(() => wizardSinks[targetCaps.value?.sinkConnector ?? ''])
 const lowerCaseNames = computed(() => !!targetCaps.value?.lowerCaseNames)
 const tableWord = computed(() => sinkUi.value?.tableWord ?? '目标表')
-const sourceDatasources = computed(() => datasources.value.filter((d) => wizardSources[capabilities(d.type)?.sourceConnector ?? '']))
+const canRead = (caps?: { sourceConnector: string | null; cdcConnector: string | null } | null) =>
+  props.streaming ? !!wizardStreamSources[caps?.cdcConnector ?? ''] : !!wizardSources[caps?.sourceConnector ?? '']
+const sourceDatasources = computed(() => datasources.value.filter((d) => canRead(capabilities(d.type))))
 const targetDatasources = computed(() => datasources.value.filter((d) => wizardSinks[capabilities(d.type)?.sinkConnector ?? '']))
 /** e.g. "MySQL、PostgreSQL 或 HTTP", for the select placeholders. */
 function labels(can: (t: (typeof types.value)[number]) => boolean) {
   const names = types.value.filter(can).map((t) => t.capabilities.label)
   return names.length > 1 ? `${names.slice(0, -1).join('、')} 或 ${names[names.length - 1]}` : names.join('')
 }
-const sourcePlaceholder = computed(() => labels((t) => !!wizardSources[t.capabilities.sourceConnector ?? '']))
+const sourcePlaceholder = computed(() => labels((t) => canRead(t.capabilities)))
 const targetPlaceholder = computed(() => labels((t) => !!wizardSinks[t.capabilities.sinkConnector ?? '']))
 
 function emptyForm(): WizardForm {
@@ -75,16 +90,22 @@ function emptyForm(): WizardForm {
     },
     sync: { mode: 'FULL', window: 'CONTINUOUS', field: '', customCondition: '' },
     parallelism: 1,
-    validation: true,
+    validation: !props.streaming,
     sourceOptions: {},
     sinkOptions: {},
+    stream: props.streaming ? newStream() : null,
   }
+}
+
+function newStream(): StreamSettings {
+  return { startup: 'INITIAL', startupTimestamp: null, schemaChanges: true, dropColumns: false, skipDeletes: false, checkpointSeconds: null }
 }
 
 const form = reactive<WizardForm>(props.initialForm ? (JSON.parse(JSON.stringify(props.initialForm)) as WizardForm) : emptyForm())
 form.sync.window ??= 'CONTINUOUS'
 form.sourceOptions ??= {}
 form.sinkOptions ??= {}
+if (props.streaming) form.stream ??= newStream()
 migrateNaming(form)
 /** Target defaults follow the chosen tables until the user changes them; a saved form keeps its own. */
 const targetTouched = ref(props.initialForm !== null)
@@ -108,7 +129,8 @@ function fitToSource() {
   const caps = sourceCaps.value
   if (!caps) return
   form.parallelism = Math.min(form.parallelism, caps.maxParallelism)
-  if (!caps.countBy) form.validation = false
+  if (!caps.countBy || props.streaming) form.validation = false
+  if (form.stream && !sourceUi.value?.stream?.startFromTime && form.stream.startup === 'TIMESTAMP') form.stream.startup = 'INITIAL'
 }
 
 function onSourceDatasource() {
@@ -180,12 +202,12 @@ const optionsError = ref('')
 
 async function loadOptionDefs() {
   optionsError.value = ''
-  const sourcePlugin = sourceCaps.value?.sourceConnector
+  const plugin = sourcePlugin.value
   const sinkPlugin = targetCaps.value?.sinkConnector
-  if (!sourcePlugin || !sinkPlugin) return
+  if (!plugin || !sinkPlugin) return
   try {
     const handled = sourceUi.value?.handledOptions ?? []
-    const [src, snk] = await Promise.all([connectorApi.options('source', sourcePlugin), connectorApi.options('sink', sinkPlugin)])
+    const [src, snk] = await Promise.all([connectorApi.options('source', plugin), connectorApi.options('sink', sinkPlugin)])
     sourceOptionDefs.value = src.filter((o) => !handled.includes(o.key) && !o.key.startsWith('auth.'))
     sinkOptionDefs.value = snk.filter((o) => !HANDLED_SINK_OPTIONS.includes(o.key) && !o.key.startsWith('auth.'))
   } catch {
@@ -275,12 +297,27 @@ function payload(): WizardForm {
             customCondition: form.sync.window === 'CUSTOM' ? clean(form.sync.customCondition) : null,
           },
     parallelism: Math.min(form.parallelism, sourceCaps.value?.maxParallelism ?? form.parallelism),
-    validation: sourceCaps.value && !sourceCaps.value.countBy ? false : form.validation,
+    validation: props.streaming || (sourceCaps.value && !sourceCaps.value.countBy) ? false : form.validation,
     sourceOptions: opts(form.sourceOptions),
     sinkOptions: opts(form.sinkOptions),
     fieldRule: cleanRule(form.fieldRule),
+    stream: props.streaming && form.stream
+      ? {
+          ...form.stream,
+          startupTimestamp: form.stream.startup === 'TIMESTAMP' ? form.stream.startupTimestamp ?? null : null,
+          dropColumns: form.stream.schemaChanges && form.stream.dropColumns,
+          checkpointSeconds: form.stream.checkpointSeconds || null,
+        }
+      : null,
   }
 }
+
+/** Why field processing is not offered now: a real-time job passing on schema changes (§12 P2, Q22). */
+const processingBlocked = computed(() =>
+  props.streaming && form.stream?.schemaChanges
+    ? '已打开"同步表结构变更"，不能使用字段处理：源表改名或删列时，字段处理会让任务失败。需要字段处理时，先在上面关掉"同步表结构变更"'
+    : null,
+)
 
 async function runPrecheck() {
   checking.value = true
@@ -298,7 +335,7 @@ const hasErrors = computed(() => !precheck.value || precheck.value.checks.some((
  * the server precheck and shows it on the last step when it reports errors.
  */
 async function save() {
-  for (let i = 0; i < steps.length - 1; i++) {
+  for (let i = 0; i < steps.value.length - 1; i++) {
     const error = stepError(i)
     if (error) {
       step.value = i
@@ -310,7 +347,7 @@ async function save() {
   try {
     await runPrecheck()
     if (hasErrors.value) {
-      step.value = steps.length - 1
+      step.value = steps.value.length - 1
       ElMessage.warning('预检查发现错误，修正后才能保存')
       return
     }
@@ -351,6 +388,13 @@ function stepError(i: number): string | null {
     if (paramError) return paramError
     const noKey = form.source.tables.find((t) => Object.values(t.processes ?? {}).some((p) => p.encrypt) && !t.encryptKeyId)
     if (noKey) return `${noKey.name} 有字段要加密，请在字段映射里选择加密密钥`
+  }
+  if (i === 2 && props.streaming && form.stream) {
+    if (form.stream.startup === 'TIMESTAMP' && !form.stream.startupTimestamp) return '请选择开始同步的时间点'
+    const processed = form.source.tables.find(
+      (t) => Object.keys(t.processes ?? {}).length || t.extracts?.length || t.addedFields?.length,
+    )
+    if (form.stream.schemaChanges && processed) return `${processed.name} 有字段处理，不能同时同步表结构变更：去掉字段处理，或关掉"同步表结构变更"`
   }
   if (i === 2 && sourceUi.value?.incremental && form.sync.mode === 'INCREMENTAL') {
     if (form.sync.window === 'CUSTOM' && !form.sync.customCondition?.trim()) return '请填写自定义增量条件'
@@ -473,7 +517,10 @@ onMounted(async () => {
             <el-radio value="ERROR">报错</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="写入方式">
+        <el-form-item v-if="streaming" label="写入方式">
+          <div class="tip">按主键写入：源表的插入、更新、删除都按主键落到目标表，目标表已有的数据保留。</div>
+        </el-form-item>
+        <el-form-item v-if="!streaming" label="写入方式">
           <el-radio-group v-model="form.target.writeMode" @change="targetTouched = true">
             <el-radio value="UPSERT">按主键 upsert</el-radio>
             <el-radio value="APPEND">追加</el-radio>
@@ -482,7 +529,7 @@ onMounted(async () => {
             {{ tablesWithoutPk.join('，') }} 没有主键，这些表只能按追加写入
           </div>
         </el-form-item>
-        <el-form-item label="目标已有数据">
+        <el-form-item v-if="!streaming" label="目标已有数据">
           <el-radio-group v-model="form.target.dataMode" @change="targetTouched = true">
             <el-radio value="KEEP">保留</el-radio>
             <el-radio value="CLEAR" :disabled="form.sync.mode === 'INCREMENTAL'">清空后写入</el-radio>
@@ -549,11 +596,26 @@ onMounted(async () => {
         </template>
       </el-form>
 
+      <StreamSyncSettings
+        v-if="streaming && form.stream"
+        v-model="form.stream"
+        :postgres="!!sourceUi?.stream?.onlyAddedColumns"
+        :all-column-changes="sinkUi?.allColumnChanges ?? true"
+        :readonly="readonly"
+      />
+
       <div class="section-title">
         字段映射
         <HelpTip :text="sourceUi?.text.fieldsHelp ?? ''" />
       </div>
-      <FieldMapping :form="form" :columns="columns" :loading="loadingColumns" :lower-case="lowerCaseNames" :filters="!!sourceUi?.incremental" />
+      <FieldMapping
+        :form="form"
+        :columns="columns"
+        :loading="loadingColumns"
+        :lower-case="lowerCaseNames"
+        :filters="!!sourceUi?.incremental"
+        :processing-blocked="processingBlocked"
+      />
 
       <div class="section-title">
         任务参数
@@ -565,7 +627,7 @@ onMounted(async () => {
     <!-- ④ 并行度与校验 -->
     <section v-show="step === 3">
       <div class="step-heading">
-        <h3>调整运行与校验</h3>
+        <h3>{{ streaming ? '调整运行' : '调整运行与校验' }}</h3>
         <p>{{ sourceUi?.text.run }}</p>
       </div>
       <el-form label-width="96px" class="form-card">
@@ -575,9 +637,13 @@ onMounted(async () => {
           </el-radio-group>
           <HelpTip :text="sourceUi?.text.parallelismHelp ?? ''" />
         </el-form-item>
-        <el-form-item label="行数校验">
+        <el-form-item v-if="!streaming" label="行数校验">
           <el-switch v-model="form.validation" :disabled="!sourceCaps?.countBy" />
           <HelpTip :text="sourceUi?.text.validationHelp ?? ''" />
+        </el-form-item>
+        <el-form-item v-if="streaming && form.stream" label="checkpoint">
+          每 <el-input-number v-model="form.stream.checkpointSeconds" :min="1" :max="3600" placeholder="10" controls-position="right" class="seconds" /> 秒
+          <HelpTip text="多久保存一次同步进度。失败或强制停止后从最近一次 checkpoint 恢复，间隔越短重放的数据越少，但对引擎的开销越大。默认 10 秒" />
         </el-form-item>
       </el-form>
       <el-collapse class="advanced">
@@ -588,7 +654,7 @@ onMounted(async () => {
           <el-alert v-if="optionsError" :title="optionsError" type="warning" :closable="false" />
           <template v-else>
             <div class="tip adv-intro">不填就用默认值，大多数情况不需要改。改过的参数会高亮显示。</div>
-            <AdvancedOptions v-model="form.sourceOptions!" title="读取（来源）" :defs="sourceOptionDefs" type="source" :plugin="sourceCaps?.sourceConnector ?? ''" />
+            <AdvancedOptions v-model="form.sourceOptions!" title="读取（来源）" :defs="sourceOptionDefs" type="source" :plugin="sourcePlugin" />
             <AdvancedOptions
               v-model="form.sinkOptions!"
               title="写入（目标）"
@@ -910,6 +976,11 @@ onMounted(async () => {
 
 .remark {
   width: 280px;
+}
+
+.seconds {
+  width: 110px;
+  margin: 0 6px;
 }
 
 @media (max-width: 1100px) {

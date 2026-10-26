@@ -47,7 +47,13 @@ const editTip = computed(() => (job.value?.editable ? '' : NOT_EDITABLE))
 const runTip = computed(() => (!job.value?.editable ? NOT_EDITABLE : !job.value.currentVersionNo ? '先编辑并保存一个版本' : ''))
 
 async function load() {
-  job.value = (await jobApi.get(jobId)).job
+  const loaded = (await jobApi.get(jobId)).job
+  if (loaded.jobType === 'STREAMING') {
+    // a real-time job has its own page (design.md §12 P2)
+    router.replace(`/realtime/${jobId}`)
+    return
+  }
+  job.value = loaded
   setBreadcrumb([{ title: '离线同步', to: listUrl('/jobs') }, { title: job.value.name }])
 }
 

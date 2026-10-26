@@ -317,7 +317,80 @@ const SOURCE_HTTP: OptionDict = {
     'binary_chunk_size', 'enable_multi_lines'],
 }
 
+/** MySQL-CDC and Postgres-CDC (design.md §12 P2): the snapshot, the change stream, the connection. */
+const SOURCE_CDC: OptionDict = {
+  groups: ['全量阶段', '增量阶段', '连接'],
+  options: {
+    'snapshot.split.size': {
+      label: '全量分片行数',
+      help: '全量阶段按主键把表切成分片，每片大约多少行。表很大时调大可以减少分片数量。',
+      group: '全量阶段',
+      control: 'number',
+    },
+    'snapshot.fetch.size': {
+      label: '全量每次读取行数',
+      help: '全量阶段每次从数据库取回多少行。',
+      group: '全量阶段',
+      control: 'number',
+    },
+    'incremental.parallelism': {
+      label: '增量阶段并行度',
+      help: '读取 binlog / WAL 的并行度，一般保持 1。',
+      group: '增量阶段',
+      control: 'number',
+      rare: true,
+    },
+    exactly_once: {
+      label: '精确一次',
+      help: '默认关闭：至少一次，靠按主键写入保证重复写入结果一样。打开后开销更大，一般不需要。',
+      group: '增量阶段',
+      control: 'bool',
+      rare: true,
+    },
+    'server-id': {
+      label: 'server-id',
+      help: 'MySQL 复制连接用的 server-id（一个或一段，如 5400-5403），console 已为每个任务自动分配不冲突的一段。只在和其他同步工具（如 Canal）撞号时修改。',
+      group: '增量阶段',
+      rare: true,
+    },
+    'server-time-zone': {
+      label: '数据库时区',
+      help: '数据库的时区，例如 Asia/Shanghai。时间字段同步后差了几个小时时设置。',
+      group: '连接',
+    },
+    'connect.timeout.ms': {
+      label: '连接超时（毫秒）',
+      help: '连接数据库的超时时间。',
+      group: '连接',
+      control: 'number',
+      rare: true,
+    },
+    'connect.max-retries': {
+      label: '连接重试次数',
+      help: '连接数据库失败时重试几次。',
+      group: '连接',
+      control: 'number',
+      rare: true,
+    },
+    'connection.pool.size': {
+      label: '连接池大小',
+      help: '全量阶段读取用的连接数。',
+      group: '连接',
+      control: 'number',
+      rare: true,
+    },
+  },
+  hidden: ['url', 'username', 'password', 'database-names', 'schema-name', 'table-names', 'table-pattern', 'database-pattern',
+    'startup.mode', 'startup.timestamp', 'startup.specific-offset.file', 'startup.specific-offset.pos',
+    'startup.specific-offset.gtid-set', 'startup.specific-offset.skip-events', 'startup.specific-offset.skip-rows',
+    'stop.mode', 'stop.timestamp', 'stop.specific-offset.file', 'stop.specific-offset.pos', 'schema-changes.enabled',
+    'schema-changes.include', 'schema-changes.exclude', 'decoding.plugin.name', 'slot.name', 'debezium', 'format',
+    'table-names-config', 'hostname', 'port'],
+}
+
 const DICTS: Record<string, OptionDict> = {
+  'source:MySQL-CDC': SOURCE_CDC,
+  'source:Postgres-CDC': SOURCE_CDC,
   'source:Jdbc': SOURCE_JDBC,
   'source:Http': SOURCE_HTTP,
   'sink:Jdbc': SINK_JDBC,

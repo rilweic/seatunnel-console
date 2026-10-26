@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 
 import { jobApi, projectApi, type ProjectView } from '@/api/console'
 
-const props = defineProps<{ job: { id: string; name: string; projectId: string } | null }>()
+const props = defineProps<{ job: { id: string; name: string; projectId: string; jobType?: 'BATCH' | 'STREAMING' } | null }>()
 const visible = defineModel<boolean>({ required: true })
 
 const router = useRouter()
@@ -30,7 +30,7 @@ async function copy() {
     const { job, scheduleCopied } = await jobApi.copy(props.job.id, { name: name.value.trim(), projectId: projectId.value })
     ElMessage.success(scheduleCopied ? '已复制，调度设置也复制了过来（未启用）' : '已复制')
     visible.value = false
-    router.push(`/jobs/${job.id}`)
+    router.push(job.jobType === 'STREAMING' ? `/realtime/${job.id}` : `/jobs/${job.id}`)
   } finally {
     copying.value = false
   }

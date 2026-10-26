@@ -6,7 +6,7 @@
 import { Box, Operation, Search } from '@element-plus/icons-vue'
 import { computed, ref } from 'vue'
 
-import type { FlowEndpoint, JobFlow } from '@/api/console'
+import type { FlowEndpoint, FlowSettings, JobFlow, StreamSettings } from '@/api/console'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
 
 const props = defineProps<{ flow: JobFlow; versionNo: number | null }>()
@@ -26,9 +26,24 @@ const shownTables = computed(() => (showAll.value || tableFilter.value.trim() ? 
 
 const WINDOW_TEXT: Record<string, string> = { CONTINUOUS: '连续增量', DAY: '按天增量', HOUR: '按小时增量', CUSTOM: '按自定义条件增量' }
 
+const STARTUP_TEXT: Record<string, string> = { INITIAL: '实时（全量 + 增量）', LATEST: '实时（只同步之后的变更）', TIMESTAMP: '实时（从某个时间点开始）' }
+
+/** A real-time job's settings (design.md §12 P2). */
+function streamSettings(s: FlowSettings, stream: StreamSettings) {
+  return [
+    { label: '同步方式', value: STARTUP_TEXT[stream.startup] ?? '实时' },
+    { label: '表结构变更', value: stream.schemaChanges ? (stream.dropColumns ? '同步（含删列）' : '同步（不删列）') : '不同步' },
+    { label: '删除', value: stream.skipDeletes ? '不同步删除' : '同步删除', warn: stream.skipDeletes },
+    { label: '写入方式', value: '按主键写入' },
+    { label: '并行度', value: String(s.parallelism) },
+    { label: 'checkpoint', value: `每 ${stream.checkpointSeconds ?? 10} 秒` },
+  ]
+}
+
 const settings = computed(() => {
   const s = props.flow.settings
   if (!s) return []
+  if (s.stream) return streamSettings(s, s.stream)
   const mode = s.mode === 'INCREMENTAL'
     ? [WINDOW_TEXT[s.window ?? ''] ?? '增量', s.incrementalField].filter(Boolean).join(' · ')
     : '全量'
