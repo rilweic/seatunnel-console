@@ -15,6 +15,9 @@ import com.dataintegration.console.server.persistence.mapper.JobScheduleMapper;
 import com.dataintegration.console.server.run.InstanceService;
 import com.dataintegration.console.server.run.InstanceService.InstanceView;
 import com.dataintegration.console.server.run.RunStatus;
+import com.dataintegration.console.server.job.JobService;
+import com.dataintegration.console.server.stream.StreamDashboard;
+import com.dataintegration.console.server.stream.StreamRunType;
 
 import org.springframework.stereotype.Service;
 
@@ -64,20 +67,24 @@ public class DashboardService {
             List<Upcoming> upcoming,
             List<JobStat> topByRows,
             List<JobStat> slowest,
-            Map<String, String> cluster) {}
+            Map<String, String> cluster,
+            StreamDashboard.Summary realtime) {}
 
     private final JobDefinitionMapper jobMapper;
     private final JobInstanceMapper instanceMapper;
     private final JobScheduleMapper scheduleMapper;
     private final InstanceService instanceService;
     private final EngineClient engineClient;
+    private final StreamDashboard streamDashboard;
 
     public DashboardService(
             JobDefinitionMapper jobMapper,
             JobInstanceMapper instanceMapper,
             JobScheduleMapper scheduleMapper,
             InstanceService instanceService,
-            EngineClient engineClient) {
+            EngineClient engineClient,
+            StreamDashboard streamDashboard) {
+        this.streamDashboard = streamDashboard;
         this.jobMapper = jobMapper;
         this.instanceMapper = instanceMapper;
         this.scheduleMapper = scheduleMapper;
@@ -92,8 +99,11 @@ public class DashboardService {
         String me = CurrentUser.idOrNull();
 
         List<JobDefinition> jobs = jobMapper.selectList(new LambdaQueryWrapper<JobDefinition>()
-                .select(JobDefinition::getId, JobDefinition::getName, JobDefinition::getCreatedBy)
+                .select(JobDefinition::getId, JobDefinition::getName, JobDefinition::getCreatedBy, JobDefinition::getJobType)
                 .eq(mine, JobDefinition::getCreatedBy, me));
+        List<String> realtimeJobs = jobs.stream().filter(j -> JobService.TYPE_STREAMING.equals(j.getJobType())).map(JobDefinition::getId).toList();
+        // the offline numbers below are about offline jobs and their runs (a real-time start is not a run)
+        jobs = jobs.stream().filter(j -> !JobService.TYPE_STREAMING.equals(j.getJobType())).toList();
         Map<String, String> jobNames = jobs.stream().collect(Collectors.toMap(JobDefinition::getId, JobDefinition::getName));
         String scope = mine ? "select id from job_definition where created_by = " + quote(me) : null;
 
@@ -134,7 +144,8 @@ public class DashboardService {
                 upcoming(schedules, jobNames, now),
                 topByRows(now, scope, jobNames),
                 slowest(now, scope, jobNames),
-                cluster());
+                cluster(),
+                streamDashboard.summary(realtimeJobs));
     }
 
     private List<Day> trend(LocalDate today, String scope) {
@@ -238,8 +249,9 @@ public class DashboardService {
         }
     }
 
-    /** Limits a query on job_instance to the jobs in scope; null scope means all jobs. */
+    /** Limits a query on job_instance to offline runs of the jobs in scope; null scope means all jobs. */
     private static QueryWrapper<JobInstance> scoped(QueryWrapper<JobInstance> wrapper, String scope) {
+        wrapper.ne("trigger_type", StreamRunType.START);
         if (scope != null) {
             wrapper.inSql("job_definition_id", scope);
         }
@@ -247,6 +259,7 @@ public class DashboardService {
     }
 
     private static LambdaQueryWrapper<JobInstance> scoped(LambdaQueryWrapper<JobInstance> wrapper, String scope) {
+        wrapper.ne(JobInstance::getTriggerType, StreamRunType.START);
         if (scope != null) {
             wrapper.inSql(JobInstance::getJobDefinitionId, scope);
         }

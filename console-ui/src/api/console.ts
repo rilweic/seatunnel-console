@@ -858,6 +858,8 @@ export interface Dashboard {
   slowest: DashboardJobStat[]
   /** the engine's overview; empty when the cluster cannot be reached */
   cluster: Record<string, string>
+  /** real-time jobs (design.md §12 P2); the numbers above are about offline jobs */
+  realtime: { jobs: number; running: number; abnormal: number; quietestReadAt: string | null; quietestJobId: string | null }
 }
 
 export const dashboardApi = {

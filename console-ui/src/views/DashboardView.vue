@@ -13,6 +13,7 @@ import EChart from '@/components/EChart.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 import { formatCompact, formatDuration, formatTime, statusTag, statusText, triggerText } from '@/utils/format'
+import { ago } from '@/utils/stream'
 
 const REFRESH_MS = 30_000
 
@@ -143,7 +144,7 @@ onBeforeUnmount(() => {
     <template v-if="data">
       <div class="kpis">
         <div class="kpi clickable" @click="router.push({ path: '/jobs', query: query.mine ? {} : { mine: 'false' } })">
-          <div class="label">任务</div>
+          <div class="label">离线任务</div>
           <div class="value">{{ data.jobs }}</div>
           <div class="sub">已启用调度 {{ data.scheduledJobs }}</div>
         </div>
@@ -170,6 +171,14 @@ onBeforeUnmount(() => {
           <div class="label">今日写入行数</div>
           <div class="value">{{ formatCompact(data.today.writeRows) }}</div>
           <div class="sub">近 7 天 {{ formatCompact(data.writeRows7d) }}</div>
+        </div>
+        <div class="kpi clickable" @click="router.push({ path: '/realtime', query: query.mine ? {} : { mine: 'false' } })">
+          <div class="label">实时同步</div>
+          <div class="value" :class="{ running: data.realtime.running > 0 }">{{ data.realtime.running }}<span class="unit">个运行中</span></div>
+          <div class="sub">
+            <span :class="{ bad: data.realtime.abnormal > 0 }">异常 {{ data.realtime.abnormal }}</span> · 共 {{ data.realtime.jobs }} 个
+            <template v-if="data.realtime.quietestReadAt"><br />最久没读到数据：{{ ago(data.realtime.quietestReadAt) }}</template>
+          </div>
         </div>
         <div class="kpi clickable" @click="router.push('/cluster')">
           <div class="label">SeaTunnel 集群</div>
@@ -294,7 +303,7 @@ onBeforeUnmount(() => {
 
 .kpis {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 16px;
 }
 
