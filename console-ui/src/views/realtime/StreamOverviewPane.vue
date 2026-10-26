@@ -100,6 +100,17 @@ watch(() => props.view, () => (now.value = Date.now()))
       <RunMetricsPanel :metrics="live.metrics" :samples="live.samples" sampling-hint="实时任务每分钟采样一次，运行两分钟后显示速率曲线" />
     </template>
 
+    <template v-if="view.schemaChanges.length">
+      <div class="section-title">表结构变更 <span class="hint">运行中每 5 分钟对比一次源表和目标表</span></div>
+      <ul class="changes">
+        <li v-for="(c, i) in view.schemaChanges" :key="i">
+          <el-tag size="small" :type="c.level === 'INFO' ? 'info' : 'warning'">{{ c.level === 'INFO' ? '已同步' : '需要处理' }}</el-tag>
+          <span class="time">{{ formatTime(c.time) }}</span>
+          <span class="message">{{ c.message }}</span>
+        </li>
+      </ul>
+    </template>
+
     <JobFlowCard v-if="overview" :flow="overview.flow" :version-no="job.currentVersionNo" />
   </div>
 </template>
@@ -173,5 +184,36 @@ watch(() => props.view, () => (now.value = Date.now()))
 .section-title {
   margin-top: 8px;
   font-weight: 500;
+}
+
+.hint {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--el-text-color-secondary);
+}
+
+.changes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.changes li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.time {
+  flex: none;
+  color: var(--el-text-color-secondary);
+}
+
+.message {
+  line-height: 1.6;
 }
 </style>

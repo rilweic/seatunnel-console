@@ -508,6 +508,8 @@ export interface StreamView {
   lastRunId: string | null
   lastRunStatus: RunStatus | null
   lastRunMessage: string | null
+  /** table-structure changes noticed while running, newest first; WARN when the target did not follow */
+  schemaChanges: { time: string; level: 'INFO' | 'WARN' | 'ERROR'; message: string }[]
 }
 
 export interface StreamSummary {

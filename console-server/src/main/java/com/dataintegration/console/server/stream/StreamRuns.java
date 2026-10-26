@@ -5,9 +5,11 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
+import com.dataintegration.console.server.persistence.entity.JobInstanceEvent;
 import com.dataintegration.console.server.persistence.entity.JobStream;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceAttemptMapper;
+import com.dataintegration.console.server.persistence.mapper.JobInstanceEventMapper;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.persistence.mapper.JobStreamMapper;
 import com.dataintegration.console.server.run.RunEventType;
@@ -41,8 +43,11 @@ public class StreamRuns {
     private final JobStreamMapper streams;
     private final JobInstanceAttemptMapper attempts;
     private final JobInstanceMapper instances;
+    private final JobInstanceEventMapper events;
 
-    public StreamRuns(RunRecorder recorder, JobStreamMapper streams, JobInstanceAttemptMapper attempts, JobInstanceMapper instances) {
+    public StreamRuns(RunRecorder recorder, JobStreamMapper streams, JobInstanceAttemptMapper attempts, JobInstanceMapper instances,
+            JobInstanceEventMapper events) {
+        this.events = events;
         this.recorder = recorder;
         this.streams = streams;
         this.attempts = attempts;
@@ -87,6 +92,16 @@ public class StreamRuns {
                 .set(JobStream::getLastReadAt, null)
                 .eq(JobStream::getJobDefinitionId, jobId)
                 .isNull(JobStream::getCurrentInstanceId)) > 0;
+    }
+
+    /** Table-structure changes noticed in the job's runs (SchemaDriftWatcher), newest first. */
+    public List<JobInstanceEvent> schemaEvents(String jobId, int limit) {
+        return events.selectList(new LambdaQueryWrapper<JobInstanceEvent>()
+                .eq(JobInstanceEvent::getEventType, RunEventType.SCHEMA_CHANGE.name())
+                .inSql(JobInstanceEvent::getInstanceId,
+                        "select id from job_instance where job_definition_id = '" + jobId.replace("'", "''") + "'")
+                .orderByDesc(JobInstanceEvent::getCreatedAt)
+                .last("limit " + limit));
     }
 
     /** The job's latest start, or null when it never started. */

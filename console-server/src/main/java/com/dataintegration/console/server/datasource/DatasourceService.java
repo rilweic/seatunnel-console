@@ -267,6 +267,22 @@ public class DatasourceService {
         return support;
     }
 
+    /**
+     * Columns read by the console itself (the schema watcher of running real-time jobs), for a job
+     * that may only use its creator's datasources; null when the table does not exist.
+     */
+    public List<ColumnMeta> columnsForJob(String datasourceId, String namespace, String table) {
+        DatasourceEntity entity = require(datasourceId);
+        try {
+            return plugins.get(entity.getType()).columns(decryptedProps(entity), namespace, table);
+        } catch (ConsoleException e) {
+            if (e.getCode() == ErrorCodes.NOT_FOUND) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
     /** A saved, non-secret property such as the PostgreSQL database name. */
     public String property(String datasourceId, String key) {
         return config(require(datasourceId)).get(key);

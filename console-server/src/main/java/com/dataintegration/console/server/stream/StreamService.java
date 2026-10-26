@@ -78,7 +78,11 @@ public class StreamService {
             CdcSupport.Replication replication,
             String lastRunId,
             String lastRunStatus,
-            String lastRunMessage) {}
+            String lastRunMessage,
+            List<SchemaChange> schemaChanges) {}
+
+    /** A table-structure change the watcher noticed (§12 P2, Q16); level WARN when the target did not follow. */
+    public record SchemaChange(LocalDateTime time, String level, String message) {}
 
     /**
      * A job's state for the real-time list: what {@link StreamView} says, without engine or
@@ -101,9 +105,12 @@ public class StreamService {
     private final EngineClient engine;
     private final DatasourceService datasources;
     private final ObjectMapper objectMapper;
+    private final SchemaDriftWatcher schemaWatcher;
 
     public StreamService(JobService jobService, StreamIdentityService identity, StreamRuns runs, StreamSubmitter submitter,
-            CdcReadiness readiness, EngineClient engine, DatasourceService datasources, ObjectMapper objectMapper) {
+            CdcReadiness readiness, EngineClient engine, DatasourceService datasources, ObjectMapper objectMapper,
+            SchemaDriftWatcher schemaWatcher) {
+        this.schemaWatcher = schemaWatcher;
         this.jobService = jobService;
         this.identity = identity;
         this.runs = runs;
@@ -145,7 +152,8 @@ public class StreamService {
                 current == null ? replication(job, stream) : null,
                 last == null ? null : last.getId(),
                 last == null ? null : last.getStatus(),
-                last == null ? null : last.getErrorMessage());
+                last == null ? null : last.getErrorMessage(),
+                runs.schemaEvents(jobId, 10).stream().map(e -> new SchemaChange(e.getCreatedAt(), e.getLevel(), e.getMessage())).toList());
     }
 
     /** States of the listed jobs, by job id; offline jobs are left out. */
@@ -222,6 +230,12 @@ public class StreamService {
         } catch (RuntimeException e) {
             runs.finish(instance, RunStatus.FAILED, "启动失败：" + e.getMessage(), null);
             throw e;
+        }
+        try {
+            // what the tables look like now, so changes from here on are noticed
+            schemaWatcher.check(jobId);
+        } catch (RuntimeException e) {
+            // the watcher tries again on its next round
         }
         return view(jobId);
     }
