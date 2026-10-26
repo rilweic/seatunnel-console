@@ -98,6 +98,8 @@ public record WizardForm(
      * @param extracts new fields taken out of a synced field: JSON path, regex groups or split parts
      * @param addedFields new fields: constants, variables or values computed from other fields
      * @param encryptKeyId the console key {@link FieldProcess#encrypt()} fields are encrypted with
+     * @param seenColumns the source columns as the wizard last showed them when the version was
+     *     saved; only the wizard reads it, to mark what changed in the table since (§12 P2, Q17)
      */
     public record TableSpec(
             String name,
@@ -110,7 +112,23 @@ public record WizardForm(
             Map<String, FieldProcess> processes,
             List<Extract> extracts,
             List<AddedField> addedFields,
-            String encryptKeyId) {
+            String encryptKeyId,
+            List<SeenColumn> seenColumns) {
+
+        public TableSpec(
+                String name,
+                List<String> columns,
+                String filter,
+                String incrementalField,
+                String targetName,
+                Map<String, String> fieldNames,
+                NameRule fieldRule,
+                Map<String, FieldProcess> processes,
+                List<Extract> extracts,
+                List<AddedField> addedFields,
+                String encryptKeyId) {
+            this(name, columns, filter, incrementalField, targetName, fieldNames, fieldRule, processes, extracts, addedFields, encryptKeyId, null);
+        }
 
         public TableSpec(String name, List<String> columns, String filter, String incrementalField) {
             this(name, columns, filter, incrementalField, null, null, null);
@@ -148,6 +166,9 @@ public record WizardForm(
         TIMESTAMP,
         BOOLEAN
     }
+
+    /** A source column by name and database type, as {@link TableSpec#seenColumns()} keeps it. */
+    public record SeenColumn(String name, String type) {}
 
     /**
      * What happens to one synced field's values, in this order: replace, mask, convert type; then

@@ -224,6 +224,13 @@ export interface WizardTable {
   addedFields?: AddedField[] | null
   /** console key the encrypted fields of this table use */
   encryptKeyId?: string | null
+  /** the source columns as the wizard showed them at the last save; marks what changed since */
+  seenColumns?: SeenColumn[] | null
+}
+
+export interface SeenColumn {
+  name: string
+  type: string
 }
 
 export type FieldType = 'STRING' | 'BIGINT' | 'DECIMAL' | 'DATE' | 'TIMESTAMP' | 'BOOLEAN'

@@ -25,6 +25,7 @@ import {
 import HelpTip from '@/components/HelpTip.vue'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
+import { columnChanges } from '@/utils/columnChanges'
 import { formatTime } from '@/utils/format'
 import { paramsProblem } from '@/utils/params'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
@@ -254,6 +255,13 @@ function toMap(rows: ParamRow[]) {
   return Object.fromEntries(rows.filter((r) => r.key.trim()).map((r) => [r.key.trim(), r.value]))
 }
 
+/** The columns a save remembers: those shown now, else what the last save remembered. */
+function seenColumns(t: WizardForm['source']['tables'][number]) {
+  if (!sourceUi.value?.liveColumns) return null
+  const shown = columns.value[t.name]
+  return shown ? shown.map((c) => ({ name: c.name, type: c.type })) : t.seenColumns ?? null
+}
+
 /** The form as sent: blank optional strings become null so the server sees "not set". */
 function payload(): WizardForm {
   const clean = (v?: string | null) => (v && v.trim() ? v.trim() : null)
@@ -276,6 +284,7 @@ function payload(): WizardForm {
         extracts: t.extracts?.length ? t.extracts : null,
         addedFields: t.addedFields?.length ? t.addedFields : null,
         encryptKeyId: t.encryptKeyId || null,
+        seenColumns: seenColumns(t),
       })),
       spec: spec ? (sourceUi.value?.cleanSpec?.(spec) ?? spec) : null,
     },
@@ -354,6 +363,8 @@ async function save() {
     const version = await jobApi.saveVersion(props.jobId, { form: payload(), params: toMap(params.value), remark: remark.value || undefined })
     ElMessage.success(`已保存为 v${version.versionNo}`)
     remark.value = ''
+    // what was saved is the new baseline, so the change marks go
+    form.source.tables.forEach((t) => (t.seenColumns = seenColumns(t)))
     snapshot.value = currentSnapshot()
     emit('saved', version.versionNo)
   } finally {
@@ -362,10 +373,16 @@ async function save() {
 }
 
 // ---- unsaved changes ----
-const currentSnapshot = () => JSON.stringify([payload(), toMap(params.value)])
+/** Remembered columns are left out: only looking at a changed table is no change to the job. */
+const currentSnapshot = () =>
+  JSON.stringify([payload(), toMap(params.value)], (k, v) => (k === 'seenColumns' ? undefined : v))
 /** Taken once the saved form has been loaded into the steps; null until then. */
 const snapshot = ref<string | null>(null)
-const dirty = computed(() => snapshot.value !== null && currentSnapshot() !== snapshot.value)
+/** A source table that changed since the last save also makes one worth saving: it updates the config. */
+const tablesChanged = computed(
+  () => !!sourceUi.value?.liveColumns && form.source.tables.some((t) => columnChanges(t.seenColumns, columns.value[t.name])),
+)
+const dirty = computed(() => snapshot.value !== null && (currentSnapshot() !== snapshot.value || tablesChanged.value))
 watch(dirty, (value) => emit('dirty', value))
 
 // ---- navigation ----
@@ -615,6 +632,7 @@ onMounted(async () => {
         :lower-case="lowerCaseNames"
         :filters="!!sourceUi?.incremental"
         :processing-blocked="processingBlocked"
+        :streaming="streaming"
       />
 
       <div class="section-title">

@@ -3,6 +3,7 @@
  * Field mapping per table (docs/design.md §7.8, §7.10): which source fields are synced, under
  * which target name and with what processing, the new fields (added or extracted), plus each
  * table's fixed filter and incremental field. Tables on the left, the chosen table on the right.
+ * Columns that changed in the source table since the version was saved are marked (§12 P2, Q17).
  */
 import { CirclePlus, EditPen, Key, Right, Scissor, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -10,6 +11,7 @@ import { computed, ref, watch } from 'vue'
 
 import { encryptKeyApi, type AddedField, type ColumnMeta, type EncryptKeyView, type Extract, type FieldProcess, type NameRule, type WizardForm, type WizardTable } from '@/api/console'
 import HelpTip from '@/components/HelpTip.vue'
+import { columnChanges, describeChanges, type ColumnChanges } from '@/utils/columnChanges'
 import { describeAdded, describeExtract, hasProcess, newFieldNames, processTags, readableFields, typeLabel } from '@/utils/fieldProcessing'
 import { clashes, isEmptyRule, nameProblem, ruleFieldName, syncedFields, targetFieldName, targetTableName } from '@/utils/naming'
 
@@ -28,6 +30,8 @@ const props = defineProps<{
   filters: boolean
   /** Why value processing, extracted and added fields are not offered now; null when they are. */
   processingBlocked?: string | null
+  /** A real-time job, which syncs columns added to the source while it runs. */
+  streaming?: boolean
 }>()
 
 const tableSearch = ref('')
@@ -72,6 +76,12 @@ function synced(t: WizardTable) {
   return syncedFields(t, allFields(t))
 }
 
+/** Synced columns the table still has: a list saved earlier may name columns since dropped. */
+function syncedCount(t: WizardTable) {
+  const all = allFields(t)
+  return all.length ? synced(t).filter((c) => all.includes(c)).length : synced(t).length
+}
+
 /** Target names of the synced fields that clash or are invalid, by table. */
 function problems(t: WizardTable): Map<string, string> {
   const fields = synced(t)
@@ -111,6 +121,76 @@ const rows = computed(() => {
     .map((c, i) => ({ ...c, no: i + 1, masked: !kept.has(c.name) }))
     .filter((c) => !q || c.name.toLowerCase().includes(q) || targetFieldName(props.form, t, c.name).toLowerCase().includes(q))
 })
+
+// ---- columns changed since the version was saved ----
+
+function changesOf(t: WizardTable): ColumnChanges | null {
+  return columnChanges(t.seenColumns, props.columns[t.name])
+}
+
+const changes = computed(() => (table.value ? changesOf(table.value) : null))
+
+/**
+ * A real-time job already passes on columns added to the source (its pruned columns are left out
+ * by name), so a table that syncs a column list gets them added, rather than pruned on the next save.
+ */
+watch(
+  () => props.form.source.tables.map((t) => [t.name, !!props.columns[t.name]]),
+  () => {
+    if (!props.streaming) return
+    for (const t of props.form.source.tables) {
+      const added = changesOf(t)?.added
+      if (t.columns?.length && added) t.columns = [...t.columns, ...[...added].filter((n) => !t.columns!.includes(n))]
+    }
+  },
+  { immediate: true },
+)
+
+/** Where the table's settings still name a column. */
+function references(t: WizardTable, name: string): string[] {
+  const out: string[] = []
+  if (t.columns?.includes(name)) out.push('同步字段')
+  if (t.fieldNames?.[name] != null) out.push('目标字段名')
+  if (t.processes?.[name]) out.push('字段处理')
+  if (t.incrementalField === name) out.push('增量字段')
+  if ((t.extracts ?? []).some((e) => e.source === name)) out.push('提取字段')
+  if ((t.addedFields ?? []).some((a) => (a.fields ?? []).includes(name))) out.push('新字段')
+  return out
+}
+
+/** Drops a gone column from the column list, target names, processing and the incremental field. */
+function forget(t: WizardTable, name: string) {
+  if (t.columns?.length) t.columns = t.columns.filter((n) => n !== name)
+  const names = { ...(t.fieldNames ?? {}) }
+  delete names[name]
+  t.fieldNames = Object.keys(names).length ? names : null
+  const processes = { ...(t.processes ?? {}) }
+  delete processes[name]
+  t.processes = Object.keys(processes).length ? processes : null
+  if (t.incrementalField === name) t.incrementalField = null
+  const left = references(t, name)
+  if (left.length) ElMessage.warning(`${left.join('、')}还用到 ${name}，请在下面的新字段里修改或删除`)
+}
+
+/**
+ * Moves a renamed column's settings to its new name: synced or not, processing, the incremental
+ * field, and the target name it had, so the target table keeps its column.
+ */
+function takeOver(t: WizardTable, from: string, to: string) {
+  const target = shown(t, from)
+  if (t.columns?.length) t.columns = t.columns.map((n) => (n === from ? to : n))
+  const names = { ...(t.fieldNames ?? {}) }
+  delete names[from]
+  if (target !== ruleFieldName(props.form, t, to)) names[to] = target
+  t.fieldNames = Object.keys(names).length ? names : null
+  if (t.processes?.[from]) {
+    const processes = { ...t.processes, [to]: t.processes[from] }
+    delete processes[from]
+    t.processes = processes
+  }
+  if (t.incrementalField === from) t.incrementalField = to
+  ElMessage.success(`${to} 沿用了 ${from} 的设置，目标字段名仍是 ${target}`)
+}
 
 // ---- masking: the table's column list; null means every column ----
 
@@ -310,10 +390,11 @@ function timeFields(t: WizardTable) {
           <div class="t-target">
             <span class="t-name">{{ targetTableName(form, t, lowerCase) }}</span>
             <span v-if="problems(t).size || newProblems(t).size" class="dot" title="有字段名冲突或不合法" />
+            <el-tag v-if="changesOf(t)" size="small" type="warning" disable-transitions class="changed" :title="describeChanges(changesOf(t)!)">结构有变化</el-tag>
           </div>
           <div class="t-meta">
             <span class="t-source">{{ t.name }}</span>
-            <span>已选 {{ synced(t).length }} / {{ allFields(t).length || '?' }}</span>
+            <span>已选 {{ syncedCount(t) }} / {{ allFields(t).length || '?' }}</span>
             <span v-if="byHandCount(t)">· 改名 {{ byHandCount(t) }}</span>
             <span v-if="newFieldNames(t).length">· 新字段 {{ newFieldNames(t).length }}</span>
             <span v-if="Object.keys(t.processes ?? {}).length">· 处理 {{ Object.keys(t.processes ?? {}).length }}</span>
@@ -361,6 +442,13 @@ function timeFields(t: WizardTable) {
         </label>
       </div>
 
+      <el-alert v-if="changes" type="warning" :closable="false" show-icon class="changes">
+        <template #title>源表在上次保存后{{ describeChanges(changes) }}，下面已按源表现在的结构列出并标出变化，保存后标记消失</template>
+        <div v-if="streaming && changes.added.size">新增的列实时任务已经在同步，这里默认同步。</div>
+        <div v-if="changes.renamed.size">改名的列按新字段处理，目标字段名会跟着变；要保持目标字段不变，点「沿用原设置」。</div>
+        <div v-if="changes.dropped.length">删除的列列在表格下面；还被设置用到的，清理后才能保存。</div>
+      </el-alert>
+
       <div class="search-row">
         <el-input v-model="fieldSearch" :prefix-icon="Search" placeholder="搜索字段名" clearable class="field-search" />
         <span class="tip">
@@ -384,7 +472,13 @@ function timeFields(t: WizardTable) {
             <el-tooltip v-if="row.primaryKey" content="主键" placement="top">
               <el-icon class="key"><Key /></el-icon>
             </el-tooltip>
-            <div class="f-type">{{ row.type }}</div>
+            <template v-if="changes">
+              <el-tag v-if="changes.added.has(row.name)" size="small" type="success" disable-transitions class="change-tag">新增</el-tag>
+              <el-tag v-else-if="changes.renamed.has(row.name)" size="small" type="warning" disable-transitions class="change-tag">改名，原 {{ changes.renamed.get(row.name) }}</el-tag>
+            </template>
+            <div class="f-type">
+              {{ row.type }}<span v-if="changes?.retyped.has(row.name)" class="was">（原 {{ changes.retyped.get(row.name) }}）</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="目标字段名" min-width="240">
@@ -404,7 +498,7 @@ function timeFields(t: WizardTable) {
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="170">
+        <el-table-column label="操作" :width="changes?.renamed.size ? 250 : 170">
           <template #default="{ row }">
             <div class="row-actions">
               <el-tooltip v-if="!row.masked && processingBlocked" :content="processingBlocked" placement="top">
@@ -422,10 +516,29 @@ function timeFields(t: WizardTable) {
                 type="info"
                 @click="followRule(table!, row.name)"
               >还原</el-button>
+              <el-tooltip v-if="changes?.renamed.has(row.name)" :content="`同步与否、目标字段名、字段处理和增量字段都按 ${changes.renamed.get(row.name)} 原来的设置`" placement="top">
+                <el-button link type="warning" @click="takeOver(table!, changes!.renamed.get(row.name)!, row.name)">沿用原设置</el-button>
+              </el-tooltip>
             </div>
           </template>
         </el-table-column>
       </el-table>
+
+      <template v-if="changes?.dropped.length">
+        <div class="new-title">源表已删除的字段</div>
+        <ul class="dropped">
+          <li v-for="c in changes.dropped" :key="c.name">
+            <span class="f-name">{{ c.name }}</span>
+            <span class="f-type">{{ c.type }}</span>
+            <el-tag size="small" type="danger" disable-transitions>已删除</el-tag>
+            <template v-if="references(table, c.name).length">
+              <span class="error">{{ references(table, c.name).join('、') }}还用到这一列</span>
+              <el-button link type="primary" @click="forget(table!, c.name)">清理设置</el-button>
+            </template>
+            <span v-else class="tip">设置里已经没有用到</span>
+          </li>
+        </ul>
+      </template>
 
       <template v-if="newRows.length">
         <div class="new-title">新字段 <HelpTip text="按顺序写在目标表的最后" /></div>
@@ -677,6 +790,35 @@ function timeFields(t: WizardTable) {
   margin-left: 4px;
   color: var(--el-color-warning);
   vertical-align: -2px;
+}
+
+.change-tag,
+.changed {
+  margin-left: 6px;
+}
+
+.was {
+  color: var(--el-color-warning-dark-2);
+}
+
+.changes {
+  margin-bottom: 12px;
+}
+
+.dropped {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.dropped li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .tags {

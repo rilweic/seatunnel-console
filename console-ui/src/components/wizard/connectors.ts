@@ -33,6 +33,8 @@ export interface WizardSourceUi {
   stepProblem: (form: WizardForm) => string | null
   /** For a real-time source: what its CDC connector can do (design.md §12 P2, 实测结论). */
   stream?: { startFromTime: boolean; onlyAddedColumns: boolean }
+  /** Columns come from database tables, which can change on their own; saves remember them (§12 P2, Q17). */
+  liveColumns?: boolean
   /** Columns of the selected tables for step ③; `known` holds those already loaded. */
   loadColumns: (form: WizardForm, known: Record<string, ColumnMeta[]>) => Promise<Record<string, ColumnMeta[]>>
   text: {
@@ -59,6 +61,7 @@ export const wizardSources: Record<string, WizardSourceUi> = {
   Jdbc: {
     step: JdbcSourceStep,
     incremental: true,
+    liveColumns: true,
     handledOptions: ['url', 'driver', 'username', 'password', 'table_path', 'table_list', 'query', 'where_condition', 'parallelism'],
     stepProblem: (form) => {
       if (!form.source.namespace) return '请选择库或 schema'
