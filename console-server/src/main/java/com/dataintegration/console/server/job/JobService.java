@@ -110,6 +110,12 @@ public class JobService {
     /** What a run at {@code scheduledTime} would submit; secrets masked. */
     public record PreviewResult(Map<String, String> variables, String config, List<String> unresolved) {}
 
+    /**
+     * @param unresolved ${name} references no variable matched
+     * @param error why the text cannot be rendered (e.g. a bad time expression); text is null then
+     */
+    public record RenderedText(String text, List<String> unresolved, String error) {}
+
     /** Validation counts taken now, for the editor's test button. */
     public record ValidationTest(RowCountValidator.Result result, Map<String, String> variables) {}
 
@@ -257,9 +263,11 @@ public class JobService {
         versionMapper.insert(version);
         datasourceIds.forEach(dsId -> versionDatasourceMapper.insert(new JobVersionDatasource(version.getId(), dsId)));
 
+        // The lag is part of how the job syncs; the watermark is the source job's progress, not the copy's.
         JobDefinition current = new JobDefinition();
         current.setId(job.getId());
         current.setCurrentVersionId(version.getId());
+        current.setWindowLagSeconds(source.getWindowLagSeconds());
         jobMapper.updateById(current);
         return view(require(job.getId()), 1);
     }
@@ -516,6 +524,21 @@ public class JobService {
         JobConfigRenderer.Rendered rendered = renderer.render(
                 job, hocon, params, startupParams, scheduledTime == null ? LocalDateTime.now() : scheduledTime, PREVIEW_INSTANCE_ID, false);
         return new PreviewResult(rendered.variables(), rendered.masked(), List.copyOf(rendered.unresolved()));
+    }
+
+    /**
+     * Renders a piece of config with the variables a run at scheduledTime would have (§8), for a live
+     * preview while typing: a text that cannot be rendered comes back with the reason, not as an error.
+     */
+    public RenderedText renderText(String jobId, String text, Map<String, String> params, LocalDateTime scheduledTime) {
+        JobDefinition job = require(jobId);
+        LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
+        try {
+            String rendered = Variables.render(text, renderer.variables(job, params, Map.of(), time, PREVIEW_INSTANCE_ID), time);
+            return new RenderedText(rendered, List.copyOf(Variables.unresolved(rendered)), null);
+        } catch (ConsoleException e) {
+            return new RenderedText(null, List.of(), e.getMessage());
+        }
     }
 
     public List<VersionSummary> versions(String jobId) {

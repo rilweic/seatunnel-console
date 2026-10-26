@@ -23,6 +23,9 @@ public class JobInstance {
     private String jobVersionId;
     private String triggerType;
     private LocalDateTime scheduledTime;
+    /** Sync window the run read (docs/design.md §7.5); null start = from the beginning, null end = no window. */
+    private LocalDateTime windowStart;
+    private LocalDateTime windowEnd;
     private String status;
     private Integer attemptCount;
     private Integer maxAttempts;

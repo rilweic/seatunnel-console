@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface JobDefinitionMapper extends BaseMapper<JobDefinition> {
@@ -26,4 +27,13 @@ public interface JobDefinitionMapper extends BaseMapper<JobDefinition> {
      */
     @Update("UPDATE job_definition SET xxl_job_id = NULL WHERE id = #{id} AND xxl_job_id = #{xxlJobId}")
     int clearXxlJobId(@Param("id") String id, @Param("xxlJobId") int xxlJobId);
+
+    /**
+     * Moves the watermark to the end of a window that just succeeded, only if the window started at
+     * the current watermark (docs/design.md §7.5): a window that no longer joins on (another run
+     * moved it, or it was reset meanwhile) leaves it alone. Null start means from the beginning.
+     */
+    @Update("UPDATE job_definition SET watermark = #{end,jdbcType=TIMESTAMP} "
+            + "WHERE id = #{id} AND deleted_at IS NULL AND watermark <=> #{start,jdbcType=TIMESTAMP}")
+    int advanceWatermark(@Param("id") String id, @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 }

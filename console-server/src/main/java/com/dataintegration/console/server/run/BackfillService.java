@@ -7,6 +7,8 @@ import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.ScheduleService;
+import com.dataintegration.console.server.job.SyncWindow;
+import com.dataintegration.console.server.job.WatermarkService;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
@@ -81,6 +83,7 @@ public class BackfillService {
     private final JobService jobService;
     private final ScheduleService scheduleService;
     private final RunService runService;
+    private final WatermarkService watermarks;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
 
@@ -91,6 +94,7 @@ public class BackfillService {
             JobService jobService,
             ScheduleService scheduleService,
             RunService runService,
+            WatermarkService watermarks,
             ObjectMapper objectMapper,
             PlatformTransactionManager transactionManager) {
         this.transactions = new TransactionTemplate(transactionManager);
@@ -100,6 +104,7 @@ public class BackfillService {
         this.jobService = jobService;
         this.scheduleService = scheduleService;
         this.runService = runService;
+        this.watermarks = watermarks;
         this.objectMapper = objectMapper;
     }
 
@@ -251,11 +256,16 @@ public class BackfillService {
         }
         JobDefinition job;
         List<LocalDateTime> times;
+        SyncWindow window;
+        Map<String, String> startupParams = runService.startupParams(batch.getStartupParamsJson());
         try {
             job = jobService.require(batch.getJobDefinitionId());
             // the times as they were when the batch was created, so the indexes keep their meaning
             times = ScheduleService.backfillTimes(batch.getCron(), batch.getStartTime().toLocalDate(),
                     batch.getEndTime().toLocalDate(), MAX_RUNS, batch.getCreatedAt());
+            // a run that reads the sync window covers the interval up to its scheduled time (§7.5)
+            window = watermarks.backfillWindow(
+                    job, jobService.requireVersion(batch.getJobVersionId()), startupParams, batch.getCron(), times.get(index));
         } catch (ConsoleException e) {
             transition(batch, Status.PAUSED, e.getMessage());
             return;
@@ -265,11 +275,12 @@ public class BackfillService {
                     batch.getJobVersionId(),
                     RunService.TriggerType.BACKFILL,
                     times.get(index),
-                    runService.startupParams(batch.getStartupParamsJson()),
+                    startupParams,
                     scheduleService.failRetryCount(job.getId()) + 1,
                     null,
                     batch.getId(),
-                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns());
+                    "backfill run " + (index + 1) + " of " + batch.getTotalRuns(),
+                    window);
         // Claiming the slot and recording its run commit together: the console stopping in between
         // can neither skip the scheduled time nor leave it claimed without a run.
         JobInstance recorded;

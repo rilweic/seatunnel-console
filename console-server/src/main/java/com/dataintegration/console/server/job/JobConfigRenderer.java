@@ -11,7 +11,9 @@ import com.dataintegration.console.server.project.ProjectService.ParamItem;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -44,6 +46,7 @@ public class JobConfigRenderer {
         this.encryptKeys = encryptKeys;
     }
 
+    /** For previews and checks: the window is the one the job's next run would read (§7.5). */
     public Rendered render(
             JobDefinition job,
             String hocon,
@@ -52,7 +55,20 @@ public class JobConfigRenderer {
             LocalDateTime scheduledTime,
             String instanceId,
             boolean withSecrets) {
-        Map<String, String> variables = variables(job, jobParams, startupParams, scheduledTime, instanceId);
+        return render(job, hocon, jobParams, startupParams, scheduledTime, instanceId, nextWindow(job, scheduledTime), withSecrets);
+    }
+
+    /** @param window the run's own sync window; null when it does not use one */
+    public Rendered render(
+            JobDefinition job,
+            String hocon,
+            Map<String, String> jobParams,
+            Map<String, String> startupParams,
+            LocalDateTime scheduledTime,
+            String instanceId,
+            SyncWindow window,
+            boolean withSecrets) {
+        Map<String, String> variables = variables(job, jobParams, startupParams, scheduledTime, instanceId, window);
         String text = Variables.render(hocon, variables, scheduledTime);
         HoconTemplate template = HoconTemplate.parse(text);
         requireCreatorsDatasources(job, template);
@@ -78,22 +94,63 @@ public class JobConfigRenderer {
         }
     }
 
+    /** For previews and checks, with the window the job's next run would read. */
     public Map<String, String> variables(
             JobDefinition job,
             Map<String, String> jobParams,
             Map<String, String> startupParams,
             LocalDateTime scheduledTime,
             String instanceId) {
+        return variables(job, jobParams, startupParams, scheduledTime, instanceId, nextWindow(job, scheduledTime));
+    }
+
+    public Map<String, String> variables(
+            JobDefinition job,
+            Map<String, String> jobParams,
+            Map<String, String> startupParams,
+            LocalDateTime scheduledTime,
+            String instanceId,
+            SyncWindow window) {
         String projectName = projectService.require(job.getProjectId()).getName();
+        return Variables.resolve(
+                Variables.builtins(scheduledTime, instanceId, job.getName(), projectName, window),
+                scheduledTime,
+                projectParams(job),
+                jobParams,
+                startupParams);
+    }
+
+    /**
+     * Whether a run of this template with these parameters reads the sync window, so it gets one
+     * fixed on its instance and moves the job's watermark (docs/design.md §7.5).
+     */
+    public boolean usesWindow(JobDefinition job, String hocon, Map<String, String> jobParams, Map<String, String> startupParams) {
+        List<String> texts = new ArrayList<>();
+        texts.add(hocon);
+        texts.addAll(projectParams(job).values());
+        if (jobParams != null) {
+            texts.addAll(jobParams.values());
+        }
+        if (startupParams != null) {
+            texts.addAll(startupParams.values());
+        }
+        return Variables.usesWindow(texts);
+    }
+
+    /** The window a run of the job scheduled at {@code scheduledTime} would read now. */
+    public static SyncWindow nextWindow(JobDefinition job, LocalDateTime scheduledTime) {
+        return SyncWindow.continuing(job.getWatermark(), scheduledTime, lagSeconds(job));
+    }
+
+    public static int lagSeconds(JobDefinition job) {
+        return job.getWindowLagSeconds() == null ? 0 : job.getWindowLagSeconds();
+    }
+
+    private Map<String, String> projectParams(JobDefinition job) {
         Map<String, String> projectParams = new LinkedHashMap<>();
         for (ParamItem item : projectService.params(job.getProjectId())) {
             projectParams.put(item.key(), item.value());
         }
-        return Variables.resolve(
-                Variables.builtins(scheduledTime, instanceId, job.getName(), projectName),
-                scheduledTime,
-                projectParams,
-                jobParams,
-                startupParams);
+        return projectParams;
     }
 }

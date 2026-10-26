@@ -25,6 +25,9 @@ public class JobDefinition {
     private String editMode;
     private String currentVersionId;
     private Integer xxlJobId;
+    /** End of the last successful sync window (docs/design.md §7.5); null = from the beginning. */
+    private LocalDateTime watermark;
+    private Integer windowLagSeconds;
     private String description;
     private String createdBy;
 

@@ -56,4 +56,14 @@ class CronScheduleTest {
         // minute 59 of every other hour: never closer than two hours
         CronSchedule.parseSchedule("0 59 0/2 * * ?", from);
     }
+
+    @Test
+    void findsThePreviousFireTime() {
+        var everyFiveMinutes = CronSchedule.parse("0 */5 * * * ?");
+        assertThat(CronSchedule.previous(everyFiveMinutes, LocalDateTime.of(2026, 10, 26, 10, 5))).isEqualTo(LocalDateTime.of(2026, 10, 26, 10, 0));
+        assertThat(CronSchedule.previous(everyFiveMinutes, LocalDateTime.of(2026, 10, 26, 10, 7))).isEqualTo(LocalDateTime.of(2026, 10, 26, 10, 5));
+        var firstOfMonth = CronSchedule.parse("0 0 2 1 * ?");
+        assertThat(CronSchedule.previous(firstOfMonth, LocalDateTime.of(2026, 10, 1, 2, 0))).isEqualTo(LocalDateTime.of(2026, 9, 1, 2, 0));
+        assertThat(ScheduleService.previousTime(null, LocalDateTime.of(2026, 10, 26, 0, 0))).isEqualTo(LocalDateTime.of(2026, 10, 25, 0, 0));
+    }
 }

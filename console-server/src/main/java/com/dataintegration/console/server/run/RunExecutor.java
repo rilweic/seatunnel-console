@@ -12,6 +12,8 @@ import com.dataintegration.console.server.job.ScriptChecker;
 import com.dataintegration.console.server.job.wizard.WizardService;
 import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.JobService;
+import com.dataintegration.console.server.job.SyncWindow;
+import com.dataintegration.console.server.job.WatermarkService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -71,6 +73,7 @@ public class RunExecutor {
     private final RowCountValidator validator;
     private final ScriptChecker scriptChecker;
     private final JobScheduleMapper scheduleMapper;
+    private final WatermarkService watermarks;
     private final EngineClient engineClient;
     private final EngineLogService engineLogService;
     private final LogStorage logStorage;
@@ -87,6 +90,7 @@ public class RunExecutor {
             RowCountValidator validator,
             ScriptChecker scriptChecker,
             JobScheduleMapper scheduleMapper,
+            WatermarkService watermarks,
             EngineClient engineClient,
             EngineLogService engineLogService,
             LogStorage logStorage,
@@ -98,6 +102,7 @@ public class RunExecutor {
         this.validator = validator;
         this.scriptChecker = scriptChecker;
         this.scheduleMapper = scheduleMapper;
+        this.watermarks = watermarks;
         this.engineClient = engineClient;
         this.engineLogService = engineLogService;
         this.logStorage = logStorage;
@@ -161,6 +166,12 @@ public class RunExecutor {
         } catch (ConsoleException e) {
             return finish(instance, RunStatus.FAILED, "cannot prepare job config: " + e.getMessage(), schedulerLog);
         }
+        if (prepared.window() != null && prepared.window().empty()) {
+            // Not worth an engine job; also keeps an empty window from ever moving the watermark.
+            instance.setValidationStatus("SKIPPED");
+            return finish(instance, RunStatus.SUCCESS,
+                    "同步窗口 " + prepared.window() + " 为空（水位已经到了窗口终点），没有提交作业", null, schedulerLog);
+        }
 
         RetryPolicy retry = retryPolicy(instance);
         int maxAttempts = Math.max(1, instance.getMaxAttempts() == null ? 1 : instance.getMaxAttempts());
@@ -209,7 +220,7 @@ public class RunExecutor {
             message = "engine job " + outcome.engineJobId() + " " + outcome.finalStatus()
                     + (outcome.errorMessage() == null ? "" : ": " + outcome.errorMessage());
         }
-        return finish(instance, status, message, schedulerLog);
+        return finish(instance, status, message, prepared.window(), schedulerLog);
     }
 
     private BatchJobRunner.Outcome runAttempt(
@@ -298,8 +309,11 @@ public class RunExecutor {
         }
     }
 
-    /** What prepare() worked out for the run: the submission, plus what validation needs afterwards. */
-    private record Prepared(SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation) {}
+    /**
+     * What prepare() worked out for the run: the submission, what validation needs afterwards, and
+     * the sync window it reads (null when it reads none).
+     */
+    private record Prepared(SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation, SyncWindow window) {}
 
     /**
      * Counts source and target rows if the version asks for it (docs/design.md §10.3). The result is
@@ -338,9 +352,11 @@ public class RunExecutor {
         Map<String, String> startupParams = instance.getStartupParamsJson() == null
                 ? Map.of()
                 : objectMapper.readValue(instance.getStartupParamsJson(), STRING_MAP);
+        Map<String, String> jobParams = jobService.params(version);
+        SyncWindow window = window(instance, job, version, jobParams, startupParams);
         JobConfigRenderer.Rendered rendered = renderer.render(
-                job, version.getHoconTemplate(), jobService.params(version), startupParams,
-                instance.getScheduledTime(), instance.getId(), true);
+                job, version.getHoconTemplate(), jobParams, startupParams,
+                instance.getScheduledTime(), instance.getId(), window, true);
         instance.setConfigMasked(rendered.masked());
         instance.setVariablesJson(objectMapper.writeValueAsString(rendered.variables()));
         recorder.update(instance);
@@ -352,7 +368,32 @@ public class RunExecutor {
         return new Prepared(
                 SubmitJobRequest.fresh(job.getName() + "#" + instance.getId(), rendered.config()),
                 rendered,
-                jobService.validation(version));
+                jobService.validation(version),
+                window);
+    }
+
+    /**
+     * The sync window of a run whose config reads it (docs/design.md §7.5): the one already on the
+     * instance (a rerun or backfill run), or else from the job's watermark as it is now, fixed on
+     * the instance so retries and reruns read the same range.
+     */
+    private SyncWindow window(
+            JobInstance instance, JobDefinition job, JobVersion version, Map<String, String> jobParams, Map<String, String> startupParams) {
+        if (!renderer.usesWindow(job, version.getHoconTemplate(), jobParams, startupParams)) {
+            return null;
+        }
+        if (instance.getWindowEnd() != null) {
+            SyncWindow window = new SyncWindow(instance.getWindowStart(), instance.getWindowEnd());
+            recorder.event(instance.getId(), null, RunEventType.WINDOW, Level.INFO, "同步窗口 " + window + "（沿用创建时确定的窗口）");
+            return window;
+        }
+        SyncWindow window = JobConfigRenderer.nextWindow(job, instance.getScheduledTime());
+        instance.setWindowStart(window.start());
+        instance.setWindowEnd(window.end());
+        recorder.event(instance.getId(), null, RunEventType.WINDOW, Level.INFO, "同步窗口 " + window
+                + (window.start() == null ? "：任务还没有水位，从最早的数据开始" : "：从水位开始")
+                + "，到计划时间往前 " + JobConfigRenderer.lagSeconds(job) + " 秒");
+        return window;
     }
 
     private JobInstance startPreCreated(ScheduledTrigger trigger) {
@@ -401,6 +442,11 @@ public class RunExecutor {
     private record RetryPolicy(Duration interval) {}
 
     private RunResult finish(JobInstance instance, RunStatus status, String message, Consumer<String> schedulerLog) {
+        return finish(instance, status, message, null, schedulerLog);
+    }
+
+    /** @param window the run's sync window; on success the job's watermark moves to its end if it joins on */
+    private RunResult finish(JobInstance instance, RunStatus status, String message, SyncWindow window, Consumer<String> schedulerLog) {
         instance.setStatus(status.name());
         instance.setFinishedAt(LocalDateTime.now());
         instance.setErrorMessage(status == RunStatus.SUCCESS ? null : RunRecorder.clip(message));
@@ -413,7 +459,26 @@ public class RunExecutor {
                 },
                 status + ": " + message);
         schedulerLog.accept(status + ": " + message);
+        if (status == RunStatus.SUCCESS && window != null && !window.empty()) {
+            advanceWatermark(instance, window, schedulerLog);
+        }
         return new RunResult(instance.getId(), status, message);
+    }
+
+    private void advanceWatermark(JobInstance instance, SyncWindow window, Consumer<String> schedulerLog) {
+        String message;
+        Level level = Level.INFO;
+        try {
+            message = watermarks.advance(instance.getJobDefinitionId(), window)
+                    ? "水位推进到 " + window.endText()
+                    : "水位没有推进：这个窗口的起点已经不是任务当前的水位（期间有其他运行推进了水位，或水位被重置）";
+        } catch (RuntimeException e) {
+            log.warn("Moving the watermark of job {} failed", instance.getJobDefinitionId(), e);
+            level = Level.WARN;
+            message = "水位推进失败，下次运行会重新同步这个窗口：" + e.getMessage();
+        }
+        recorder.event(instance.getId(), instance.getAttemptCount(), RunEventType.WINDOW, level, message);
+        schedulerLog.accept(message);
     }
 
     private void applyMetrics(JobInstance instance, Map<String, String> raw) {

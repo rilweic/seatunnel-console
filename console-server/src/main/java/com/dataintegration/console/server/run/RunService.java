@@ -6,6 +6,7 @@ import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.ScheduleService;
+import com.dataintegration.console.server.job.SyncWindow;
 import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
@@ -80,6 +81,8 @@ public class RunService {
      *
      * @param maxAttempts 1 + retries; retries only apply where nobody is watching (backfill)
      * @param createdMessage first line of the run's timeline
+     * @param window sync window fixed up front (a rerun's or a backfill run's); null = worked out
+     *     from the watermark when the run starts, if its config reads one (docs/design.md §7.5)
      */
     public record NewRun(
             JobDefinition job,
@@ -90,7 +93,8 @@ public class RunService {
             int maxAttempts,
             String rerunOfInstanceId,
             String backfillBatchId,
-            String createdMessage) {}
+            String createdMessage,
+            SyncWindow window) {}
 
     /**
      * Runs the job's current version now. {@code scheduledTime} is the base time for variables,
@@ -110,12 +114,14 @@ public class RunService {
                 1,
                 null,
                 null,
-                "manual run by " + username()));
+                "manual run by " + username(),
+                null));
     }
 
     /**
-     * Runs a finished instance again for the same scheduled time and startup params, with its own
-     * version or, if asked, the job's current one (docs/design.md §9).
+     * Runs a finished instance again for the same scheduled time, startup params and sync window,
+     * with its own version or, if asked, the job's current one (docs/design.md §9). An instance that
+     * never got a window (it failed before it started) gets one from the watermark like a new run.
      */
     public String rerun(String instanceId, boolean useLatestVersion) {
         JobInstance original = recorder.requireInstance(instanceId);
@@ -134,7 +140,8 @@ public class RunService {
                 original.getId(),
                 null,
                 "rerun of " + original.getId() + " by " + username()
-                        + (useLatestVersion ? ", with the current version" : ", with the original version")));
+                        + (useLatestVersion ? ", with the current version" : ", with the original version"),
+                original.getWindowEnd() == null ? null : new SyncWindow(original.getWindowStart(), original.getWindowEnd())));
     }
 
     /** True while the job has a run that XXL-JOB has not finished, whatever started it. */
@@ -178,6 +185,10 @@ public class RunService {
         instance.setJobVersionId(run.versionId());
         instance.setTriggerType(run.triggerType().name());
         instance.setScheduledTime(run.scheduledTime());
+        if (run.window() != null) {
+            instance.setWindowStart(run.window().start());
+            instance.setWindowEnd(run.window().end());
+        }
         instance.setStatus(RunStatus.PENDING.name());
         instance.setAttemptCount(0);
         instance.setMaxAttempts(Math.max(1, run.maxAttempts()));

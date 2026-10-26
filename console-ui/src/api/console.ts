@@ -306,7 +306,7 @@ export interface WizardForm {
     writeMode: 'UPSERT' | 'APPEND'
     tableRule?: NameRule | null
   }
-  sync: { mode: 'FULL' | 'INCREMENTAL'; window?: 'DAY' | 'HOUR' | 'CUSTOM' | null; field?: string | null; customCondition?: string | null }
+  sync: { mode: 'FULL' | 'INCREMENTAL'; window?: IncrementalWindow | null; field?: string | null; customCondition?: string | null }
   parallelism: number
   validation: boolean
   sourceOptions?: Record<string, string>
@@ -380,6 +380,21 @@ export interface VersionDetail {
   createdAt: string
 }
 
+/** CONTINUOUS carries on from the job's watermark; DAY and HOUR are the day or hour before the scheduled time (design.md §7.5). */
+export type IncrementalWindow = 'CONTINUOUS' | 'DAY' | 'HOUR' | 'CUSTOM'
+
+/** Continuous incremental state of a job; null start / watermark = from the beginning. */
+export interface IncrementalView {
+  /** the wizard's window of the current version; null for full sync or a script */
+  window: IncrementalWindow | null
+  /** the current version reads ${system.window.start} / ${system.window.end} */
+  usesWindow: boolean
+  watermark: string | null
+  lagSeconds: number
+  nextStart: string | null
+  nextEnd: string
+}
+
 export const jobApi = {
   list: (params: { projectId?: string; keyword?: string; mine?: boolean; page?: number; size?: number }) =>
     get<PageResult<JobView>>('/jobs', params),
@@ -421,6 +436,11 @@ export const jobApi = {
     id: string,
     body: { hocon: string; params?: Record<string, string>; startupParams?: Record<string, string>; scheduledTime?: string },
   ) => post<{ variables: Record<string, string>; config: string; unresolved: string[] }>(`/jobs/${id}/preview`, body),
+  renderText: (id: string, body: { text: string; params?: Record<string, string>; scheduledTime?: string }) =>
+    post<{ text: string | null; unresolved: string[]; error: string | null }>(`/jobs/${id}/render-text`, body),
+  incremental: (id: string) => get<IncrementalView>(`/jobs/${id}/incremental`),
+  updateIncremental: (id: string, body: { watermark: string | null; lagSeconds: number }) =>
+    put<IncrementalView>(`/jobs/${id}/incremental`, body),
 }
 
 export type BlockStrategy = 'SERIAL_EXECUTION' | 'DISCARD_LATER' | 'COVER_EARLY'
@@ -465,6 +485,9 @@ export interface InstanceView {
   status: RunStatus
   attemptCount: number
   scheduledTime: string
+  /** sync window the run read; null start = from the beginning, null end = the run reads no window */
+  windowStart: string | null
+  windowEnd: string | null
   startedAt: string | null
   finishedAt: string | null
   durationMillis: number | null

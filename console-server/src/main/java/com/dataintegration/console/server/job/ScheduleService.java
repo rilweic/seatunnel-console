@@ -172,6 +172,21 @@ public class ScheduleService {
     }
 
     /**
+     * The fire time before {@code time}: of {@code cron}, or the day before when the job has no cron
+     * (a backfill then runs daily at 00:00:00). A backfill run's sync window starts there (§7.5).
+     */
+    public static LocalDateTime previousTime(String cron, LocalDateTime time) {
+        if (cron == null) {
+            return time.minusDays(1);
+        }
+        LocalDateTime previous = CronSchedule.previous(CronSchedule.parse(cron), time);
+        if (previous == null) {
+            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "调度在 " + time + " 之前一年内没有触发过，算不出同步窗口的起点");
+        }
+        return previous;
+    }
+
+    /**
      * Scheduled times of a backfill over the days {@code start..end} (both inclusive): every fire
      * time of {@code cron} in that range, like a DolphinScheduler complement; one run per day at
      * 00:00:00 when the job has no cron.

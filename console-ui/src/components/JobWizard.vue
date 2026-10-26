@@ -16,6 +16,7 @@ import {
   type ColumnMeta,
   type ConnectorOption,
   type DatasourceView,
+  type IncrementalView,
   type NameRule,
   type PrecheckResult,
   type WizardForm,
@@ -23,10 +24,12 @@ import {
 import HelpTip from '@/components/HelpTip.vue'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
+import { formatTime } from '@/utils/format'
 import { paramsProblem } from '@/utils/params'
 import { fieldNamesProblem, isEmptyRule, migrateNaming, syncedFields, tableNamesProblem } from '@/utils/naming'
 
 import AdvancedOptions from './wizard/AdvancedOptions.vue'
+import ConditionEditor from './wizard/ConditionEditor.vue'
 import { HANDLED_SINK_OPTIONS, wizardSinks, wizardSources, type SourceContext } from './wizard/connectors'
 import FieldMapping from './wizard/FieldMapping.vue'
 import TableMapping from './wizard/TableMapping.vue'
@@ -70,7 +73,7 @@ function emptyForm(): WizardForm {
       writeMode: 'UPSERT',
       tableRule: { find: '', replace: '', nameCase: 'KEEP', prefix: '', suffix: '' },
     },
-    sync: { mode: 'FULL', window: 'DAY', field: '', customCondition: '' },
+    sync: { mode: 'FULL', window: 'CONTINUOUS', field: '', customCondition: '' },
     parallelism: 1,
     validation: true,
     sourceOptions: {},
@@ -79,7 +82,7 @@ function emptyForm(): WizardForm {
 }
 
 const form = reactive<WizardForm>(props.initialForm ? (JSON.parse(JSON.stringify(props.initialForm)) as WizardForm) : emptyForm())
-form.sync.window ??= 'DAY'
+form.sync.window ??= 'CONTINUOUS'
 form.sourceOptions ??= {}
 form.sinkOptions ??= {}
 migrateNaming(form)
@@ -381,7 +384,20 @@ async function go(target: number, restoring = false) {
   }
 }
 
+/** The job's watermark and lag, for describing the continuous window (design.md §7.5). */
+const incremental = ref<IncrementalView | null>(null)
+const lagText = computed(() => {
+  const lag = incremental.value?.lagSeconds ?? 60
+  return lag === 0 ? '（不留延迟）' : lag % 60 === 0 ? ` ${lag / 60} 分钟` : ` ${lag} 秒`
+})
+const nextWindowText = computed(() => {
+  const i = incremental.value
+  if (!i) return ''
+  return `[${i.nextStart ? formatTime(i.nextStart) : '最早的数据'}, ${formatTime(i.nextEnd)})（如果现在运行）`
+})
+
 onMounted(async () => {
+  jobApi.incremental(props.jobId).then((v) => (incremental.value = v), () => undefined)
   const initialStep = step.value
   step.value = 0
   // A job may only use its creator's datasources.
@@ -497,14 +513,28 @@ onMounted(async () => {
         <template v-if="form.sync.mode === 'INCREMENTAL'">
           <el-form-item label="时间窗口">
             <el-radio-group v-model="form.sync.window">
+              <el-radio value="CONTINUOUS">连续增量（推荐）</el-radio>
               <el-radio value="DAY">按天</el-radio>
               <el-radio value="HOUR">按小时</el-radio>
               <el-radio value="CUSTOM">自定义条件</el-radio>
             </el-radio-group>
             <div class="tip full">
-              <template v-if="form.sync.window === 'DAY'">每次同步计划时间的前一天：[前一天 00:00, 当天 00:00)。补数和重跑按各自的计划时间计算。</template>
-              <template v-else-if="form.sync.window === 'HOUR'">每次同步计划时间的上一个小时：[上一小时整点, 本小时整点)。</template>
-              <template v-else>自己写 where 条件（不含 where），对所有表生效，可以使用变量，例如 <code>id &gt; ${last_id}</code>。</template>
+              <template v-if="form.sync.window === 'CONTINUOUS'">
+                每次从上次成功同步到的位置（水位）接着同步，到计划时间往前{{ lagText }}为止：[水位, 计划时间 − 延迟)。
+                失败不推进水位，下一次运行会把这段一起补上；重跑沿用原来的窗口。第一次运行从最早的数据开始。
+                水位和延迟在任务详情的「增量水位」里查看和调整。<template v-if="nextWindowText"><br />下次运行将同步 {{ nextWindowText }}。</template>
+              </template>
+              <template v-else-if="form.sync.window === 'DAY'">
+                每次同步计划时间的前一天：[前一天 00:00, 当天 00:00)，和其他运行无关，补数和重跑按各自的计划时间计算。
+                适合每天运行一次、按天整段处理的任务；调度比每天一次更频繁时，每次都会重复同步同一天。
+              </template>
+              <template v-else-if="form.sync.window === 'HOUR'">
+                每次同步计划时间的上一个小时：[上一小时整点, 本小时整点)。适合每小时运行一次；调度更频繁时，每次都会重复同步同一个小时。
+              </template>
+              <template v-else>
+                自己写 where 条件，可以插入变量。要从上次的位置接着同步，用同步窗口变量 <code>${system.window.start}</code> / <code>${system.window.end}</code>，再加上自己的过滤。
+                自定义条件套用不到目标表，不做行数校验。
+              </template>
             </div>
           </el-form-item>
           <el-form-item v-if="form.sync.window !== 'CUSTOM'" label="增量字段">
@@ -514,7 +544,7 @@ onMounted(async () => {
             <span class="tip">只列出所有选中表都有的时间字段；个别表可以在下面的字段映射里单独指定</span>
           </el-form-item>
           <el-form-item v-else label="增量条件">
-            <el-input v-model="form.sync.customCondition" type="textarea" :rows="2" class="code" placeholder="updated_at >= '${start}'" />
+            <ConditionEditor v-model="form.sync.customCondition" :job-id="jobId" :params="() => toMap(params)" :readonly="readonly" />
           </el-form-item>
         </template>
       </el-form>

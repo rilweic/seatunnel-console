@@ -12,6 +12,7 @@ import {
   instanceApi,
   jobApi,
   scheduleApi,
+  type IncrementalView,
   type JobOverview,
   type JobView,
   type RunMetrics,
@@ -21,6 +22,8 @@ import EChart from '@/components/EChart.vue'
 import RunMetricsPanel from '@/components/RunMetricsPanel.vue'
 import JobFlowCard from '@/components/JobFlowCard.vue'
 import { formatCompact, formatDuration, formatNumber, formatTime, statusTag, statusText, triggerText } from '@/utils/format'
+
+import WatermarkDialog from './WatermarkDialog.vue'
 
 const props = defineProps<{ job: JobView }>()
 const emit = defineEmits<{ showRuns: [] }>()
@@ -33,10 +36,17 @@ let timer: number | undefined
 let disposed = false
 
 const activeRun = computed(() => overview.value?.active[0] ?? null)
+/** Watermark of a job whose config reads the sync window (design.md §7.5). */
+const incremental = ref<IncrementalView | null>(null)
+const watermarkDialog = ref(false)
+
+const lagText = (seconds: number) => (seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`)
 
 async function load() {
   window.clearTimeout(timer)
-  overview.value = await jobApi.overview(props.job.id)
+  const [view, inc] = await Promise.all([jobApi.overview(props.job.id), jobApi.incremental(props.job.id)])
+  overview.value = view
+  incremental.value = inc
   live.value = activeRun.value ? await instanceApi.metrics(activeRun.value.id) : null
   // Gone meanwhile: a request that was still on its way must not start refreshing again.
   if (!disposed && activeRun.value) {
@@ -253,6 +263,27 @@ defineExpose({ load })
 
     <JobFlowCard :flow="overview.flow" :version-no="job.currentVersionNo ?? null" class="block" />
 
+    <el-card v-if="incremental?.usesWindow" shadow="never" class="block">
+      <template #header>
+        <div class="block-head">
+          <span>增量水位<span class="head-meta">每次运行从水位同步到计划时间往前 {{ lagText(incremental.lagSeconds) }}，成功后水位推进到窗口终点</span></span>
+          <el-button v-if="job.editable" link type="primary" @click="watermarkDialog = true">调整</el-button>
+        </div>
+      </template>
+      <div class="watermark">
+        <div>
+          <div class="label">当前水位</div>
+          <div class="value small">{{ incremental.watermark ? formatTime(incremental.watermark) : '还没有' }}</div>
+          <div class="sub">{{ incremental.watermark ? '已同步到这个时间（不含）' : '下次运行从最早的数据开始' }}</div>
+        </div>
+        <div>
+          <div class="label">如果现在运行，将同步</div>
+          <div class="value small">[{{ incremental.nextStart ? formatTime(incremental.nextStart) : '最早' }}, {{ formatTime(incremental.nextEnd) }})</div>
+          <div class="sub">失败不推进水位，下次运行会把这段一起同步</div>
+        </div>
+      </div>
+    </el-card>
+
     <el-card shadow="never" class="block trend-card">
       <template #header>最近 {{ overview.trend.length }} 次运行<span class="head-meta">柱子颜色表示结果，点击柱子查看那次运行</span></template>
       <EChart v-if="overview.trend.length" :option="trendOption" height="240px" @click="(i: number) => openTrendRun(i)" />
@@ -301,6 +332,7 @@ defineExpose({ load })
     </el-card>
   </div>
   <div v-else v-loading="true" class="loading" />
+  <WatermarkDialog v-model="watermarkDialog" :job-id="job.id" :incremental="incremental" @saved="(v) => (incremental = v)" />
 </template>
 
 <style scoped>
@@ -380,6 +412,18 @@ defineExpose({ load })
 
 .block {
   margin-top: 16px;
+}
+
+.watermark {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 700px) {
+  .watermark {
+    grid-template-columns: 1fr;
+  }
 }
 
 .block-head {

@@ -233,6 +233,9 @@ onBeforeUnmount(() => {
           <span v-else class="job">{{ instance.jobName ?? '已删除的任务' }}</span>
           <el-tag v-if="instance.jobDeleted" type="info">已删除</el-tag>
           <span class="muted">v{{ instance.versionNo }} · {{ triggerText[instance.triggerType] }}运行<template v-if="instance.createdByName"> · {{ instance.createdByName }}</template> · 计划时间 {{ formatTime(instance.scheduledTime) }}</span>
+          <el-tooltip v-if="instance.windowEnd" content="这次运行读取的同步窗口（连续增量），左闭右开；重试和重跑都读同一个窗口" placement="bottom">
+            <span class="muted">同步窗口 [{{ instance.windowStart ? formatTime(instance.windowStart) : '最早' }}, {{ formatTime(instance.windowEnd) }})</span>
+          </el-tooltip>
           <router-link v-if="instance.rerunOfInstanceId" :to="`/instances/${instance.rerunOfInstanceId}`" class="muted">重跑自另一次运行</router-link>
           <router-link v-if="instance.backfillBatchId && !instance.jobDeleted" :to="`/jobs/${instance.jobDefinitionId}/backfills`" class="muted">查看补数批次</router-link>
         </div>
@@ -329,6 +332,10 @@ onBeforeUnmount(() => {
 
   <el-dialog v-model="rerunDialog.visible" title="重跑" width="520px">
     <p>用同样的计划时间（{{ formatTime(instance?.scheduledTime) }}）和启动参数再运行一次，变量会按这个计划时间重新计算。</p>
+    <p v-if="instance?.windowEnd" class="muted">
+      同步窗口也和原来一样：[{{ instance.windowStart ? formatTime(instance.windowStart) : '最早' }}, {{ formatTime(instance.windowEnd) }})。
+      重跑成功后，只有窗口起点还等于任务当前的水位时才推进水位；之后的运行已经同步过这段时，只会把这段再写一遍。
+    </p>
     <p v-if="Object.keys(startupParams).length" class="muted">启动参数：{{ Object.entries(startupParams).map(([k, v]) => `${k}=${v}`).join('，') }}</p>
     <el-checkbox v-model="rerunDialog.useLatestVersion">使用任务的当前版本（默认使用这次运行的版本 v{{ instance?.versionNo }}）</el-checkbox>
     <template #footer>

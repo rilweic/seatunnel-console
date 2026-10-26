@@ -116,6 +116,22 @@ class WizardGeneratorTest {
     }
 
     @Test
+    void continuousWindowReadsTheRunsSyncWindowOnBothSides() {
+        WizardGenerator.Generated g = WizardGenerator.generate(
+                form(List.of(new TableSpec("a", null, null, null)),
+                        target("ods", DataMode.KEEP, WriteMode.UPSERT), new Sync(SyncMode.INCREMENTAL, Window.CONTINUOUS, "updated_at", null), true),
+                MYSQL_TO_MYSQL);
+        assertThat(g.hocon()).contains("`updated_at` >= '${system.window.start}' and `updated_at` < '${system.window.end}'");
+        assertThat(Variables.usesWindow(List.of(g.hocon()))).isTrue();
+        assertThat(g.validation().tables().get(0).target().sql())
+                .endsWith("where `updated_at` >= '${system.window.start}' and `updated_at` < '${system.window.end}'");
+        Map<String, String> vars = Map.of(Variables.WINDOW_START, "2026-10-26 10:00:00", Variables.WINDOW_END, "2026-10-26 10:05:00");
+        assertThat(Variables.render(g.hocon(), vars, LocalDateTime.of(2026, 10, 26, 10, 6)))
+                .contains("'2026-10-26 10:00:00'").contains("'2026-10-26 10:05:00'");
+        parse(g.hocon());
+    }
+
+    @Test
     void elasticsearchTargetCountsIndicesAfterClearingAndUsesPrimaryKeyPlaceholder() {
         WizardGenerator.Generated g = WizardGenerator.generate(
                 form(List.of(new TableSpec("orders", null, null, null), new TableSpec("users", null, null, null)),

@@ -3,7 +3,7 @@
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { scheduleApi, type JobView, type ScheduleForm, type ScheduleView } from '@/api/console'
+import { jobApi, scheduleApi, type IncrementalView, type JobView, type ScheduleForm, type ScheduleView } from '@/api/console'
 import CronEditor from '@/components/CronEditor.vue'
 import { formatTime } from '@/utils/format'
 import { errorMessage } from '@/utils/params'
@@ -31,6 +31,22 @@ const saving = ref(false)
 const cronPreview = ref<string[]>([])
 const cronError = ref('')
 let previewTimer: number | undefined
+const incremental = ref<IncrementalView | null>(null)
+
+/**
+ * A day or hour window read by a schedule that fires more often syncs the same range again and
+ * again (design.md §7.5); the continuous window is what such a schedule needs.
+ */
+const windowMismatch = computed(() => {
+  const window = incremental.value?.window
+  const span = window === 'DAY' ? 86_400_000 : window === 'HOUR' ? 3_600_000 : 0
+  if (!span || cronPreview.value.length < 2) return ''
+  const times = cronPreview.value.map((t) => new Date(t).getTime())
+  const gap = Math.min(...times.slice(1).map((t, i) => t - times[i]!))
+  if (gap >= span) return ''
+  const unit = window === 'DAY' ? '一天' : '一个小时'
+  return `同步配置的时间窗口是「按${window === 'DAY' ? '天' : '小时'}」，每次同步计划时间之前的完整${unit}；这个调度比${unit}一次更频繁，同${unit}的数据会被反复同步，而当前这${unit}的新数据要等下${unit}才同步。建议在「同步配置」里改用「连续增量」，或把调度改为${unit}一次。`
+})
 
 const dirty = computed(() => loaded.value && JSON.stringify(form.value) !== saved.value)
 watch(dirty, (value) => emit('dirty', value))
@@ -81,6 +97,7 @@ const syncText = { PENDING: '待同步', SYNCED: '已同步', FAILED: '同步失
 const syncTag = { PENDING: 'info', SYNCED: 'success', FAILED: 'danger' } as const
 
 onMounted(async () => {
+  jobApi.incremental(props.job.id).then((v) => (incremental.value = v), () => undefined)
   apply(await scheduleApi.get(props.job.id))
   loaded.value = true
   previewCron()
@@ -106,6 +123,7 @@ onMounted(async () => {
             <el-tag v-for="t in cronPreview" :key="t" type="info" disable-transitions>{{ formatTime(t) }}</el-tag>
           </div>
           <div class="tip">对应 cron 表达式：<code>{{ form.cron }}</code></div>
+          <el-alert v-if="windowMismatch" type="warning" :closable="false" show-icon :title="windowMismatch" />
         </div>
       </el-form-item>
       <el-form-item label="失败重试次数">

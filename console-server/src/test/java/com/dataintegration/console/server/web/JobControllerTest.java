@@ -11,6 +11,7 @@ import com.dataintegration.console.server.auth.SecurityConfig;
 import com.dataintegration.console.server.job.JobController;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.ScheduleService;
+import com.dataintegration.console.server.job.WatermarkService;
 import com.dataintegration.console.server.persistence.mapper.SysUserMapper;
 
 import org.junit.jupiter.api.Test;
@@ -28,6 +29,7 @@ class JobControllerTest {
     @Autowired private MockMvc mockMvc;
     @MockitoBean private JobService jobService;
     @MockitoBean private ScheduleService scheduleService;
+    @MockitoBean private WatermarkService watermarkService;
     @MockitoBean private SysUserMapper userMapper;
     @MockitoBean private AccountChanges accountChanges;
 

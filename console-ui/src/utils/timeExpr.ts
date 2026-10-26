@@ -30,6 +30,8 @@ export const BUILTINS = [
   { name: 'system.biz.date', label: '业务日期', help: '计划时间的前一天，yyyyMMdd' },
   { name: 'system.biz.curdate', label: '计划日期', help: '计划时间当天，yyyyMMdd' },
   { name: 'system.datetime', label: '计划时间', help: 'yyyyMMddHHmmss' },
+  { name: 'system.window.start', label: '同步窗口起点', help: '上次成功同步到的位置（水位），yyyy-MM-dd HH:mm:ss' },
+  { name: 'system.window.end', label: '同步窗口终点', help: '计划时间往前推延迟，yyyy-MM-dd HH:mm:ss，不含' },
   { name: 'system.task.instance.id', label: '运行实例 ID', help: '每次运行不同' },
   { name: 'system.task.definition.name', label: '任务名称', help: '' },
   { name: 'system.project.name', label: '项目名称', help: '' },

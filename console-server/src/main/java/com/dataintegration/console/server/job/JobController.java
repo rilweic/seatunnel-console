@@ -63,12 +63,20 @@ public class JobController {
     public record PreviewRequest(
             @NotBlank String hocon, Map<String, String> params, Map<String, String> startupParams, LocalDateTime scheduledTime) {}
 
+    /** A piece of config (e.g. a where condition) to render as a run at scheduledTime (default now) would. */
+    public record RenderTextRequest(@NotBlank String text, Map<String, String> params, LocalDateTime scheduledTime) {}
+
+    /** @param watermark null = the next run reads from the beginning */
+    public record IncrementalRequest(LocalDateTime watermark, Integer lagSeconds) {}
+
     private final JobService jobService;
     private final ScheduleService scheduleService;
+    private final WatermarkService watermarks;
 
-    public JobController(JobService jobService, ScheduleService scheduleService) {
+    public JobController(JobService jobService, ScheduleService scheduleService, WatermarkService watermarks) {
         this.jobService = jobService;
         this.scheduleService = scheduleService;
+        this.watermarks = watermarks;
     }
 
     @GetMapping
@@ -117,6 +125,22 @@ public class JobController {
     @PostMapping("/{id}/preview")
     public Result<JobService.PreviewResult> preview(@PathVariable String id, @Valid @RequestBody PreviewRequest body) {
         return Result.ok(jobService.preview(id, body.hocon(), body.params(), body.startupParams(), body.scheduledTime()));
+    }
+
+    @PostMapping("/{id}/render-text")
+    public Result<JobService.RenderedText> renderText(@PathVariable String id, @Valid @RequestBody RenderTextRequest body) {
+        return Result.ok(jobService.renderText(id, body.text(), body.params(), body.scheduledTime()));
+    }
+
+    /** Continuous incremental state (docs/design.md §7.5): the watermark, the lag and the next window. */
+    @GetMapping("/{id}/incremental")
+    public Result<WatermarkService.IncrementalView> incremental(@PathVariable String id) {
+        return Result.ok(watermarks.view(id));
+    }
+
+    @PutMapping("/{id}/incremental")
+    public Result<WatermarkService.IncrementalView> updateIncremental(@PathVariable String id, @RequestBody IncrementalRequest body) {
+        return Result.ok(watermarks.update(id, body.watermark(), body.lagSeconds()));
     }
 
     /** Checks unsaved script content: every Jdbc source query is run once under where 1 = 0. */

@@ -24,7 +24,7 @@ const filteredTables = computed(() => {
 })
 const shownTables = computed(() => (showAll.value || tableFilter.value.trim() ? filteredTables.value : filteredTables.value.slice(0, FOLDED)))
 
-const WINDOW_TEXT: Record<string, string> = { DAY: '按天增量', HOUR: '按小时增量', CUSTOM: '按自定义条件增量' }
+const WINDOW_TEXT: Record<string, string> = { CONTINUOUS: '连续增量', DAY: '按天增量', HOUR: '按小时增量', CUSTOM: '按自定义条件增量' }
 
 const settings = computed(() => {
   const s = props.flow.settings

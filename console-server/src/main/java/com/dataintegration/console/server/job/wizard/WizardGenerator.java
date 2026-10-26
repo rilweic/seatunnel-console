@@ -6,6 +6,7 @@ import static com.dataintegration.console.server.job.wizard.Hocon.notBlank;
 import com.dataintegration.console.datasource.DataSourceCapabilities;
 import com.dataintegration.console.datasource.jdbc.SqlDialect;
 import com.dataintegration.console.server.job.ValidationSpec;
+import com.dataintegration.console.server.job.Variables;
 import com.dataintegration.console.server.job.ValidationSpec.Side;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
 import com.dataintegration.console.server.job.wizard.WizardForm.NameRule;
@@ -273,9 +274,11 @@ public final class WizardGenerator {
             return form.sync().customCondition().trim();
         }
         String field = dialect.quote(incrementalField(form, table));
-        return form.sync().window() == Window.HOUR
-                ? field + " >= '$[yyyy-MM-dd HH-1/24]:00:00' and " + field + " < '$[yyyy-MM-dd HH]:00:00'"
-                : field + " >= '$[yyyy-MM-dd-1] 00:00:00' and " + field + " < '$[yyyy-MM-dd] 00:00:00'";
+        return switch (form.sync().window()) {
+            case CONTINUOUS -> field + " >= '${" + Variables.WINDOW_START + "}' and " + field + " < '${" + Variables.WINDOW_END + "}'";
+            case HOUR -> field + " >= '$[yyyy-MM-dd HH-1/24]:00:00' and " + field + " < '$[yyyy-MM-dd HH]:00:00'";
+            default -> field + " >= '$[yyyy-MM-dd-1] 00:00:00' and " + field + " < '$[yyyy-MM-dd] 00:00:00'";
+        };
     }
 
     /**

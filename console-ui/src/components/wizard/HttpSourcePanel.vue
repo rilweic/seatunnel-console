@@ -165,10 +165,13 @@ function addParam() {
   update({ params })
 }
 
-function insertTimeWindow(mode: 'DAY' | 'HOUR') {
-  const [start, end] = mode === 'DAY'
-    ? ['$[yyyy-MM-dd-1]', '$[yyyy-MM-dd]']
-    : ['$[yyyy-MM-dd HH-1/24]:00:00', '$[yyyy-MM-dd HH]:00:00']
+/** CONTINUOUS reads the run's sync window, carried on from the job's watermark (design.md §7.5). */
+function insertTimeWindow(mode: 'CONTINUOUS' | 'DAY' | 'HOUR') {
+  const [start, end] = mode === 'CONTINUOUS'
+    ? ['${system.window.start}', '${system.window.end}']
+    : mode === 'DAY'
+      ? ['$[yyyy-MM-dd-1]', '$[yyyy-MM-dd]']
+      : ['$[yyyy-MM-dd HH-1/24]:00:00', '$[yyyy-MM-dd HH]:00:00']
   update({ params: { ...(props.modelValue.params ?? {}), start, end } })
 }
 
@@ -355,6 +358,7 @@ function findArrayPath(value: unknown, jsonPath: string, path: JsonPathPart[] = 
       <div class="subsection-title">
         <span>请求参数</span>
         <div class="param-actions">
+          <el-button size="small" @click="insertTimeWindow('CONTINUOUS')">连续增量</el-button>
           <el-button size="small" @click="insertTimeWindow('DAY')">按天</el-button>
           <el-button size="small" @click="insertTimeWindow('HOUR')">按小时</el-button>
           <el-button size="small" @click="addParam">添加参数</el-button>

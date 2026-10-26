@@ -1,0 +1,34 @@
+# 由任务向导生成，请在向导中修改；转为脚本模式后才能直接编辑
+env {
+  job.mode = "BATCH"
+  parallelism = 1
+}
+
+source {
+  Jdbc {
+    datasource_id = "src-ds"
+    table_list = [
+      { table_path = "shop.orders", query = "select * from `shop`.`orders` where (status <> 'draft') and (`updated_at` >= '${system.window.start}' and `updated_at` < '${system.window.end}')" }
+      { table_path = "shop.users", query = "select * from `shop`.`users` where (`modified_at` >= '${system.window.start}' and `modified_at` < '${system.window.end}')" }
+    ]
+    plugin_output = "source"
+  }
+}
+
+sink {
+  Jdbc {
+    datasource_id = "pg-ds"
+    database = "dw"
+    table = "ods.${table_name}"
+    generate_sink_sql = true
+    enable_upsert = true
+    schema_save_mode = "CREATE_SCHEMA_WHEN_NOT_EXIST"
+    data_save_mode = "APPEND_DATA"
+    plugin_input = ["source"]
+  }
+}
+
+# ---- validation ----
+ValidationSpec[enabled=true, source=null, target=null, failOnMismatch=false, tables=[TableCheck[name=orders, source=Side[mode=SQL, datasourceId=src-ds, sql=select count(*) from `shop`.`orders` where (status <> 'draft') and (`updated_at` >= '${system.window.start}' and `updated_at` < '${system.window.end}'), index=null, query=null], target=Side[mode=SQL, datasourceId=pg-ds, sql=select count(*) from "ods"."orders" where "updated_at" >= '${system.window.start}' and "updated_at" < '${system.window.end}', index=null, query=null]], TableCheck[name=users, source=Side[mode=SQL, datasourceId=src-ds, sql=select count(*) from `shop`.`users` where (`modified_at` >= '${system.window.start}' and `modified_at` < '${system.window.end}'), index=null, query=null], target=Side[mode=SQL, datasourceId=pg-ds, sql=select count(*) from "ods"."users" where "modified_at" >= '${system.window.start}' and "modified_at" < '${system.window.end}', index=null, query=null]]]]
+# ---- notes ----
+

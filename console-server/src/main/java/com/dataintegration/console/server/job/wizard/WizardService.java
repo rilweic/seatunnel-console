@@ -115,6 +115,10 @@ public class WizardService {
         if (form.target().dataMode() == DataMode.CLEAR) {
             checks.add(new Check(Level.WARN, "每次运行都会先清空目标表（或索引）里的已有数据，再写入"));
         }
+        if (!full && form.sync().window() == WizardForm.Window.CONTINUOUS && form.target().writeMode() == WriteMode.APPEND) {
+            checks.add(new Check(Level.WARN, "连续增量按追加写入：运行失败后，下一次会把没推进水位的窗口再同步一遍，"
+                    + "失败前已经写入的部分会重复。建议按主键更新写入"));
+        }
 
         WizardSource.Live live = new WizardSource.Live(datasourceService, variables);
         Map<String, List<ColumnMeta>> sourceColumns = checkSource(form, endpoints, live, checks);

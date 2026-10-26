@@ -225,6 +225,15 @@ public final class JdbcSource implements WizardSource {
             return;
         }
         String rendered = Variables.render(query, live.variables(), LocalDateTime.now());
+        // In a query, an unknown ${name} is never a HOCON substitution: it is a typo or a parameter
+        // nobody defined, and the database would get it literally.
+        Set<String> unresolved = Variables.unresolved(rendered);
+        if (!unresolved.isEmpty()) {
+            checks.add(new Check(Level.ERROR, table.name() + "：过滤条件里的变量没有定义："
+                    + unresolved.stream().map(n -> "${" + n + "}").collect(Collectors.joining("、"))
+                    + "。可以用内置变量（如 ${system.window.start}）、时间表达式，或先在「任务参数」里定义"));
+            return;
+        }
         try {
             live.datasources().count(form.source().datasourceId(),
                     CountRequest.sql("select count(*) from (" + rendered + ") t_check where 1 = 0", CHECK_TIMEOUT));

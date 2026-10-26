@@ -3,7 +3,7 @@
 import { ElMessage } from 'element-plus'
 import { ref, watch } from 'vue'
 
-import { backfillApi, type BackfillPlan } from '@/api/console'
+import { backfillApi, jobApi, type BackfillPlan } from '@/api/console'
 import ParamsEditor, { type ParamRow } from '@/components/ParamsEditor.vue'
 import { formatTime } from '@/utils/format'
 import { errorMessage, paramsProblem, toMap } from '@/utils/params'
@@ -17,8 +17,11 @@ const params = ref<ParamRow[]>([])
 const plan = ref<BackfillPlan | null>(null)
 const planError = ref('')
 const creating = ref(false)
+/** The job's config reads the sync window: each run then covers the interval up to its scheduled time. */
+const usesWindow = ref(false)
 
 watch(visible, (open) => {
+  if (open) jobApi.incremental(props.jobId).then((v) => (usesWindow.value = v.usesWindow), () => undefined)
   if (open) {
     range.value = null
     params.value = []
@@ -86,6 +89,10 @@ async function create() {
     <p class="tip">
       按时间顺序<b>逐个</b>运行：上一次结束后才触发下一次。某一次失败不会中断补数，结束后可以单独重跑；
       失败重试次数和超时沿用调度配置。补数进行中时，定时调度仍会照常触发。
+    </p>
+    <p v-if="usesWindow" class="tip">
+      这个任务按连续增量同步：补数的每次运行同步「上一个触发时间到这次触发时间」（两端都往前推延迟），整批首尾相接、不重叠，
+      和当前水位无关。最后一次的窗口正好接上水位时，成功后会推进水位。
     </p>
     <template #footer>
       <el-button @click="visible = false">取消</el-button>

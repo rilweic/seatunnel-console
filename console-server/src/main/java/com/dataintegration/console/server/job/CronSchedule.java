@@ -78,6 +78,25 @@ final class CronSchedule {
         return times;
     }
 
+    /**
+     * The last fire time strictly before {@code time}, looking back up to a year (Spring's cron has
+     * no reverse search). Null when the cron did not fire in that year.
+     */
+    static LocalDateTime previous(CronExpression expression, LocalDateTime time) {
+        for (Duration back = Duration.ofMinutes(1); back.compareTo(Duration.ofDays(400)) <= 0; back = back.multipliedBy(2)) {
+            LocalDateTime candidate = expression.next(time.minus(back));
+            if (candidate == null || !candidate.isBefore(time)) {
+                continue;
+            }
+            LocalDateTime next;
+            while ((next = expression.next(candidate)) != null && next.isBefore(time)) {
+                candidate = next;
+            }
+            return candidate;
+        }
+        return null;
+    }
+
     private static ConsoleException invalid(String message) {
         return new ConsoleException(ErrorCodes.INVALID_ARGUMENT, message);
     }

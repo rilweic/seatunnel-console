@@ -1,0 +1,13 @@
+{
+  "endpoints": {"sourceType": "MYSQL", "sourceDatabase": null, "targetType": "POSTGRESQL", "targetDatabase": "dw", "sourceColumns": {}},
+  "form": {
+    "source": {"datasourceId": "src-ds", "namespace": "shop", "tables": [
+      {"name": "orders", "columns": null, "filter": "status <> 'draft'", "incrementalField": null},
+      {"name": "users", "columns": null, "filter": null, "incrementalField": "modified_at"}
+    ]},
+    "target": {"datasourceId": "pg-ds", "namespace": "ods", "tableName": null, "prefix": null, "suffix": null,
+               "schemaMode": "CREATE", "dataMode": "KEEP", "writeMode": "UPSERT", "tableRule": null},
+    "sync": {"mode": "INCREMENTAL", "window": "CONTINUOUS", "field": "updated_at", "customCondition": null},
+    "parallelism": 1, "validation": true, "sourceOptions": {}, "sinkOptions": {}, "fieldRule": null
+  }
+}

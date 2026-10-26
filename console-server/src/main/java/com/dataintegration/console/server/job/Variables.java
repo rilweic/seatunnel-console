@@ -30,6 +30,9 @@ public final class Variables {
     public static final String INSTANCE_ID = "system.task.instance.id";
     public static final String JOB_NAME = "system.task.definition.name";
     public static final String PROJECT_NAME = "system.project.name";
+    /** The run's sync window (docs/design.md §7.5), yyyy-MM-dd HH:mm:ss; end exclusive. */
+    public static final String WINDOW_START = "system.window.start";
+    public static final String WINDOW_END = "system.window.end";
 
     /**
      * SeaTunnel's own sink placeholders (3.0 TablePlaceholder), filled per table by the engine, and
@@ -42,6 +45,7 @@ public final class Variables {
     private static final Pattern NAME = Pattern.compile("[A-Za-z_][A-Za-z0-9_.]*");
     private static final Pattern REFERENCE = Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_.]*)}");
     private static final Pattern TIME = Pattern.compile("\\$\\[([^\\]]+)]");
+    private static final Pattern WINDOW_REFERENCE = Pattern.compile("\\$\\{system\\.window\\.(start|end)}");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
@@ -64,10 +68,20 @@ public final class Variables {
 
     public static Map<String, String> builtins(
             LocalDateTime scheduledTime, String instanceId, String jobName, String projectName) {
+        return builtins(scheduledTime, instanceId, jobName, projectName, null);
+    }
+
+    /** @param window the run's sync window; null leaves the window variables undefined */
+    public static Map<String, String> builtins(
+            LocalDateTime scheduledTime, String instanceId, String jobName, String projectName, SyncWindow window) {
         Map<String, String> vars = new LinkedHashMap<>();
         vars.put(BIZ_DATE, DATE.format(scheduledTime.minusDays(1)));
         vars.put(BIZ_CURDATE, DATE.format(scheduledTime));
         vars.put(DATETIME, DATE_TIME.format(scheduledTime));
+        if (window != null) {
+            vars.put(WINDOW_START, window.startText());
+            vars.put(WINDOW_END, window.endText());
+        }
         if (instanceId != null) {
             vars.put(INSTANCE_ID, instanceId);
         }
@@ -118,6 +132,19 @@ public final class Variables {
         }
         ref.appendTail(result);
         return result.toString();
+    }
+
+    /**
+     * Whether any of the texts (a template, parameter values) reads the sync window. Such a run
+     * gets a window fixed on its instance and moves the job's watermark when it succeeds.
+     */
+    public static boolean usesWindow(Iterable<String> texts) {
+        for (String text : texts) {
+            if (text != null && WINDOW_REFERENCE.matcher(text).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** ${name} references left after rendering: HOCON substitutions or typos in parameter names. */

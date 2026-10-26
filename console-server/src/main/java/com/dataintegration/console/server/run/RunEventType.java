@@ -8,6 +8,8 @@ public enum RunEventType {
     RETRY,
     CANCEL_REQUESTED,
     VALIDATED,
+    /** The run's sync window was fixed, or the watermark moved (docs/design.md §7.5). */
+    WINDOW,
     LOG_ARCHIVED,
     FINISHED,
     ERROR

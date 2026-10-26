@@ -322,8 +322,12 @@ public record WizardForm(
         INCREMENTAL
     }
 
-    /** Time window of an incremental run, relative to its scheduled time (§7.5). */
+    /**
+     * Time window of an incremental run (§7.5): CONTINUOUS carries on from where the last successful
+     * run got (the job's watermark); DAY and HOUR are the day or hour before the scheduled time.
+     */
     public enum Window {
+        CONTINUOUS,
         DAY,
         HOUR,
         CUSTOM
