@@ -835,6 +835,26 @@ export interface ClusterHealth {
     runningJobs: number
   }[]
   overview: Record<string, string>
+  /** null when the console runs without XXL-JOB */
+  xxlJob: XxlJobStatus | null
+}
+
+/** The scheduler as the console sees it; whether triggers arrive is judged from the runs. */
+export interface XxlJobStatus {
+  adminAddresses: string[]
+  appname: string
+  jobGroupId: number
+  /** what the executor registers to the admin, where triggers are sent */
+  executorAddress: string
+  executorPort: number
+  executorRunning: boolean
+  /** jobs that own an XXL-JOB job */
+  boundJobs: number
+  enabledSchedules: number
+  syncFailed: string[]
+  lastStartedRunAt: string | null
+  /** runs failed in the last 24 hours because XXL-JOB never started them */
+  notStarted24h: number
 }
 
 export const clusterApi = {

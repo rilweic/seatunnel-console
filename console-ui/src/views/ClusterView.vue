@@ -3,6 +3,7 @@ import { CircleCheckFilled, Refresh, VideoPlay, WarningFilled, CircleCloseFilled
 import { computed, onMounted, ref } from 'vue'
 
 import { clusterApi, type ClusterHealth, type HealthCheck } from '@/api/console'
+import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 
 const health = ref<ClusterHealth | null>(null)
@@ -140,6 +141,74 @@ onMounted(load)
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
+
+    <el-card v-if="health?.xxlJob" shadow="never">
+      <PageHeader
+        title="XXL-JOB 调度"
+        description="定时调度、手动运行和补数都经 XXL-JOB 调起。XXL-JOB 的接口查不到执行器是否在线，所以是否能调起按最近的运行判断。"
+      />
+      <div class="xxl-stats">
+        <div class="stat-card">
+          <div class="stat-label">关联的任务</div>
+          <div class="stat-value">{{ health.xxlJob.boundJobs }}<span class="stat-unit">个</span></div>
+          <div class="stat-sub">已在 XXL-JOB 注册的任务</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">启用定时调度</div>
+          <div class="stat-value">{{ health.xxlJob.enabledSchedules }}<span class="stat-unit">个</span></div>
+          <div class="stat-sub">按 Cron 自动触发运行</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">调度同步</div>
+          <div class="stat-value" :class="{ danger: health.xxlJob.syncFailed.length > 0 }">
+            {{ health.xxlJob.syncFailed.length }}<span class="stat-unit">个失败</span>
+          </div>
+          <div class="stat-sub" :class="{ danger: health.xxlJob.syncFailed.length > 0 }" :title="health.xxlJob.syncFailed.join('、')">
+            {{ health.xxlJob.syncFailed.length ? `未同步：${health.xxlJob.syncFailed.join('、')}` : '全部调度配置已同步' }}
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">最近一次调起</div>
+          <div class="stat-value" :class="{ small: !!health.xxlJob.lastStartedRunAt, 'muted-value': !health.xxlJob.lastStartedRunAt }">
+            {{ health.xxlJob.lastStartedRunAt ? formatTime(health.xxlJob.lastStartedRunAt) : '暂无记录' }}
+          </div>
+          <div class="stat-sub" :class="{ danger: health.xxlJob.notStarted24h > 0 }">
+            近 24 小时未调起 {{ health.xxlJob.notStarted24h }} 次
+          </div>
+        </div>
+      </div>
+
+      <div class="xxl-config">
+        <div class="config-item">
+          <div class="config-label">执行器状态</div>
+          <div class="config-value">
+            <el-tag :type="health.xxlJob.executorRunning ? 'success' : 'danger'" size="small">
+              {{ health.xxlJob.executorRunning ? '已启动' : '未启动' }}
+            </el-tag>
+            <span class="config-meta">端口 {{ health.xxlJob.executorPort }}</span>
+          </div>
+        </div>
+        <div class="config-item">
+          <div class="config-label">执行器标识</div>
+          <div class="config-value">
+            <code>{{ health.xxlJob.appname }}</code>
+            <span class="config-meta">组 #{{ health.xxlJob.jobGroupId }}</span>
+          </div>
+        </div>
+        <div class="config-item">
+          <div class="config-label">调度中心</div>
+          <div class="config-value">
+            <code v-for="addr in health.xxlJob.adminAddresses" :key="addr">{{ addr }}</code>
+          </div>
+        </div>
+        <div class="config-item">
+          <div class="config-label">注册地址</div>
+          <div class="config-value">
+            <code>{{ health.xxlJob.executorAddress }}</code>
+          </div>
+        </div>
+      </div>
+    </el-card>
   </div>
 </template>
 
@@ -204,8 +273,122 @@ onMounted(load)
   color: var(--el-color-danger-dark-2);
 }
 
+.danger {
+  color: var(--el-color-danger);
+}
+
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+
+.xxl-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.stat-value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 30px;
+  font-variant-numeric: tabular-nums;
+  color: var(--el-text-color-primary);
+}
+
+.stat-value.small {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.stat-value.muted-value {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+
+.stat-unit {
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: normal;
+  color: var(--el-text-color-secondary);
+}
+
+.stat-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-sub.danger {
+  color: var(--el-color-danger);
+}
+
+.xxl-config {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.config-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.config-value {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.config-meta {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+@media (max-width: 1100px) {
+  .xxl-stats,
+  .xxl-config {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .xxl-stats,
+  .xxl-config {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

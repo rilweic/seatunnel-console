@@ -29,8 +29,8 @@ public class XxlJobAdminClient {
 
     public static final String HANDLER_NAME = "seatunnelJobHandler";
 
-    static final String HEADER_ACCESS_TOKEN = "XXL-JOB-ACCESS-TOKEN";
-    static final String HEADER_APPNAME = "XXL-JOB-APPNAME";
+    public static final String HEADER_ACCESS_TOKEN = "XXL-JOB-ACCESS-TOKEN";
+    public static final String HEADER_APPNAME = "XXL-JOB-APPNAME";
 
     /**
      * How xxl-job-admin 3.5.0 says a job id does not exist, in each of its languages: update answers
