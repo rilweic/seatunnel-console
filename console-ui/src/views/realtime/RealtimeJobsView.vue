@@ -73,7 +73,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
 <template>
   <el-card shadow="never">
-    <PageHeader title="实时同步" description="持续读取 MySQL binlog / PostgreSQL WAL，把插入、更新、删除实时写到目标端。点击任务查看运行状态和启停历史。">
+    <PageHeader title="实时同步" description="持续读取源库的变更日志（CDC），把插入、更新、删除实时写到目标端。点击任务查看运行状态和启停历史。">
       <el-button :icon="CircleCheck" @click="checkOpen = true">检查同步条件</el-button>
       <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
     </PageHeader>
