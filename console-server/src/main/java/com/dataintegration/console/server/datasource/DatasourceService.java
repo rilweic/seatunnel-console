@@ -232,7 +232,7 @@ public class DatasourceService {
         return plugins.get(entity.getType()).columns(decryptedProps(entity), namespace, table);
     }
 
-    /** Whether the datasource is set up for real-time jobs (docs/design.md §12 P2), for its page. */
+    /** Whether the datasource is set up for real-time jobs (docs/design.md §12 P2), for the check on the real-time jobs page. */
     public List<CdcCheck> cdcCheck(String id) {
         DatasourceEntity entity = requireEditable(id);
         return cdcSupport(entity).check(decryptedProps(entity), CdcSupport.Scope.server());

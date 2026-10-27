@@ -4,7 +4,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { datasourceApi, type DatasourceView } from '@/api/console'
-import CdcCheckDialog from '@/components/CdcCheckDialog.vue'
 import DatasourceTypeIcon from '@/components/DatasourceTypeIcon.vue'
 import { datasourceForms } from '@/components/datasource/forms'
 import { useDatasourceTypes } from '@/composables/useDatasourceTypes'
@@ -13,10 +12,8 @@ import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { useQueryState } from '@/composables/useQueryState'
 
-const { types, label: typeLabel, capabilities } = useDatasourceTypes()
+const { types, label: typeLabel } = useDatasourceTypes()
 /** The datasource whose real-time (CDC) conditions are being checked. */
-const cdcChecking = ref<DatasourceView | null>(null)
-const cdcOpen = computed({ get: () => cdcChecking.value !== null, set: (open) => { if (!open) cdcChecking.value = null } })
 /** Types the server supports and this page has a form for, in the server's order. */
 const creatableTypes = computed(() => types.value.filter((t) => datasourceForms[t.type]))
 
@@ -173,10 +170,9 @@ onMounted(load)
       <el-table-column label="创建人" width="120">
         <template #default="{ row }">{{ row.ownerName ?? '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="290" fixed="right">
+      <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" :disabled="!row.editable" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="capabilities(row.type)?.cdcConnector" link type="primary" :disabled="!row.editable" @click="cdcChecking = row">实时同步条件</el-button>
           <el-button link type="primary" @click="copyId(row)">复制 ID</el-button>
           <el-button link type="danger" :disabled="!row.editable" @click="remove(row)">删除</el-button>
         </template>
@@ -192,7 +188,6 @@ onMounted(load)
       @current-change="apply(false)"
     />
   </el-card>
-  <CdcCheckDialog v-model="cdcOpen" :datasource="cdcChecking" />
 
   <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑数据源' : '新建数据源'" width="560px">
     <el-form label-width="90px">

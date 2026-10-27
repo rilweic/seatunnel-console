@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /** Real-time (CDC) jobs (design.md §12 P2): their live state, refreshed while the page is open. */
-import { Plus } from '@element-plus/icons-vue'
+import { CircleCheck, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { jobApi, projectApi, streamApi, type JobView, type ProjectView, type StreamSummary } from '@/api/console'
+import CdcCheckDialog from '@/components/CdcCheckDialog.vue'
 import CopyJobDialog from '@/components/CopyJobDialog.vue'
 import CreateJobDialog from '@/components/CreateJobDialog.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -23,6 +24,7 @@ const ownProjects = computed(() => projects.value.filter((p) => p.editable))
 const { state: query, apply } = useQueryState({ projectId: '', keyword: '', mine: true, page: 1, size: 20 }, () => load())
 const loading = ref(false)
 const createOpen = ref(false)
+const checkOpen = ref(false)
 const copying = ref<JobView | null>(null)
 const copyOpen = computed({ get: () => copying.value !== null, set: (open) => { if (!open) copying.value = null } })
 const deleting = reactive({ visible: false, job: null as JobView | null })
@@ -72,6 +74,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 <template>
   <el-card shadow="never">
     <PageHeader title="实时同步" description="持续读取 MySQL binlog / PostgreSQL WAL，把插入、更新、删除实时写到目标端。点击任务查看运行状态和启停历史。">
+      <el-button :icon="CircleCheck" @click="checkOpen = true">检查同步条件</el-button>
       <el-button type="primary" :icon="Plus" @click="openCreate">新建任务</el-button>
     </PageHeader>
     <div class="toolbar">
@@ -143,6 +146,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 
   <CreateJobDialog v-model="createOpen" job-type="STREAMING" :projects="ownProjects" :default-project-id="query.projectId" />
   <CopyJobDialog v-model="copyOpen" :job="copying" />
+  <CdcCheckDialog v-model="checkOpen" />
   <StreamDeleteDialog v-model="deleting.visible" :job-id="deleting.job?.id ?? null" :job-name="deleting.job?.name ?? ''" @deleted="load" />
 </template>
 

@@ -575,7 +575,7 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 - **从哪里开始同步**（向导）：全量 + 增量（`initial`，默认）/ 只同步之后的变更（`latest`）/ 从某个时间点开始（`timestamp`，仅 MySQL）。其他启动方式只在脚本模式
 - **选表**：先只做明确清单，逐表配置映射和字段处理。正则动态选表等实测引擎行为后再单独讨论（`table-pattern` 看起来只在启动时匹配）
 - **主键和删除**：无主键的表不能选；写入固定按主键 upsert，没有"清空后写入"；删除默认同步，可开"不同步删除"（`FilterRowKind` 过滤 DELETE）
-- **前置条件**：预检查和数据源页的"检查实时同步条件"检查 MySQL `log_bin=ON`、`binlog_format=ROW`、`binlog_row_image=FULL`、`REPLICATION SLAVE / CLIENT` 和 `SELECT` 权限；PG `wal_level=logical`、`REPLICATION` 权限、所选表 `REPLICA IDENTITY FULL`。不满足时给修复 SQL，console 不改用户的库
+- **前置条件**：预检查、每次启动和实时同步列表页的"检查同步条件"（选一个源数据源查看；2026-10-27 从数据源页挪过来，条件是给建实时任务的人看的）检查 MySQL `log_bin=ON`、`binlog_format=ROW`、`binlog_row_image=FULL`、`REPLICATION SLAVE / CLIENT` 和 `SELECT` 权限；PG `wal_level=logical`、`REPLICATION` 权限、所选表 `REPLICA IDENTITY FULL`。不满足时给修复 SQL，console 不改用户的库
 - **server-id / slot.name**：console 自动分配。MySQL 每个任务一段不重复的 server-id（长度 = 并行度），高级参数可手改；PG 的 slot 名为 `seatunnel_<任务 id 前缀>`。删除 PG 实时任务时先停作业，再用数据源账号 `pg_drop_replication_slot`（对话框默认勾选"同时删除复制槽"，失败时给出 SQL）
 - **启停**：停止默认带 savepoint，可强制停止；作业还没提交到引擎（启动或自动重启进行中）时不能停止，提示稍后再试，免得 console 记为已停止而随后提交的作业没人管；等待自动重启时停止会取消这次重启（和监控线程抢同一条条件更新，只有一方成功）；启动默认从 savepoint 恢复，可选最近的 checkpoint 或全新启动；用来源设置有变化的新版本启动时默认改为全新启动，并醒目提示会重新全量。失败自动重启默认关闭，打开后最多 3 次、间隔 30 秒、从最近的 checkpoint 恢复，连续运行 10 分钟后计数清零
 - **一致性**：`exactly_once = false`（至少一次 + 按主键 upsert），`checkpoint.interval` 默认 10 秒，高级参数可改
