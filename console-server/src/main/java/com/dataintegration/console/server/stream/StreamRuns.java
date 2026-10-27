@@ -156,7 +156,9 @@ public class StreamRuns {
         attempt.setLogTruncated(false);
         recorder.insert(attempt);
         instance.setAttemptCount(attempt.getAttemptNo());
-        recorder.update(instance);
+        instances.update(null, new LambdaUpdateWrapper<JobInstance>()
+                .set(JobInstance::getAttemptCount, attempt.getAttemptNo())
+                .eq(JobInstance::getId, instance.getId()));
         return attempt;
     }
 
@@ -171,12 +173,15 @@ public class StreamRuns {
         return all.isEmpty() ? null : all.get(all.size() - 1);
     }
 
-    /** Ends the run and frees the job for the next start, leaving where that start can restore from. */
+    /**
+     * Ends the run and frees the job for the next start, leaving where that start can restore from.
+     * Nothing happens when the run has ended already: a stop and the monitor may both see the
+     * engine job end, and only the first one records it.
+     */
     public void finish(JobInstance instance, RunStatus status, String message, RestorePoint point) {
-        instance.setStatus(status.name());
-        instance.setFinishedAt(LocalDateTime.now());
-        instance.setErrorMessage(status == RunStatus.FAILED || status == RunStatus.CANCELED ? RunRecorder.clip(message) : null);
-        recorder.update(instance);
+        if (!end(instance, status, status == RunStatus.FAILED || status == RunStatus.CANCELED ? message : null)) {
+            return;
+        }
         recorder.event(instance.getId(), instance.getAttemptCount(), RunEventType.FINISHED,
                 status == RunStatus.FAILED ? Level.ERROR : Level.INFO, message);
         LambdaUpdateWrapper<JobStream> update = new LambdaUpdateWrapper<JobStream>()
@@ -202,6 +207,28 @@ public class StreamRuns {
             messages.job(MessageCategory.STREAM_FAILED, Level.ERROR, jobId, instance.getId(), "/realtime/" + jobId, jobId, "实时任务失败",
                     message);
         }
+    }
+
+    /** Cancels a run that never became the job's current one. */
+    public void abandon(JobInstance instance, String reason) {
+        end(instance, RunStatus.CANCELED, reason);
+    }
+
+    /** Moves the RUNNING run to {@code status}, writing only those columns; false when it was no longer running. */
+    private boolean end(JobInstance instance, RunStatus status, String errorMessage) {
+        LocalDateTime now = LocalDateTime.now();
+        boolean ended = instances.update(null, new LambdaUpdateWrapper<JobInstance>()
+                .set(JobInstance::getStatus, status.name())
+                .set(JobInstance::getFinishedAt, now)
+                .set(JobInstance::getErrorMessage, RunRecorder.clip(errorMessage))
+                .eq(JobInstance::getId, instance.getId())
+                .eq(JobInstance::getStatus, RunStatus.RUNNING.name())) > 0;
+        if (ended) {
+            instance.setStatus(status.name());
+            instance.setFinishedAt(now);
+            instance.setErrorMessage(RunRecorder.clip(errorMessage));
+        }
+        return ended;
     }
 
     /** Writes only the given live-state columns of the job's stream row. */

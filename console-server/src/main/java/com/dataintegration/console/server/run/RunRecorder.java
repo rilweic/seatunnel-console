@@ -167,14 +167,7 @@ public class RunRecorder {
      * stop or status change is never overwritten.
      */
     public void progress(String instanceId, int attemptNo, EngineMetrics metrics) {
-        instanceMapper.update(
-                null,
-                new LambdaUpdateWrapper<JobInstance>()
-                        .set(JobInstance::getReadRows, metrics.readRows())
-                        .set(JobInstance::getWriteRows, metrics.writeRows())
-                        .set(JobInstance::getReadBytes, metrics.readBytes())
-                        .set(JobInstance::getWriteBytes, metrics.writeBytes())
-                        .eq(JobInstance::getId, instanceId));
+        counters(instanceId, metrics);
         JobMetricSample sample = new JobMetricSample();
         sample.setInstanceId(instanceId);
         sample.setAttemptNo(attemptNo);
@@ -184,6 +177,28 @@ public class RunRecorder {
         sample.setWriteBytes(metrics.writeBytes());
         sample.setSampledAt(LocalDateTime.now());
         sampleMapper.insert(sample);
+    }
+
+    /** Writes the instance's counter columns only. */
+    public void counters(String instanceId, EngineMetrics metrics) {
+        instanceMapper.update(
+                null,
+                new LambdaUpdateWrapper<JobInstance>()
+                        .set(JobInstance::getReadRows, metrics.readRows())
+                        .set(JobInstance::getWriteRows, metrics.writeRows())
+                        .set(JobInstance::getReadBytes, metrics.readBytes())
+                        .set(JobInstance::getWriteBytes, metrics.writeBytes())
+                        .eq(JobInstance::getId, instanceId));
+    }
+
+    /** Writes the rendered config columns held by {@code instance} only. */
+    public void config(JobInstance instance) {
+        instanceMapper.update(
+                null,
+                new LambdaUpdateWrapper<JobInstance>()
+                        .set(JobInstance::getConfigMasked, instance.getConfigMasked())
+                        .set(JobInstance::getVariablesJson, instance.getVariablesJson())
+                        .eq(JobInstance::getId, instance.getId()));
     }
 
     public static String clip(String text) {

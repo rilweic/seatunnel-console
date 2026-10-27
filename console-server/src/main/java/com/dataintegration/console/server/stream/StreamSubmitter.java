@@ -64,7 +64,7 @@ public class StreamSubmitter {
                 instance.getScheduledTime(), instance.getId(), null, true, identity.extras(job.getId()));
         instance.setConfigMasked(rendered.masked());
         instance.setVariablesJson(objectMapper.writeValueAsString(rendered.variables()));
-        recorder.update(instance);
+        recorder.config(instance);
         return rendered;
     }
 

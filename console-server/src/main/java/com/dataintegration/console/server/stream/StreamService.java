@@ -218,10 +218,7 @@ public class StreamService {
         }
         JobInstance instance = runs.create(job, version, startup.isEmpty() ? null : objectMapper.writeValueAsString(startup), CurrentUser.idOrNull());
         if (!runs.claim(jobId, instance.getId())) {
-            instance.setStatus(RunStatus.CANCELED.name());
-            instance.setFinishedAt(LocalDateTime.now());
-            instance.setErrorMessage("任务已经在运行");
-            runs.recorder().update(instance);
+            runs.abandon(instance, "任务已经在运行");
             throw new ConsoleException(ErrorCodes.CONFLICT, "任务已经在运行");
         }
         RunRecorder recorder = runs.recorder();

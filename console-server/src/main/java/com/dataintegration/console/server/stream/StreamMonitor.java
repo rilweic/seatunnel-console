@@ -274,11 +274,7 @@ public class StreamMonitor {
             attempt.setFinishedAt(LocalDateTime.now());
             if (!metrics.isEmpty()) {
                 attempt.setMetricsJson(objectMapper.writeValueAsString(metrics));
-                EngineMetrics m = EngineMetrics.parse(metrics, objectMapper);
-                instance.setReadRows(m.readRows());
-                instance.setWriteRows(m.writeRows());
-                instance.setReadBytes(m.readBytes());
-                instance.setWriteBytes(m.writeBytes());
+                recorder.counters(instance.getId(), EngineMetrics.parse(metrics, objectMapper));
             }
             recorder.update(attempt);
             logText = logArchiver.archive(instance.getId(), attempt, engineJobId);
