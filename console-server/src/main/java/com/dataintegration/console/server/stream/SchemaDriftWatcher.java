@@ -7,6 +7,7 @@ import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.wizard.WizardForm;
+import com.dataintegration.console.server.message.MessageCategory;
 import com.dataintegration.console.server.job.wizard.WizardForm.TableSpec;
 import com.dataintegration.console.server.job.wizard.WizardGenerator;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
@@ -200,7 +201,12 @@ public class SchemaDriftWatcher {
     private void report(JobInstance instance, SchemaFollow follow, TableSpec table, String targetName, SchemaDiff changes, List<ColumnMeta> sink) {
         List<ColumnChange> assessed = follow.assess(table, changes, sink);
         boolean problem = assessed.stream().anyMatch(ColumnChange::problem);
-        runs.recorder().event(instance.getId(), instance.getAttemptCount(), RunEventType.SCHEMA_CHANGE, problem ? Level.WARN : Level.INFO,
-                "源表 " + table.name() + "（目标 " + targetName + "）结构变了：" + String.join("；", assessed.stream().map(ColumnChange::line).toList()));
+        String message = "源表 " + table.name() + "（目标 " + targetName + "）结构变了："
+                + String.join("；", assessed.stream().map(ColumnChange::line).toList());
+        Level level = problem ? Level.WARN : Level.INFO;
+        runs.recorder().event(instance.getId(), instance.getAttemptCount(), RunEventType.SCHEMA_CHANGE, level, message);
+        String jobId = instance.getJobDefinitionId();
+        runs.messages().job(MessageCategory.SCHEMA_CHANGE, level, jobId, instance.getId(), "/realtime/" + jobId, null,
+                problem ? "源表结构变了，目标端没有跟上" : "源表结构变了", message);
     }
 }

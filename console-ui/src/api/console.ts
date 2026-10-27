@@ -884,3 +884,41 @@ export interface Dashboard {
 export const dashboardApi = {
   get: (mine: boolean) => get<Dashboard>('/dashboard', { mine }),
 }
+
+export type MessageLevel = 'INFO' | 'WARN' | 'ERROR'
+
+/** In-console messages (docs/design.md §10.7); everyone sees the messages about their own jobs, admins all. */
+export interface MessageView {
+  id: string
+  category: string
+  level: MessageLevel
+  title: string
+  content: string
+  jobId: string | null
+  instanceId: string | null
+  link: string | null
+  /** occurrences merged into this message while it stayed unresolved */
+  repeatCount: number
+  createdAt: string
+  lastAt: string
+  /** whether the message is about a problem that gets resolved */
+  resolvable: boolean
+  resolvedAt: string | null
+  read: boolean
+}
+
+export interface MessageFilters {
+  unread?: boolean
+  unresolved?: boolean
+  level?: string
+  category?: string
+  page?: number
+  size?: number
+}
+
+export const messageApi = {
+  list: (params: MessageFilters) => get<PageResult<MessageView>>('/messages', params as Record<string, unknown>),
+  unreadCount: () => get<number>('/messages/unread-count', undefined, true),
+  markRead: (id: string) => post<void>(`/messages/${id}/read`),
+  markAllRead: () => post<void>('/messages/read-all'),
+}

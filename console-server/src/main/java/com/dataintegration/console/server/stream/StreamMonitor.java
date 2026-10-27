@@ -10,6 +10,7 @@ import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.SubmitJobRequest.RestoreMode;
 import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.job.JobService;
+import com.dataintegration.console.server.message.MessageCategory;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -178,8 +179,9 @@ public class StreamMonitor {
             runs.updateLive(stream.getJobDefinitionId(), new LambdaUpdateWrapper<JobStream>()
                     .set(JobStream::getPipelineRestores, job.pipelineRestores()));
             if (job.pipelineRestores() > restores) {
-                recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.WARN,
-                        "作业出错，SeaTunnel 正在自动恢复（第 " + job.pipelineRestores() + " 次；超过引擎的上限后作业会失败）");
+                String message = "作业出错，SeaTunnel 正在自动恢复（第 " + job.pipelineRestores() + " 次；超过引擎的上限后作业会失败）";
+                recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.WARN, message);
+                unstable(instance, message);
             }
         }
         Instant now = Instant.now();
@@ -230,14 +232,23 @@ public class StreamMonitor {
                         .set(JobStream::getRestoreEngineJobId, String.valueOf(engineJobId))
                         .set(JobStream::getRestoreVersionId, instance.getJobVersionId())
                         .set(JobStream::getRestoreBlocked, null);
+                // The engine job has come far enough to checkpoint: earlier failures are behind it,
+                // and so is a checkpoint problem left open by an earlier run, unless one is seen now.
+                runs.messages().resolve(stream.getJobDefinitionId(), MessageCategory.STREAM_FAILED, MessageCategory.STREAM_UNSTABLE);
+                if (problem == null) {
+                    runs.messages().resolve(stream.getJobDefinitionId(), MessageCategory.CHECKPOINT);
+                }
             }
         }
         runs.updateLive(stream.getJobDefinitionId(), update);
         if (problem != null && stream.getCheckpointProblem() == null) {
-            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.WARN,
-                    "checkpoint 异常：" + problem + "。savepoint 停止可能失败，失败后恢复要重放更多数据");
+            String message = "checkpoint 异常：" + problem + "。savepoint 停止可能失败，失败后恢复要重放更多数据";
+            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.WARN, message);
+            runs.messages().job(MessageCategory.CHECKPOINT, Level.WARN, stream.getJobDefinitionId(), instance.getId(),
+                    "/realtime/" + stream.getJobDefinitionId(), stream.getJobDefinitionId(), "checkpoint 异常", message);
         } else if (problem == null && stream.getCheckpointProblem() != null) {
             recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.STATUS_CHANGED, Level.INFO, "checkpoint 恢复正常");
+            runs.messages().resolve(stream.getJobDefinitionId(), MessageCategory.CHECKPOINT);
         }
     }
 
@@ -295,8 +306,9 @@ public class StreamMonitor {
             runs.updateLive(stream.getJobDefinitionId(), new LambdaUpdateWrapper<JobStream>()
                     .set(JobStream::getRestartAt, LocalDateTime.now().plusSeconds(interval))
                     .eq(JobStream::getCurrentInstanceId, instance.getId()));
-            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.RETRY, Level.WARN,
-                    "作业失败：" + cause + "。" + interval + " 秒后从最近的 checkpoint 自动重启");
+            String message = "作业失败：" + cause + "。" + interval + " 秒后从最近的 checkpoint 自动重启";
+            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.RETRY, Level.WARN, message);
+            unstable(instance, message);
             return;
         }
         if (failure.restoreBlocked() != null) {
@@ -309,6 +321,13 @@ public class StreamMonitor {
                 : "作业失败：" + cause + "。" + resumesFrom(stream.getJobDefinitionId());
         // the restore point stays where the last completed checkpoint (or the start) left it
         runs.finish(instance, RunStatus.FAILED, message, null);
+    }
+
+    /** Merged per job until the job checkpoints again or the run ends. */
+    private void unstable(JobInstance instance, String message) {
+        String jobId = instance.getJobDefinitionId();
+        runs.messages().job(MessageCategory.STREAM_UNSTABLE, Level.WARN, jobId, instance.getId(), "/realtime/" + jobId, jobId,
+                "实时任务出错，正在自动恢复", message);
     }
 
     /** Where the next start carries on, as the run's last words. */

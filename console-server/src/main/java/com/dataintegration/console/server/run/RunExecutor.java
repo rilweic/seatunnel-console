@@ -14,6 +14,8 @@ import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.SyncWindow;
 import com.dataintegration.console.server.job.WatermarkService;
+import com.dataintegration.console.server.message.MessageCategory;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -78,6 +80,7 @@ public class RunExecutor {
     private final AttemptLogArchiver logArchiver;
     private final ObjectMapper objectMapper;
     private final BatchJobRunner runner;
+    private final Messages messages;
 
     /** Runs driven by this process, by instance id; the console is single-instance. */
     private final ConcurrentMap<String, CancelSignal> activeRuns = new ConcurrentHashMap<>();
@@ -93,6 +96,7 @@ public class RunExecutor {
             EngineClient engineClient,
             AttemptLogArchiver logArchiver,
             ObjectMapper objectMapper,
+            Messages messages,
             @Value("${console.run.poll-interval:2s}") Duration pollInterval) {
         this.recorder = recorder;
         this.jobService = jobService;
@@ -104,6 +108,7 @@ public class RunExecutor {
         this.engineClient = engineClient;
         this.logArchiver = logArchiver;
         this.objectMapper = objectMapper;
+        this.messages = messages;
         this.runner = new BatchJobRunner(engineClient, pollInterval);
     }
 
@@ -317,6 +322,14 @@ public class RunExecutor {
                         + (result.sourceQuery() == null ? "" : "\nsource: " + result.sourceQuery())
                         + (result.targetQuery() == null ? "" : "\ntarget: " + result.targetQuery()));
         schedulerLog.accept("row count " + result.status() + ": " + result.message());
+        String jobId = instance.getJobDefinitionId();
+        if (result.status() == RowCountValidator.Status.PASSED) {
+            messages.resolve(jobId, MessageCategory.VALIDATION);
+        } else if (!(result.status() == RowCountValidator.Status.MISMATCH && spec.failOnMismatch())) {
+            // a mismatch that fails the run is reported as the failure
+            messages.job(MessageCategory.VALIDATION, Level.WARN, jobId, instance.getId(), "/instances/" + instance.getId(), jobId,
+                    result.status() == RowCountValidator.Status.MISMATCH ? "行数校验不一致" : "行数校验没有完成", result.message());
+        }
         return result;
     }
 
@@ -434,10 +447,24 @@ public class RunExecutor {
                 },
                 status + ": " + message);
         schedulerLog.accept(status + ": " + message);
+        // Only a run that did the job shows it works again; an empty window submitted nothing.
+        if (status == RunStatus.SUCCESS && prepared != null) {
+            messages.resolve(instance.getJobDefinitionId(), MessageCategory.RUN_FAILED);
+        } else if (status == RunStatus.FAILED) {
+            notifyFailed(messages, instance, message);
+        }
         if (status == RunStatus.SUCCESS && prepared != null && prepared.window() != null && !prepared.window().empty()) {
             advanceWatermark(instance, prepared.window(), prepared.watermarkGen(), schedulerLog);
         }
         return new RunResult(instance.getId(), status, message);
+    }
+
+    /** The message of a batch run that ended FAILED, merged per job until a later run succeeds. */
+    static void notifyFailed(Messages messages, JobInstance instance, String message) {
+        messages.job(MessageCategory.RUN_FAILED, Level.ERROR, instance.getJobDefinitionId(), instance.getId(),
+                "/instances/" + instance.getId(), instance.getJobDefinitionId(), "运行失败",
+                (instance.getScheduledTime() == null ? "" : "计划时间 " + instance.getScheduledTime().withNano(0).toString().replace('T', ' ') + "：")
+                        + message);
     }
 
     private void advanceWatermark(JobInstance instance, SyncWindow window, int gen, Consumer<String> schedulerLog) {

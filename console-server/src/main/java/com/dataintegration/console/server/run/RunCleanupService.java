@@ -1,6 +1,7 @@
 package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -31,6 +32,7 @@ public class RunCleanupService {
     private final JobMetricSampleMapper sampleMapper;
     private final BackfillBatchMapper backfillMapper;
     private final LogStorage logStorage;
+    private final Messages messages;
 
     public RunCleanupService(
             JobInstanceMapper instanceMapper,
@@ -38,13 +40,15 @@ public class RunCleanupService {
             JobInstanceEventMapper eventMapper,
             JobMetricSampleMapper sampleMapper,
             BackfillBatchMapper backfillMapper,
-            LogStorage logStorage) {
+            LogStorage logStorage,
+            Messages messages) {
         this.instanceMapper = instanceMapper;
         this.attemptMapper = attemptMapper;
         this.eventMapper = eventMapper;
         this.sampleMapper = sampleMapper;
         this.backfillMapper = backfillMapper;
         this.logStorage = logStorage;
+        this.messages = messages;
     }
 
     /** The caller locks the job and refuses deletion while any run or backfill is active. */
@@ -71,6 +75,7 @@ public class RunCleanupService {
             instanceMapper.deleteByIds(instanceIds);
         }
         backfillMapper.delete(new LambdaQueryWrapper<BackfillBatch>().eq(BackfillBatch::getJobDefinitionId, jobId));
+        messages.forgetJob(jobId);
         deleteLogsAfterCommit(jobId, logKeys);
     }
 

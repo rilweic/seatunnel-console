@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Lightning, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import MessageBell from '@/components/MessageBell.vue'
 import { useBreadcrumbState } from '@/composables/useBreadcrumb'
+import { useMessageStore } from '@/stores/messages'
 import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
+const messageStore = useMessageStore()
+
+onMounted(() => messageStore.start())
+onBeforeUnmount(() => messageStore.stop())
 
 const title = computed(() => (route.meta.title as string | undefined) ?? '')
 const activeMenu = computed(() => (route.meta.menu as string | undefined) ?? route.path)
@@ -104,20 +110,23 @@ async function logout() {
         </nav>
         <span v-else-if="title" class="page-title">{{ title }}</span>
       </div>
-      <el-dropdown v-if="userStore.user" trigger="click">
-        <span class="user">
-          <span class="avatar">{{ (userStore.user.displayName || userStore.user.username).slice(0, 1).toUpperCase() }}</span>
-          {{ userStore.user.displayName || userStore.user.username }}
-          <span class="role">{{ roleText }}</span>
-          <el-icon class="caret"><ArrowDown /></el-icon>
-        </span>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item @click="router.push('/change-password')">修改密码</el-dropdown-item>
-            <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <div class="tools">
+        <MessageBell />
+        <el-dropdown v-if="userStore.user" trigger="click">
+          <span class="user">
+            <span class="avatar">{{ (userStore.user.displayName || userStore.user.username).slice(0, 1).toUpperCase() }}</span>
+            {{ userStore.user.displayName || userStore.user.username }}
+            <span class="role">{{ roleText }}</span>
+            <el-icon class="caret"><ArrowDown /></el-icon>
+          </span>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item @click="router.push('/change-password')">修改密码</el-dropdown-item>
+              <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </header>
 
     <div class="body">
@@ -231,6 +240,13 @@ async function logout() {
 
 .sep {
   color: var(--el-text-color-placeholder);
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
 }
 
 .user {

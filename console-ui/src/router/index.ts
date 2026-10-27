@@ -46,6 +46,7 @@ const router = createRouter({
           component: () => import('@/views/instances/InstanceDetailView.vue'),
           meta: { title: '运行详情', menu: '/instances' },
         },
+        { path: 'messages', component: () => import('@/views/MessagesView.vue'), meta: { title: '消息中心', list: true } },
         { path: 'cluster', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群健康检查' } },
         { path: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: '用户管理', admin: true } },
         { path: 'encrypt-keys', component: () => import('@/views/EncryptKeysView.vue'), meta: { title: '加密密钥', admin: true } },

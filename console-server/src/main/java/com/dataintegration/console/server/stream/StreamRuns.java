@@ -2,6 +2,8 @@ package com.dataintegration.console.server.stream;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.dataintegration.console.server.message.MessageCategory;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -44,10 +46,12 @@ public class StreamRuns {
     private final JobInstanceAttemptMapper attempts;
     private final JobInstanceMapper instances;
     private final JobInstanceEventMapper events;
+    private final Messages messages;
 
     public StreamRuns(RunRecorder recorder, JobStreamMapper streams, JobInstanceAttemptMapper attempts, JobInstanceMapper instances,
-            JobInstanceEventMapper events) {
+            JobInstanceEventMapper events, Messages messages) {
         this.events = events;
+        this.messages = messages;
         this.recorder = recorder;
         this.streams = streams;
         this.attempts = attempts;
@@ -56,6 +60,10 @@ public class StreamRuns {
 
     public RunRecorder recorder() {
         return recorder;
+    }
+
+    public Messages messages() {
+        return messages;
     }
 
     /** A new RUNNING run of the job's current version, not yet the job's current run. */
@@ -187,6 +195,13 @@ public class StreamRuns {
                     .set(JobStream::getRestoreBlocked, point.blocked());
         }
         streams.update(null, update);
+        String jobId = instance.getJobDefinitionId();
+        // what was going wrong during the run is over with it; a failure is what is left to say
+        messages.resolve(jobId, MessageCategory.STREAM_UNSTABLE, MessageCategory.CHECKPOINT);
+        if (status == RunStatus.FAILED) {
+            messages.job(MessageCategory.STREAM_FAILED, Level.ERROR, jobId, instance.getId(), "/realtime/" + jobId, jobId, "实时任务失败",
+                    message);
+        }
     }
 
     /** Writes only the given live-state columns of the job's stream row. */

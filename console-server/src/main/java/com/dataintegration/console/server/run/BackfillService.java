@@ -10,6 +10,8 @@ import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.SyncWindow;
 import com.dataintegration.console.server.job.WatermarkService;
 import com.dataintegration.console.server.job.Variables;
+import com.dataintegration.console.server.message.MessageCategory;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
@@ -86,6 +88,7 @@ public class BackfillService {
     private final WatermarkService watermarks;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactions;
+    private final Messages messages;
 
     public BackfillService(
             BackfillBatchMapper batchMapper,
@@ -96,7 +99,9 @@ public class BackfillService {
             RunService runService,
             WatermarkService watermarks,
             ObjectMapper objectMapper,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            Messages messages) {
+        this.messages = messages;
         this.transactions = new TransactionTemplate(transactionManager);
         this.batchMapper = batchMapper;
         this.instanceMapper = instanceMapper;
@@ -199,6 +204,7 @@ public class BackfillService {
         if (updated == 0) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "补数已经" + ("FINISHED".equals(batch.getStatus()) ? "结束" : "停止"));
         }
+        messages.resolve(batchId, MessageCategory.BACKFILL);
         for (JobInstance active : instanceMapper.selectList(new LambdaQueryWrapper<JobInstance>()
                 .eq(JobInstance::getBackfillBatchId, batchId)
                 .in(JobInstance::getStatus, RunStatus.PENDING.name(), RunStatus.RUNNING.name()))) {
@@ -224,6 +230,7 @@ public class BackfillService {
         if (updated == 0) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "只有暂停中的补数才能继续");
         }
+        messages.resolve(batchId, MessageCategory.BACKFILL);
         return get(batchId);
     }
 
@@ -340,7 +347,7 @@ public class BackfillService {
     }
 
     private void transition(BackfillBatch batch, Status status, String error) {
-        batchMapper.update(
+        int updated = batchMapper.update(
                 null,
                 new LambdaUpdateWrapper<BackfillBatch>()
                         .set(BackfillBatch::getStatus, status.name())
@@ -348,6 +355,31 @@ public class BackfillService {
                         .set(status == Status.FINISHED, BackfillBatch::getFinishedAt, LocalDateTime.now())
                         .eq(BackfillBatch::getId, batch.getId())
                         .eq(BackfillBatch::getStatus, Status.RUNNING.name()));
+        if (updated > 0) {
+            notifyTransition(batch, status, error);
+        }
+    }
+
+    private void notifyTransition(BackfillBatch batch, Status status, String error) {
+        String jobId = batch.getJobDefinitionId();
+        String link = "/jobs/" + jobId + "/backfills";
+        String range = batch.getStartTime().toLocalDate() + " ~ " + batch.getEndTime().toLocalDate();
+        if (status == Status.PAUSED) {
+            messages.job(MessageCategory.BACKFILL, RunRecorder.Level.WARN, jobId, null, link, batch.getId(), "补数暂停",
+                    "补数 " + range + " 已暂停：" + error);
+        } else if (status == Status.FINISHED) {
+            Map<String, Long> counts = instanceMapper.selectList(new LambdaQueryWrapper<JobInstance>()
+                            .select(JobInstance::getStatus)
+                            .eq(JobInstance::getBackfillBatchId, batch.getId()))
+                    .stream()
+                    .collect(Collectors.groupingBy(JobInstance::getStatus, Collectors.counting()));
+            long failed = counts.getOrDefault(RunStatus.FAILED.name(), 0L);
+            messages.job(MessageCategory.BACKFILL, failed > 0 ? RunRecorder.Level.WARN : RunRecorder.Level.INFO, jobId, null, link, null,
+                    "补数完成", "补数 " + range + " 共 " + batch.getTotalRuns() + " 次运行：成功 "
+                            + counts.getOrDefault(RunStatus.SUCCESS.name(), 0L) + "，失败 " + failed
+                            + "，取消 " + counts.getOrDefault(RunStatus.CANCELED.name(), 0L)
+                            + (failed > 0 ? "。失败的日期可以在运行记录里重跑" : ""));
+        }
     }
 
     private BackfillBatch require(String batchId) {

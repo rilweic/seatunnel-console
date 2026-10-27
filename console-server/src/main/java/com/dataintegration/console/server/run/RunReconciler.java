@@ -2,6 +2,7 @@ package com.dataintegration.console.server.run;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.mapper.JobInstanceMapper;
 import com.dataintegration.console.server.stream.StreamRunType;
@@ -36,16 +37,22 @@ public class RunReconciler {
 
     private static final Logger log = LoggerFactory.getLogger(RunReconciler.class);
 
+    /** How a run XXL-JOB never started is failed; the cluster health page counts these. */
+    public static final String NOT_STARTED = "XXL-JOB did not start this run within ";
+
     private final JobInstanceMapper instanceMapper;
     private final RunRecorder recorder;
+    private final Messages messages;
     private final Duration pendingGrace;
 
     public RunReconciler(
             JobInstanceMapper instanceMapper,
             RunRecorder recorder,
+            Messages messages,
             @Value("${console.run.pending-grace:10m}") Duration pendingGrace) {
         this.instanceMapper = instanceMapper;
         this.recorder = recorder;
+        this.messages = messages;
         this.pendingGrace = pendingGrace;
     }
 
@@ -57,8 +64,11 @@ public class RunReconciler {
                         // streaming runs live on in the engine; the stream monitor carries on with them
                         .ne(JobInstance::getTriggerType, StreamRunType.START));
         for (JobInstance instance : running) {
-            recorder.failOrphaned(instance, "console restarted while this run was being monitored; "
-                    + "check the SeaTunnel cluster for the engine job of the last attempt");
+            String message = "console restarted while this run was being monitored; "
+                    + "check the SeaTunnel cluster for the engine job of the last attempt";
+            if (recorder.failOrphaned(instance, message)) {
+                RunExecutor.notifyFailed(messages, instance, message);
+            }
         }
         if (!running.isEmpty()) {
             log.warn("Marked {} run(s) interrupted by a console restart as FAILED", running.size());
@@ -76,7 +86,7 @@ public class RunReconciler {
                                 + " where busy.job_definition_id = job_instance.job_definition_id"
                                 + " and (busy.status = 'RUNNING' or busy.finished_at > {0})", cutoff));
         for (JobInstance instance : stale) {
-            fail(instance, "XXL-JOB did not start this run within " + pendingGrace.toMinutes()
+            fail(instance, NOT_STARTED + pendingGrace.toMinutes()
                     + " minutes although no other run of the job was going; check the XXL-JOB scheduling log"
                     + " and that the executor is online");
         }
@@ -98,6 +108,7 @@ public class RunReconciler {
                 > 0;
         if (failed) {
             recorder.event(instance.getId(), instance.getAttemptCount(), RunEventType.ERROR, Level.ERROR, message);
+            RunExecutor.notifyFailed(messages, instance, message);
         }
         return failed;
     }

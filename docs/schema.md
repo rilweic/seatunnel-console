@@ -58,6 +58,8 @@ project ─┬─< project_param
 | `encrypt_key` | 字段加密的密钥（design.md §7.11）。`key_cipher` 是用 `CONSOLE_SECRET_KEY` 加密后的 Base64 密钥，接口从不返回密钥本身；任务配置里只写 `encrypt_key_id`，提交运行时才在内存里换成密钥。只停用，不删除 |
 | `job_stream` | 实时任务（`job_type = STREAMING`）自己的设置和运行状态，和 `job_definition` 一对一（V11，design.md §12 P2）：失败自动重启的设置；源库上的复制身份（MySQL-CDC 的 server-id 段，每个任务 8 个，`server_id_start` 起；PG 的复制槽和 publication 名 `replication_name`）；下次启动能从哪里恢复（`restore_engine_job_id`、`restore_kind` 为 SAVEPOINT 或 CHECKPOINT、当时的版本 `restore_version_id`，以及恢复必然失败时的原因 `restore_blocked`）；监控最近看到的情况（当前运行 `current_instance_id`、最近读到数据的时间、最近一次 checkpoint 和异常、引擎自动恢复次数）。实时任务一次"启动 → 停止或失败"是一条 `job_instance`（`trigger_type = START`），其中每次自动重启是一条 attempt |
 | `stream_table_schema` | 实时任务每张表、每一端一行：`columns_json` 是最近一次看到的结构，运行中定时和实际结构对比、发现表结构变更（V11）；`start_columns_json` 是最近一次启动时的结构，详情页按它列出启动以来每张表的变化（V12）。删除任务时一起删掉 |
+| `message` | 站内消息（V15，design.md §10.7）。`owner_id` 是接收人（任务创建人；集群类为空，只有管理员能看到，管理员看到全部）。会被解决的消息带 `dedup_key`，生成列 `open_key` 在未解决时等于它并且唯一，同一件事未解决期间（或解决后一小时内，会被重新打开）只累加 `repeat_count`、更新 `last_at`；`notified_at` 是最近一次要求关注的时间，重复发生时最多一小时往后挪一次；`resolved_at` 是解决时间。最近一次发生超过 90 天的每天清理，删除任务时一起删除 |
+| `message_read` | 谁在什么时候读过哪条消息；`read_at` 早于消息的 `notified_at`（读过之后又要求关注）算未读 |
 
 ## 4. 运行实例
 

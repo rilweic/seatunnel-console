@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -43,6 +44,7 @@ class RunCleanupServiceTest {
     @Mock private JobMetricSampleMapper sampleMapper;
     @Mock private BackfillBatchMapper backfillMapper;
     @Mock private LogStorage logStorage;
+    @Mock private Messages messages;
     @InjectMocks private RunCleanupService cleanupService;
 
     @BeforeEach
