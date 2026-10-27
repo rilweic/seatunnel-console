@@ -237,19 +237,19 @@ onBeforeUnmount(() => {
       />
     </div>
     <el-table v-loading="loading" :data="rows" class="clickable" @row-click="(row: InstanceView) => router.push(`/instances/${row.id}`)">
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="statusTag[row.status as RunStatus]">{{ statusText[row.status as RunStatus] }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="projectName" label="项目" min-width="140" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.projectName ?? '-' }}</template>
-      </el-table-column>
       <el-table-column label="任务" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
           <router-link v-if="!row.jobDeleted" :to="`/jobs/${row.jobDefinitionId}`" @click.stop>{{ row.jobName }}</router-link>
           <span v-else>{{ row.jobName ?? '已删除的任务' }}</span>
           <el-tag v-if="row.jobDeleted" type="info" size="small" class="deleted-tag">已删除</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="projectName" label="项目" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.projectName ?? '-' }}</template>
+      </el-table-column>
+      <el-table-column label="状态" width="100">
+        <template #default="{ row }">
+          <el-tag :type="statusTag[row.status as RunStatus]">{{ statusText[row.status as RunStatus] }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="版本" width="70">
