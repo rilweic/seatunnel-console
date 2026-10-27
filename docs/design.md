@@ -111,6 +111,7 @@
 - 第一阶段只实现 `ZetaRestClient`
 - **P3 要支持 Flink 和 Spark**。SeaTunnel 的 REST API 是 Zeta 独有的，Flink 和 Spark 要用 `start-seatunnel-flink-*-connector-v2.sh` / `start-seatunnel-spark-*-connector-v2.sh`，或者引擎自己的 API（Flink JobManager REST、YARN、Livy），每种引擎要单独实现
 - 连接信息由 console 渲染（第 6 节），和引擎无关，Flink 和 Spark 也能沿用
+- 前提、能力差别、console 要改的地方和本地测试环境见 [flink-spark.md](flink-spark.md)（2026-10-28 草案，未定稿）
 
 ### 4.3 SeaTunnel 集群的部署前提
 
@@ -666,7 +667,7 @@ P2 已完成，2026-10-27 合并到 main：
 
 ### P3 扩展
 
-- Flink 和 Spark 引擎（EngineClient 的新实现）
+- Flink 和 Spark 引擎（EngineClient 的新实现）：方案草案见 [flink-spark.md](flink-spark.md)，动手前先讨论一轮
 - 告警的外部渠道（Webhook、钉钉、企微），订阅 §10.7 的消息
 - 更多数据源；ES 作为来源（HTTP 来源已提前，§7.13）
 - 类似 Tapdata Board 的拖拽快速创建
