@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
         <div class="kpi">
           <div class="label">今日写入行数</div>
           <div class="value">{{ formatCompact(data.today.writeRows) }}</div>
-          <div class="sub">近 7 天 {{ formatCompact(data.writeRows7d) }}</div>
+          <div class="sub">近 7 天 {{ formatCompact(data.writeRows7d) }} · 只算离线同步</div>
         </div>
         <div class="kpi clickable" @click="router.push({ path: '/realtime', query: query.mine ? {} : { mine: 'false' } })">
           <div class="label">实时同步</div>
@@ -195,7 +195,7 @@ onBeforeUnmount(() => {
 
       <div class="row wide">
         <el-card shadow="never">
-          <template #header>近 14 天运行<span class="head-meta">按运行创建的日期统计</span></template>
+          <template #header>近 14 天运行<span class="head-meta">按运行创建的日期统计，只算离线同步</span></template>
           <EChart :option="trendOption" height="280px" />
         </el-card>
         <el-card shadow="never" class="list-card">
@@ -248,7 +248,7 @@ onBeforeUnmount(() => {
 
       <div class="row half">
         <el-card shadow="never">
-          <template #header>近 7 天写入最多的任务</template>
+          <template #header>近 7 天写入最多的任务<span class="head-meta">只算离线同步</span></template>
           <div v-if="data.topByRows.length === 0" class="empty">近 7 天没有结束的运行</div>
           <ol v-else class="ranking">
             <li v-for="s in data.topByRows" :key="s.jobId" @click="router.push(`/jobs/${s.jobId}`)">
@@ -366,9 +366,6 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .ok {
