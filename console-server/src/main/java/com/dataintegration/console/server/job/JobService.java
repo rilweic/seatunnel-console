@@ -600,6 +600,21 @@ public class JobService {
                 .toList();
     }
 
+    /** The datasources any version of the job uses, oldest version first. */
+    public List<String> datasourcesOfAllVersions(String jobId) {
+        List<String> versionIds = versionMapper.selectList(new LambdaQueryWrapper<JobVersion>()
+                        .select(JobVersion::getId)
+                        .eq(JobVersion::getJobDefinitionId, jobId)
+                        .orderByAsc(JobVersion::getVersionNo))
+                .stream().map(JobVersion::getId).toList();
+        if (versionIds.isEmpty()) {
+            return List.of();
+        }
+        return versionDatasourceMapper.selectList(new LambdaQueryWrapper<JobVersionDatasource>()
+                        .in(JobVersionDatasource::getJobVersionId, versionIds))
+                .stream().map(JobVersionDatasource::getDatasourceId).distinct().toList();
+    }
+
     public VersionDetail version(String jobId, String versionId) {
         JobVersion version = requireVersion(versionId);
         if (!version.getJobDefinitionId().equals(jobId)) {

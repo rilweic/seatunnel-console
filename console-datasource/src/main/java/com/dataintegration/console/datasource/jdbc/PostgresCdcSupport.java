@@ -143,7 +143,7 @@ final class PostgresCdcSupport implements CdcSupport {
         String dropPublication = "DROP PUBLICATION IF EXISTS " + name + ";";
         List<String> left = new ArrayList<>();
         try (Connection connection = plugin.open(props); Statement st = connection.createStatement()) {
-            try (ResultSet rs = st.executeQuery("select count(*) from pg_replication_slots where slot_name = '" + name + "'")) {
+            try (ResultSet rs = st.executeQuery("select count(*) from pg_replication_slots where slot_name = '" + name + "' and database = current_database()")) {
                 if (rs.next() && rs.getInt(1) > 0) {
                     runOrKeep(st, dropSlot, left);
                 }

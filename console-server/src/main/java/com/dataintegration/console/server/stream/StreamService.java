@@ -10,6 +10,7 @@ import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.wizard.WizardForm;
+import com.dataintegration.console.server.persistence.entity.DatasourceEntity;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobInstanceAttempt;
@@ -29,6 +30,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -307,26 +309,46 @@ public class StreamService {
 
     /**
      * Deletes a stopped streaming job (like an offline one), then the slot and publication it keeps
-     * on a PostgreSQL source, which otherwise hold WAL forever (§12 P2, Q9 and Q29).
+     * on a PostgreSQL source, which otherwise hold WAL forever (§12 P2, Q9 and Q29). Every
+     * datasource any version used is cleaned, not only the current source: a job whose source was
+     * changed, or a script, may have left them elsewhere.
      *
-     * @return SQL left to run by hand because dropping failed; empty when nothing is left
+     * @return SQL left to run by hand because dropping failed, each datasource's under a comment
+     *         naming it; empty when nothing is left
      */
     public List<String> delete(String jobId, boolean deleteRuns, boolean dropReplication) {
-        JobDefinition job = requireStreaming(jobService.requireEditable(jobId));
+        requireStreaming(jobService.requireEditable(jobId));
         JobStream stream = identity.require(jobId);
-        String source = sourceDatasource(job);
+        List<String> used = jobService.datasourcesOfAllVersions(jobId);
         jobService.delete(jobId, deleteRuns);
         schemaWatcher.forget(jobId);
-        if (!dropReplication || source == null || stream.getReplicationName() == null
-                || datasources.plugin(datasources.typeOf(source)).cdcSupport() == null) {
+        String name = stream.getReplicationName();
+        if (!dropReplication || name == null) {
             return List.of();
         }
-        try {
-            return datasources.dropReplication(source, stream.getReplicationName());
-        } catch (RuntimeException e) {
-            return List.of("SELECT pg_drop_replication_slot('" + stream.getReplicationName() + "');",
-                    "DROP PUBLICATION IF EXISTS " + stream.getReplicationName() + ";");
+        List<String> left = new ArrayList<>();
+        for (String id : used) {
+            DatasourceEntity datasource;
+            try {
+                datasource = datasources.require(id);
+            } catch (ConsoleException e) {
+                continue; // deleted since; nothing to connect with
+            }
+            if (datasources.plugin(datasource.getType()).cdcSupport() == null) {
+                continue;
+            }
+            List<String> sql;
+            try {
+                sql = datasources.dropReplication(id, name);
+            } catch (RuntimeException e) {
+                sql = List.of("SELECT pg_drop_replication_slot('" + name + "');", "DROP PUBLICATION IF EXISTS " + name + ";");
+            }
+            if (!sql.isEmpty()) {
+                left.add("-- 数据源「" + datasource.getName() + "」");
+                left.addAll(sql);
+            }
         }
+        return left;
     }
 
     /** The CDC source's datasource of the current version, where the job's replication resources live. */
