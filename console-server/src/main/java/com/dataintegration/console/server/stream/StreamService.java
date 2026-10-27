@@ -240,6 +240,10 @@ public class StreamService {
             runs.finish(instance, RunStatus.FAILED, "启动失败：" + e.getMessage(), null);
             throw e;
         }
+        if (decision.fresh()) {
+            // kept until now, so a start that fails before the engine leaves the old point usable
+            runs.forgetRestorePoint(jobId, instance.getId());
+        }
         try {
             // what the tables look like now, so changes from here on are noticed
             schemaWatcher.check(jobId, true);
@@ -261,14 +265,29 @@ public class StreamService {
         }
         JobInstance instance = runs.recorder().requireInstance(stream.getCurrentInstanceId());
         JobInstanceAttempt attempt = runs.latestAttempt(instance.getId());
-        String mode = force ? "FORCE" : "SAVEPOINT";
+        String who = (force ? "强制停止" : "停止并保存 savepoint") + "，操作人 " + CurrentUser.idOrNull();
+        if (stream.getRestartAt() != null) {
+            // nothing runs on the engine while the run waits to restart; taking the restart keeps
+            // the monitor from submitting one after the run has ended
+            if (!runs.takeRestart(jobId, instance.getId())) {
+                throw new ConsoleException(ErrorCodes.CONFLICT, "任务正在自动重启，请稍后再停止");
+            }
+            runs.recorder().event(instance.getId(), attempt == null ? null : attempt.getAttemptNo(), RunEventType.CANCEL_REQUESTED, Level.INFO, who);
+            runs.finish(instance, RunStatus.CANCELED, "已停止", null);
+            return view(jobId);
+        }
+        if (attempt == null || attempt.getFinishedAt() == null && attempt.getSubmittedAt() == null) {
+            // A start or restart is still on its way to the engine. Ending the run now would leave
+            // the job it submits a moment later running unwatched; if whoever started it is gone,
+            // the monitor ends the run after StreamMonitor.SUBMIT_GRACE.
+            throw new ConsoleException(ErrorCodes.CONFLICT, "任务正在启动，请稍后再停止");
+        }
         runs.updateLive(jobId, new LambdaUpdateWrapper<JobStream>()
-                .set(JobStream::getStopRequested, mode)
+                .set(JobStream::getStopRequested, force ? "FORCE" : "SAVEPOINT")
                 .set(JobStream::getStopRequestedAt, LocalDateTime.now()));
-        runs.recorder().event(instance.getId(), attempt == null ? null : attempt.getAttemptNo(), RunEventType.CANCEL_REQUESTED, Level.INFO,
-                (force ? "强制停止" : "停止并保存 savepoint") + "，操作人 " + CurrentUser.idOrNull());
-        if (stream.getRestartAt() != null || attempt == null || attempt.getEngineJobId() == null || attempt.getFinishedAt() != null) {
-            // nothing runs on the engine: the run waits to restart, or never got there
+        runs.recorder().event(instance.getId(), attempt.getAttemptNo(), RunEventType.CANCEL_REQUESTED, Level.INFO, who);
+        if (attempt.getFinishedAt() != null) {
+            // the engine job has ended already; the monitor had not got round to the run yet
             runs.finish(instance, RunStatus.CANCELED, "已停止", null);
             return view(jobId);
         }

@@ -29,8 +29,9 @@ import java.util.Map;
 /**
  * Renders a streaming run's config in memory (credentials and the job's CDC identity put in) and
  * submits it as one attempt. The rendered config is never stored or logged; the masked copy goes on
- * the run. A submission whose answer was lost counts as submitted: the monitor looks the job up by
- * the console-chosen id and fails the run if the engine never had it.
+ * the run. The engine job id is recorded before the engine is called, so a console that dies before
+ * the answer still looks the job up after its restart. A submission whose answer was lost counts as
+ * submitted: the monitor looks the job up by that id and fails the run if the engine never had it.
  */
 @Component
 public class StreamSubmitter {
@@ -68,7 +69,8 @@ public class StreamSubmitter {
     }
 
     /**
-     * Submits the attempt and records its engine job id.
+     * Submits the attempt. Its engine job id is set before the call and its submitted time once the
+     * engine took the job (or the answer was lost); a stop waits for the latter.
      *
      * @throws ConsoleException when the engine certainly did not get the job
      */
@@ -78,6 +80,8 @@ public class StreamSubmitter {
         long id = mode == RestoreMode.SAVEPOINT ? from : BatchJobRunner.newJobId();
         SubmitJobRequest request = new SubmitJobRequest(job.getName() + "#" + instance.getId(), config, mode, from,
                 mode == RestoreMode.SAVEPOINT ? null : id);
+        attempt.setEngineJobId(String.valueOf(id));
+        recorder.update(attempt);
         long engineJobId;
         try {
             engineJobId = engine.submit(request);

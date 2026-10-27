@@ -217,7 +217,7 @@ public class RunExecutor {
             message = "engine job " + outcome.engineJobId() + " " + outcome.finalStatus()
                     + (outcome.errorMessage() == null ? "" : ": " + outcome.errorMessage());
         }
-        return finish(instance, status, message, prepared.window(), schedulerLog);
+        return finish(instance, status, message, prepared, schedulerLog);
     }
 
     private BatchJobRunner.Outcome runAttempt(
@@ -284,9 +284,10 @@ public class RunExecutor {
 
     /**
      * What prepare() worked out for the run: the submission, what validation needs afterwards, and
-     * the sync window it reads (null when it reads none).
+     * the sync window it reads (null when it reads none) with the watermark generation it was read under.
      */
-    private record Prepared(SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation, SyncWindow window) {}
+    private record Prepared(
+            SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation, SyncWindow window, int watermarkGen) {}
 
     /**
      * Counts source and target rows if the version asks for it (docs/design.md §10.3). The result is
@@ -342,7 +343,8 @@ public class RunExecutor {
                 SubmitJobRequest.fresh(job.getName() + "#" + instance.getId(), rendered.config()),
                 rendered,
                 jobService.validation(version),
-                window);
+                window,
+                job.getWatermarkGen() == null ? 0 : job.getWatermarkGen());
     }
 
     /**
@@ -418,8 +420,8 @@ public class RunExecutor {
         return finish(instance, status, message, null, schedulerLog);
     }
 
-    /** @param window the run's sync window; on success the job's watermark moves to its end if it joins on */
-    private RunResult finish(JobInstance instance, RunStatus status, String message, SyncWindow window, Consumer<String> schedulerLog) {
+    /** @param prepared the run's config; on success the job's watermark moves to the end of its window if it joins on */
+    private RunResult finish(JobInstance instance, RunStatus status, String message, Prepared prepared, Consumer<String> schedulerLog) {
         instance.setStatus(status.name());
         instance.setFinishedAt(LocalDateTime.now());
         instance.setErrorMessage(status == RunStatus.SUCCESS ? null : RunRecorder.clip(message));
@@ -432,17 +434,17 @@ public class RunExecutor {
                 },
                 status + ": " + message);
         schedulerLog.accept(status + ": " + message);
-        if (status == RunStatus.SUCCESS && window != null && !window.empty()) {
-            advanceWatermark(instance, window, schedulerLog);
+        if (status == RunStatus.SUCCESS && prepared != null && prepared.window() != null && !prepared.window().empty()) {
+            advanceWatermark(instance, prepared.window(), prepared.watermarkGen(), schedulerLog);
         }
         return new RunResult(instance.getId(), status, message);
     }
 
-    private void advanceWatermark(JobInstance instance, SyncWindow window, Consumer<String> schedulerLog) {
+    private void advanceWatermark(JobInstance instance, SyncWindow window, int gen, Consumer<String> schedulerLog) {
         String message;
         Level level = Level.INFO;
         try {
-            message = watermarks.advance(instance.getJobDefinitionId(), window)
+            message = watermarks.advance(instance.getJobDefinitionId(), window, gen)
                     ? "水位推进到 " + window.endText()
                     : "水位没有推进：这个窗口的起点已经不是任务当前的水位（期间有其他运行推进了水位，或水位被重置）";
         } catch (RuntimeException e) {

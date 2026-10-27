@@ -94,6 +94,33 @@ public class StreamRuns {
                 .isNull(JobStream::getCurrentInstanceId)) > 0;
     }
 
+    /**
+     * Forgets where an earlier run could be restored from, once a fresh start reached the engine: a
+     * restart of this run before its first checkpoint must not go back to the old position.
+     */
+    public void forgetRestorePoint(String jobId, String instanceId) {
+        streams.update(null, new LambdaUpdateWrapper<JobStream>()
+                .set(JobStream::getRestoreKind, null)
+                .set(JobStream::getRestoreEngineJobId, null)
+                .set(JobStream::getRestoreVersionId, null)
+                .set(JobStream::getRestoreBlocked, null)
+                .eq(JobStream::getJobDefinitionId, jobId)
+                .eq(JobStream::getCurrentInstanceId, instanceId));
+    }
+
+    /**
+     * Takes the pending automatic restart of the run, for the monitor to carry out or a stop to
+     * drop; false when the other side took it first (or none is pending).
+     */
+    public boolean takeRestart(String jobId, String instanceId) {
+        return streams.update(null, new LambdaUpdateWrapper<JobStream>()
+                .set(JobStream::getRestartAt, null)
+                .set(JobStream::getPipelineRestores, 0)
+                .eq(JobStream::getJobDefinitionId, jobId)
+                .eq(JobStream::getCurrentInstanceId, instanceId)
+                .isNotNull(JobStream::getRestartAt)) > 0;
+    }
+
     /** Table-structure changes noticed in the job's runs (SchemaDriftWatcher), newest first. */
     public List<JobInstanceEvent> schemaEvents(String jobId, int limit) {
         return events.selectList(new LambdaQueryWrapper<JobInstanceEvent>()

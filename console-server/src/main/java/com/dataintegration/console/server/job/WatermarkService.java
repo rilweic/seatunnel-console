@@ -20,9 +20,10 @@ import java.util.Map;
  * Continuous incremental sync (docs/design.md §7.5). A run whose config reads
  * {@code ${system.window.start}} / {@code ${system.window.end}} gets a window fixed on its instance;
  * when it succeeds the job's watermark moves to the window's end, but only if the window started at
- * the watermark. That one conditional update is the whole state machine: a failed window is picked
- * up by the next run, a rerun repeats its own window and moves the watermark only while nothing has
- * moved it since, and a reset is never overwritten by a run that started before it.
+ * the watermark and the watermark was not set by hand since the run read the job (its generation).
+ * That one conditional update is the whole state machine: a failed window is picked up by the next
+ * run, a rerun repeats its own window and moves the watermark only while nothing has moved it since,
+ * and a reset is never overwritten by a run that started before it, even a reset to the same value.
  */
 @Service
 public class WatermarkService {
@@ -78,6 +79,7 @@ public class WatermarkService {
         jobMapper.update(null, new LambdaUpdateWrapper<JobDefinition>()
                 .set(JobDefinition::getWatermark, mark)
                 .set(JobDefinition::getWindowLagSeconds, lag)
+                .setSql("watermark_gen = watermark_gen + 1")
                 .eq(JobDefinition::getId, jobId));
         return view(jobService.require(jobId));
     }
@@ -95,9 +97,13 @@ public class WatermarkService {
         return new SyncWindow(SyncWindow.endFor(ScheduleService.previousTime(cron, time), lag), SyncWindow.endFor(time, lag));
     }
 
-    /** Moves the watermark to the end of a window that succeeded, if it still joins on. */
-    public boolean advance(String jobId, SyncWindow window) {
-        return jobMapper.advanceWatermark(jobId, window.start(), window.end()) > 0;
+    /**
+     * Moves the watermark to the end of a window that succeeded, if it still joins on.
+     *
+     * @param gen the job's {@code watermark_gen} when the run read it
+     */
+    public boolean advance(String jobId, SyncWindow window, int gen) {
+        return jobMapper.advanceWatermark(jobId, window.start(), window.end(), gen) > 0;
     }
 
     private IncrementalView view(JobDefinition job) {

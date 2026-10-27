@@ -46,7 +46,7 @@ project ─┬─< project_param
 | `project` | 给任务分组，不做权限隔离 |
 | `project_param` | 项目参数，变量优先级为：启动参数 > 任务参数 > 项目参数 > 内置参数 |
 | `datasource` | `config_json` 存放不敏感的配置（host、port、database 等），`secret_cipher` 存放加密后的敏感字段。**如果仍被某个任务的当前版本引用，就不允许删除**，通过 `job_version_datasource` 判断 |
-| `job_definition` | 任务的身份信息：名称、类型（BATCH / STREAMING）、编辑模式（FORM / SCRIPT）。`current_version_id` 指向当前版本。`watermark` 是连续增量的水位（上一个成功窗口的终点，null = 从最早开始），`window_lag_seconds` 是窗口终点比计划时间早多少秒（V10，design.md §7.5） |
+| `job_definition` | 任务的身份信息：名称、类型（BATCH / STREAMING）、编辑模式（FORM / SCRIPT）。`current_version_id` 指向当前版本。`watermark` 是连续增量的水位（上一个成功窗口的终点，null = 从最早开始），`window_lag_seconds` 是窗口终点比计划时间早多少秒（V10，design.md §7.5）；`watermark_gen` 每次手动调整水位加 1，运行开始时记下，推进水位时对不上就不推进（V13） |
 | `job_version` | 每次保存新增一行。`hocon_template` 里只有 `datasource_id`、`encrypt_key_id` 和变量，**不含密码和密钥**。`params_json` 是任务参数，也跟着版本走。向导任务的 `form_json` 里还有表 / 字段映射和字段处理（design.md §7.8、§7.10） |
 | `job_version_datasource` | 某个版本引用了哪些数据源，用来判断数据源能不能删除 |
 | `job_schedule` | 调度配置，console 是唯一权威，XXL-JOB 只是同步过去的副本。`sync_status` 记录同步结果（PENDING / SYNCED / FAILED），出错时把原因写在 `sync_error` |

@@ -274,7 +274,7 @@ updated_at >= '${system.window.start}' and updated_at < '${system.window.end}'
 - **窗口** = `[水位, 计划时间 − 延迟)`。水位 `job_definition.watermark` 是上一个成功窗口的终点，null 表示从最早的数据开始（`1970-01-01 00:00:00`）；延迟 `window_lag_seconds` 默认 60 秒，给还没提交的事务留时间。时间截到秒
 - **哪些运行有窗口**：配置（模板、项目参数、任务参数、启动参数）里引用了 `${system.window.start}` 或 `${system.window.end}` 的运行。向导和脚本一样，脚本里写这两个变量也是连续增量
 - **窗口在运行开始时确定**，写进 `job_instance.window_start / window_end`。之后的重试、行数校验、运行详情都只读这两列
-- **推进水位只有一条规则**：运行成功（包括行数校验通过）后执行 `UPDATE job_definition SET watermark = 窗口终点 WHERE watermark <=> 窗口起点`。窗口接不上当前水位（期间有别的运行推进了水位，或水位被重置）就不推进，时间线里记一条 WINDOW 事件说明原因。这一条规则覆盖了所有情况：
+- **推进水位只有一条规则**：运行成功（包括行数校验通过）后执行 `UPDATE job_definition SET watermark = 窗口终点 WHERE watermark <=> 窗口起点 AND watermark_gen = 运行开始时读到的值`。`watermark_gen` 每次手动调整水位加 1，所以重置成和窗口起点相同的值也拦得住（2026-10-27 补）。窗口接不上当前水位（期间有别的运行推进了水位，或水位被重置）就不推进，时间线里记一条 WINDOW 事件说明原因。这一条规则覆盖了所有情况：
   - 失败：不推进，下一次运行的窗口从原水位开始，把失败的那段一起同步
   - 重跑：沿用原实例的窗口，同步的是原来那段数据。失败后还没有别的运行成功时，重跑成功会推进水位；之后的运行已经同步过这段时，重跑只把这段再写一遍
   - 补数：每次运行的窗口是 `[上一个触发时间 − 延迟, 本次触发时间 − 延迟)`（没有调度时按天），整批首尾相接，和当前水位无关；正好接上水位时才推进
@@ -577,13 +577,13 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 - **主键和删除**：无主键的表不能选；写入固定按主键 upsert，没有"清空后写入"；删除默认同步，可开"不同步删除"（`FilterRowKind` 过滤 DELETE）
 - **前置条件**：预检查和数据源页的"检查实时同步条件"检查 MySQL `log_bin=ON`、`binlog_format=ROW`、`binlog_row_image=FULL`、`REPLICATION SLAVE / CLIENT` 和 `SELECT` 权限；PG `wal_level=logical`、`REPLICATION` 权限、所选表 `REPLICA IDENTITY FULL`。不满足时给修复 SQL，console 不改用户的库
 - **server-id / slot.name**：console 自动分配。MySQL 每个任务一段不重复的 server-id（长度 = 并行度），高级参数可手改；PG 的 slot 名为 `seatunnel_<任务 id 前缀>`。删除 PG 实时任务时先停作业，再用数据源账号 `pg_drop_replication_slot`（对话框默认勾选"同时删除复制槽"，失败时给出 SQL）
-- **启停**：停止默认带 savepoint，可强制停止；启动默认从 savepoint 恢复，可选最近的 checkpoint 或全新启动；用来源设置有变化的新版本启动时默认改为全新启动，并醒目提示会重新全量。失败自动重启默认关闭，打开后最多 3 次、间隔 30 秒、从最近的 checkpoint 恢复，连续运行 10 分钟后计数清零
+- **启停**：停止默认带 savepoint，可强制停止；作业还没提交到引擎（启动或自动重启进行中）时不能停止，提示稍后再试，免得 console 记为已停止而随后提交的作业没人管；等待自动重启时停止会取消这次重启（和监控线程抢同一条条件更新，只有一方成功）；启动默认从 savepoint 恢复，可选最近的 checkpoint 或全新启动；用来源设置有变化的新版本启动时默认改为全新启动，并醒目提示会重新全量。失败自动重启默认关闭，打开后最多 3 次、间隔 30 秒、从最近的 checkpoint 恢复，连续运行 10 分钟后计数清零
 - **一致性**：`exactly_once = false`（至少一次 + 按主键 upsert），`checkpoint.interval` 默认 10 秒，高级参数可改
 - **表结构变更**：第③步"同步表结构变更"开关，新建时默认打开（按下面的实测结论，2026-10-26 修订）：
   - 目标 MySQL / PG：加列、改类型、改名固定同步（`schema-changes.include = ["add.column", "modify.column", "change.column"]`，再加上可选的 `drop.column`）；只保留"同步删列"一个选项，默认不勾。不勾时目标列保留、之后写入为空，目标端 NOT NULL 的列预检查警告（SeaTunnel 自动建表不带默认值）。改名和改类型不能排除：排除后会静默写坏数据
   - 目标 ES：只能同步加列。改名、改类型也放进 `include`，让任务明确失败而不是静默写坏；删列排除（ES 没有 NOT NULL，排除是安全的）
   - 来源 PG：只有加列，改名 / 改类型 / 删列会让任务以 SE-07 停下
-  - 和字段处理二选一：开关打开时不能用 Sql 类字段处理（替换、脱敏、类型转换、新增和提取字段），反之亦然。字段加密、改字段名、改表名、屏蔽字段可以一起用；改过名和被屏蔽的列在第③步列出并提示"以后不能在源端改名、删除或改类型"
+  - 和字段处理二选一：开关打开时不能用 Sql 类字段处理（替换、脱敏、类型转换、新增和提取字段），反之亦然。字段加密也算在内：`FieldEncrypt` 本身不怕 DDL，但加密字段要先在 Sql 里转成文本（§7.11），表里任何一列改名或删列都会让任务失败（2026-10-27 更正）。改字段名、改表名、屏蔽字段可以一起用；改过名和被屏蔽的列在第③步列出并提示"以后不能在源端改名、删除或改类型"
   - 实时任务的屏蔽字段用 `Filter { exclude_fields }` 生成；"不同步删除"的 `FilterRowKind` 必须放在 transform 链的最后
   - 开关旁说明：源端改列名请用 `CHANGE COLUMN`，MySQL 8 的 `RENAME COLUMN` 不会被同步
 - **表结构变更的反馈**：console 运行期间每 5 分钟对比源表、目标表与启动时记录的结构，变化写进事件时间线（例如"orders 新增列 remark → 目标端已同步 / 未同步及原因"），详情页表映射里标出有变化的表和逐列差异；因 DDL 失败时写明哪张表哪条 DDL 和处理办法。之后打开向导按源表当前结构显示字段并标出新增 / 删除 / 改名，保存后才生成新版本
@@ -593,13 +593,13 @@ P1 不做告警，只在任务和实例上显示成功、失败等状态。P3 �
 - **不做**：行数校验。脚本模式支持，检查 `job.mode = "STREAMING"`，凭据注入、打码和归属检查照旧
 - **checkpoint 保留**：console 给所有实时任务的 env 加 `checkpoint.retain-after-job-cancelled = true`，强制停止和失败后都能从 checkpoint 恢复
 - **DDL 导致的失败**：启动对话框默认"全新启动"并说明原因，从 checkpoint 恢复置灰（会重放同一条 DDL 再次失败）
-- **自动恢复中的状态**：`/job-info` 在 pipeline 自动恢复期间仍是 RUNNING；console 读 `diagnostics.pipelines[].restoreCount`，大于 0 时显示"运行中（异常，正在自动恢复第 n/3 次）"，记事件并计入异常数
+- **自动恢复中的状态**：`/job-info` 在 pipeline 自动恢复期间仍是 RUNNING；console 读 `diagnostics.pipelines[].restoreCount`，大于 0 时显示"运行中（异常，正在自动恢复第 n 次）"，记事件并计入异常数。不显示上限：引擎的恢复次数上限是集群配置，REST 接口读不到
 - **代码组织**：按模块拆分（CDC 来源是新的 `WizardSource`，流任务的启停、监控、结构对比各自成类），不往已有的批处理类里堆分支
 
 #### P2 实现说明（2026-10-27）
 
 - **代码位置**：CDC 来源是 `job/wizard/source/CdcSource`，实时任务专用的 transform 和预检查在 `StreamTransforms`、`StreamPrecheck`；启停、监控和恢复都在 `stream/` 包：`StreamService`（启动、停止、设置、删除）、`StreamMonitor`（定时跟踪引擎作业）、`StreamSubmitter`（渲染并提交）、`StreamRuns`（运行记录）、`StreamIdentityService`（server-id 段和复制槽名）、`CdcReadiness`（实时同步条件）；纯规则 `RestorePlan`、`AutoRestartPolicy`、`CheckpointHealth`、`StreamFailure` 单独测试。数据源的检查在 console-datasource 的 `CdcSupport`（`MySqlCdcSupport`、`PostgresCdcSupport`）
-- **恢复位置跟着 checkpoint 走**：运行中的作业一旦完成过 checkpoint，`job_stream.restore_*` 就指向它；还没完成过的（例如全量阶段就失败）保持启动时的位置（savepoint，或者没有）。所以失败、强制停止后的恢复和自动重启都从"最近一次真正完成的 checkpoint"开始，没有就全新启动。正常停止记 savepoint
+- **恢复位置跟着 checkpoint 走**：运行中的作业一旦完成过 checkpoint，`job_stream.restore_*` 就指向它；还没完成过的（例如全量阶段就失败）保持启动时的位置（savepoint，或者没有）；全新启动的作业提交到引擎后清掉上次留下的位置，免得首个 checkpoint 之前失败的自动重启回到旧位置（提交前失败则保留，2026-10-27 补）。提交前先记下 console 选定的引擎作业 id，console 在提交途中退出，重启后仍按这个 id 找回作业。所以失败、强制停止后的恢复和自动重启都从"最近一次真正完成的 checkpoint"开始，没有就全新启动。正常停止记 savepoint
 - **env 里的选项按完整名字传**：console 渲染配置时 `checkpoint.interval` 这类带点的 env 选项保持为一个键。标准 HOCON 会把它解析成嵌套对象，而 Zeta 按完整名字查 env（`checkpoint.retain-after-job-cancelled`），嵌套后不生效（2026-10-27 实测发现并修复）。connector 选项按路径读取，嵌套没有影响
 - **全新启动前重新预检查**：向导任务全新启动时按源表、目标表的当前结构再跑一遍预检查，有错误就拒绝启动并说明（比如源表改了列名，映射里的字段已经不存在），而不是等引擎在写入时失败。从保存的位置恢复时不检查
 - **性能取舍**（Q30、Q31）：状态每 10 秒查一次（只查运行中的任务）；计数、吞吐量采样和 checkpoint 状态每 60 秒一次（`console.stream.sample-interval`），所以"最近读到数据的时间"和 checkpoint 时间的精度是一分钟；复制槽占用的 WAL 只在打开已停止任务的详情时查；启动时的条件检查每次启动做一次

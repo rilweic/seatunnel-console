@@ -118,12 +118,19 @@ public class StreamMonitor {
             }
             return;
         }
-        if (attempt == null || attempt.getEngineJobId() == null) {
-            // the start never reached the engine, and whoever started it is gone
-            if (instance.getStartedAt() != null && instance.getStartedAt().isBefore(LocalDateTime.now().minus(SUBMIT_GRACE))) {
-                runs.finish(instance, RunStatus.FAILED, "启动没有完成：作业没有提交到引擎", null);
+        if (attempt == null || attempt.getSubmittedAt() == null && attempt.getFinishedAt() == null) {
+            LocalDateTime began = attempt != null && attempt.getCreatedAt() != null ? attempt.getCreatedAt() : instance.getStartedAt();
+            if (began != null && began.isAfter(LocalDateTime.now().minus(SUBMIT_GRACE))) {
+                // a start or restart is on its way to the engine
+                return;
             }
-            return;
+            if (attempt == null || attempt.getEngineJobId() == null) {
+                // the start never reached the engine, and whoever started it is gone
+                runs.finish(instance, RunStatus.FAILED, "启动没有完成：作业没有提交到引擎", null);
+                return;
+            }
+            // The console went away during the submission: the engine may have the job under the
+            // id recorded beforehand, so look it up like a submission whose answer was lost.
         }
         long engineJobId = Long.parseLong(attempt.getEngineJobId());
         if (attempt.getFinishedAt() != null) {
@@ -134,6 +141,7 @@ public class StreamMonitor {
         var info = engine.jobInfo(engineJobId);
         if (info.isEmpty()) {
             if (attempt.getSubmittedAt() != null && attempt.getSubmittedAt().isAfter(LocalDateTime.now().minus(SUBMIT_GRACE))) {
+                // the engine may not list a job it has only just taken
                 return;
             }
             recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.ERROR,
@@ -142,6 +150,13 @@ public class StreamMonitor {
             return;
         }
         EngineJobInfo job = info.get();
+        if (attempt.getSubmittedAt() == null) {
+            // found after the console went away during the submission
+            attempt.setSubmittedAt(LocalDateTime.now());
+            recorder.update(attempt);
+            recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.SUBMITTED, Level.WARN,
+                    "提交时 console 中断过，SeaTunnel 里有引擎作业 " + engineJobId + "，继续观察");
+        }
         if (job.status().isTerminal()) {
             ended(stream, instance, attempt, engineJobId, job.status(), job.metrics());
         } else {
@@ -312,9 +327,10 @@ public class StreamMonitor {
      * one, from where it started (its savepoint), or fresh.
      */
     private void restart(JobStream stream, JobInstance instance, JobInstanceAttempt failed) {
-        runs.updateLive(stream.getJobDefinitionId(), new LambdaUpdateWrapper<JobStream>()
-                .set(JobStream::getRestartAt, null)
-                .set(JobStream::getPipelineRestores, 0));
+        if (!runs.takeRestart(stream.getJobDefinitionId(), instance.getId())) {
+            // stopped while it waited
+            return;
+        }
         JobDefinition job = jobService.require(instance.getJobDefinitionId());
         RestorePlan.Decision decision = RestorePlan.decide(streams.selectById(stream.getJobDefinitionId()), RestorePlan.Asked.AUTO, false);
         JobInstanceAttempt attempt = runs.newAttempt(instance);

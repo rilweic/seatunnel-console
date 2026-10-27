@@ -30,10 +30,11 @@ public interface JobDefinitionMapper extends BaseMapper<JobDefinition> {
 
     /**
      * Moves the watermark to the end of a window that just succeeded, only if the window started at
-     * the current watermark (docs/design.md §7.5): a window that no longer joins on (another run
-     * moved it, or it was reset meanwhile) leaves it alone. Null start means from the beginning.
+     * the current watermark and nobody set it by hand since the run read the job ({@code gen}, docs/design.md
+     * §7.5): a window that no longer joins on (another run moved it, or it was reset meanwhile, even
+     * to the same value) leaves it alone. Null start means from the beginning.
      */
     @Update("UPDATE job_definition SET watermark = #{end,jdbcType=TIMESTAMP} "
-            + "WHERE id = #{id} AND deleted_at IS NULL AND watermark <=> #{start,jdbcType=TIMESTAMP}")
-    int advanceWatermark(@Param("id") String id, @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+            + "WHERE id = #{id} AND deleted_at IS NULL AND watermark <=> #{start,jdbcType=TIMESTAMP} AND watermark_gen = #{gen}")
+    int advanceWatermark(@Param("id") String id, @Param("start") LocalDateTime start, @Param("end") LocalDateTime end, @Param("gen") int gen);
 }

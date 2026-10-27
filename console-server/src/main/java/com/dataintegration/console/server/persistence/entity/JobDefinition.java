@@ -27,6 +27,8 @@ public class JobDefinition {
     private Integer xxlJobId;
     /** End of the last successful sync window (docs/design.md §7.5); null = from the beginning. */
     private LocalDateTime watermark;
+    /** Bumped on every manual watermark change; a run moves the watermark only under the one it started with. */
+    private Integer watermarkGen;
     private Integer windowLagSeconds;
     private String description;
     private String createdBy;
