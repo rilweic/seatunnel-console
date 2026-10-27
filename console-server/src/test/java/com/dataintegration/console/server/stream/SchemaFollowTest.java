@@ -35,21 +35,36 @@ class SchemaFollowTest {
         SchemaFollow follow = new SchemaFollow(form(new Stream(Startup.INITIAL, null, true, false, false, null)), "MYSQL", "MYSQL");
         List<ColumnMeta> target = List.of(col("id", "INT"), col("memo", "VARCHAR(64)"), col("amount", "BIGINT"), col("legacy", "VARCHAR(8)"));
 
-        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE, AFTER), target);
+        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE, AFTER), target, BEFORE);
 
         assertThat(changes).extracting(ColumnChange::line).containsExactly(
                 "新增列 remark TEXT → 目标端还没有变化（一般在这张表下一次有数据变更时同步）",
                 "列改名 note → memo → 目标端已同步",
-                "列 amount 类型 INT → BIGINT",
+                "列 amount 类型 INT → BIGINT → 目标端已同步（INT → BIGINT）",
                 "删除列 legacy → 目标端保留这一列，之后写入空值");
         assertThat(changes).noneMatch(ColumnChange::problem);
+    }
+
+    @Test
+    void aTypeChangeTheTargetHasNotTakenYetIsSaidSo() {
+        SchemaFollow follow = new SchemaFollow(form(new Stream(Startup.INITIAL, null, true, false, false, null)), "MYSQL", "POSTGRESQL");
+        List<ColumnMeta> before = List.of(col("id", "INT"), col("amount", "INT"));
+        List<ColumnMeta> after = List.of(col("id", "INT"), col("amount", "BIGINT"));
+        List<ColumnMeta> target = List.of(col("id", "integer"), col("amount", "integer"));
+
+        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(before, after), target, target);
+
+        assertThat(changes).singleElement().satisfies(c -> {
+            assertThat(c.line()).isEqualTo("列 amount 类型 INT → BIGINT → 目标端还没有变化（一般在这张表下一次有数据变更时同步）");
+            assertThat(c.problem()).isFalse();
+        });
     }
 
     @Test
     void postgresOnlyAddsColumnsSoOtherChangesNeedSomeoneToAct() {
         SchemaFollow follow = new SchemaFollow(form(new Stream(Startup.INITIAL, null, true, false, false, null)), "POSTGRESQL", "MYSQL");
 
-        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE, AFTER), BEFORE);
+        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE, AFTER), BEFORE, null);
 
         assertThat(changes).filteredOn(ColumnChange::problem).extracting(ColumnChange::change)
                 .containsExactly("列改名 note → memo", "列 amount 类型 INT → BIGINT");
@@ -60,7 +75,7 @@ class SchemaFollowTest {
     void withoutSchemaChangesAnAddedColumnIsAProblem() {
         SchemaFollow follow = new SchemaFollow(form(new Stream(Startup.INITIAL, null, false, false, false, null)), "MYSQL", "MYSQL");
 
-        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE.subList(0, 1), BEFORE.subList(0, 2)), BEFORE.subList(0, 1));
+        List<ColumnChange> changes = follow.assess(ORDERS, SchemaDiff.between(BEFORE.subList(0, 1), BEFORE.subList(0, 2)), BEFORE.subList(0, 1), null);
 
         assertThat(changes).singleElement().satisfies(c -> {
             assertThat(c.problem()).isTrue();

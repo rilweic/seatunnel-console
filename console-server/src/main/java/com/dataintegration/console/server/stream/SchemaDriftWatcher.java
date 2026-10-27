@@ -106,7 +106,7 @@ public class SchemaDriftWatcher {
             if (sourceBefore != null) {
                 SchemaDiff changes = SchemaDiff.between(sourceBefore, source);
                 if (!changes.empty()) {
-                    report(instance, follow, table, targetName, changes, sink);
+                    report(instance, follow, table, targetName, changes, sink, sinkBefore);
                     continue;
                 }
             }
@@ -148,7 +148,8 @@ public class SchemaDriftWatcher {
             follow = follow == null ? follow(form) : follow;
             StreamTableSchema target = schemas.selectOne(key(jobId, table.name(), TARGET));
             out.add(new TableChanges(table.name(), follow.targetName(table), source.getCapturedAt(),
-                    follow.assess(table, changes, target == null ? null : columns(target.getColumnsJson()))));
+                    follow.assess(table, changes, target == null ? null : columns(target.getColumnsJson()),
+                            target == null || target.getStartColumnsJson() == null ? null : columns(target.getStartColumnsJson()))));
         }
         return out;
     }
@@ -198,8 +199,9 @@ public class SchemaDriftWatcher {
     }
 
     /** One event per changed source table: each change, and whether the target followed. */
-    private void report(JobInstance instance, SchemaFollow follow, TableSpec table, String targetName, SchemaDiff changes, List<ColumnMeta> sink) {
-        List<ColumnChange> assessed = follow.assess(table, changes, sink);
+    private void report(JobInstance instance, SchemaFollow follow, TableSpec table, String targetName, SchemaDiff changes, List<ColumnMeta> sink,
+            List<ColumnMeta> sinkBefore) {
+        List<ColumnChange> assessed = follow.assess(table, changes, sink, sinkBefore);
         boolean problem = assessed.stream().anyMatch(ColumnChange::problem);
         String message = "源表 " + table.name() + "（目标 " + targetName + "）结构变了："
                 + String.join("；", assessed.stream().map(ColumnChange::line).toList());

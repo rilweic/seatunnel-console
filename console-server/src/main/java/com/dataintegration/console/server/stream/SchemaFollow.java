@@ -57,8 +57,9 @@ public final class SchemaFollow {
 
     /**
      * @param target the target table's columns as last read; null when it could not be read
+     * @param targetBefore the target table's columns before the changes; null when unknown
      */
-    public List<ColumnChange> assess(TableSpec table, SchemaDiff changes, List<ColumnMeta> target) {
+    public List<ColumnChange> assess(TableSpec table, SchemaDiff changes, List<ColumnMeta> target, List<ColumnMeta> targetBefore) {
         Set<String> targetColumns = target == null ? Set.of() : target.stream().map(c -> key(c.name())).collect(Collectors.toSet());
         List<ColumnChange> out = new ArrayList<>();
         for (ColumnMeta c : changes.added()) {
@@ -82,7 +83,18 @@ public final class SchemaFollow {
             out.add(new ColumnChange("列改名 " + r.from() + " → " + r.to(), status, !there));
         }
         for (SchemaDiff.Retyped r : changes.retyped()) {
-            out.add(new ColumnChange("列 " + r.column() + " 类型 " + r.from() + " → " + r.to(), renames() ? null : why(), !renames()));
+            String status;
+            if (!renames()) {
+                status = why();
+            } else {
+                // target types are named differently from source ones, so only a change on the target tells
+                String field = key(WizardGenerator.targetField(form, table, r.column()));
+                String before = typeOf(targetBefore, field);
+                String now = typeOf(target, field);
+                status = before != null && now != null && !before.equalsIgnoreCase(now) ? "目标端已同步（" + before + " → " + now + "）"
+                        : notYet(true, "");
+            }
+            out.add(new ColumnChange("列 " + r.column() + " 类型 " + r.from() + " → " + r.to(), status, !renames()));
         }
         for (ColumnMeta c : changes.dropped()) {
             boolean kept = targetColumns.contains(key(WizardGenerator.targetField(form, table, c.name())));
@@ -110,6 +122,11 @@ public final class SchemaFollow {
     /** For a change that should reach the target: it does when the table next has a row change. */
     private String notYet(boolean expected, String fallback) {
         return expected ? "目标端还没有变化（一般在这张表下一次有数据变更时同步）" : (fallback.isEmpty() ? "" : fallback + "：") + why();
+    }
+
+    private static String typeOf(List<ColumnMeta> columns, String key) {
+        return columns == null ? null
+                : columns.stream().filter(c -> key(c.name()).equals(key)).map(ColumnMeta::type).findFirst().orElse(null);
     }
 
     private static String key(String name) {
