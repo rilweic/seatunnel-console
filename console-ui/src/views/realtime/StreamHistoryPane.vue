@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** Every start of a real-time job until it stopped or failed (design.md §12 P2); a row opens its timeline and logs. */
 import { Refresh } from '@element-plus/icons-vue'
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { instanceApi, type InstanceView, type RunStatus } from '@/api/console'
@@ -15,14 +15,16 @@ const page = ref(1)
 const loading = ref(false)
 
 /** A stop is the normal end of a real-time run, so it reads as stopped rather than canceled. */
-const resultText: Record<RunStatus, string> = { PENDING: '启动中', RUNNING: '运行中', SUCCESS: '已结束', FAILED: '失败', CANCELED: '已停止' }
-const resultTag: Record<RunStatus, 'info' | 'primary' | 'success' | 'danger' | 'warning'> = {
+const statusText: Record<RunStatus, string> = { PENDING: '启动中', RUNNING: '运行中', SUCCESS: '已结束', FAILED: '失败', CANCELED: '已停止' }
+const statusTag: Record<RunStatus, 'info' | 'primary' | 'success' | 'danger' | 'warning'> = {
   PENDING: 'info',
   RUNNING: 'success',
   SUCCESS: 'info',
   FAILED: 'danger',
   CANCELED: 'info',
 }
+
+let timer: number | undefined
 
 async function load() {
   loading.value = true
@@ -32,10 +34,15 @@ async function load() {
     total.value = result.total
   } finally {
     loading.value = false
+    // A stop takes effect only when StreamMonitor's next tick (10s) sees the engine job end,
+    // so keep polling while a run still shows as live.
+    window.clearTimeout(timer)
+    timer = rows.value.some((r) => r.status === 'PENDING' || r.status === 'RUNNING') ? window.setTimeout(load, 10_000) : undefined
   }
 }
 
 onMounted(load)
+onBeforeUnmount(() => window.clearTimeout(timer))
 defineExpose({ load })
 </script>
 
@@ -47,8 +54,8 @@ defineExpose({ load })
     <el-table-column label="启动时间" width="170">
       <template #default="{ row }">{{ formatTime(row.startedAt ?? row.createdAt) }}</template>
     </el-table-column>
-    <el-table-column label="结果" width="100">
-      <template #default="{ row }"><el-tag :type="resultTag[row.status as RunStatus]">{{ resultText[row.status as RunStatus] }}</el-tag></template>
+    <el-table-column label="状态" width="100">
+      <template #default="{ row }"><el-tag :type="statusTag[row.status as RunStatus]">{{ statusText[row.status as RunStatus] }}</el-tag></template>
     </el-table-column>
     <el-table-column label="运行时长" width="120">
       <template #default="{ row }">{{ row.durationMillis != null ? formatDuration(row.durationMillis) : '-' }}</template>

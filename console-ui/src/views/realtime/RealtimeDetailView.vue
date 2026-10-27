@@ -62,6 +62,7 @@ async function stop(force: boolean) {
   stopping.value = true
   try {
     view.value = await streamApi.stop(jobId, force)
+    historyPane.value?.load()
     ElMessage.success(force ? '已强制停止' : '正在停止，保存 savepoint 后结束')
   } finally {
     stopping.value = false
