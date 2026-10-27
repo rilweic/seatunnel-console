@@ -54,7 +54,7 @@ watch(datasourceId, () => visible.value && run())
 <template>
   <el-dialog v-model="visible" title="检查实时同步条件" width="720px">
     <div class="intro">实时同步要读取源库的变更日志（MySQL binlog / PostgreSQL WAL）。选一个数据源查看它现在的情况；表级的条件（如 REPLICA IDENTITY）在任务的预检查里按所选的表检查，每次启动也会再查一遍。</div>
-    <el-select v-model="datasourceId" placeholder="选择源数据源" filterable class="picker" no-data-text="没有可以实时读取的数据源（你自己的 MySQL / PostgreSQL）">
+    <el-select v-model="datasourceId" placeholder="选择源数据源" filterable class="picker" no-data-text="没有可以实时读取的数据源">
       <el-option v-for="d in datasources" :key="d.id" :label="d.name" :value="d.id">
         <span class="option"><DatasourceTypeIcon :type="d.type" />{{ d.name }}<span class="address">{{ d.address }}</span></span>
       </el-option>

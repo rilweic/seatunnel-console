@@ -75,7 +75,7 @@ function labels(can: (t: (typeof types.value)[number]) => boolean) {
   const names = types.value.filter(can).map((t) => t.capabilities.label)
   return names.length > 1 ? `${names.slice(0, -1).join('、')} 或 ${names[names.length - 1]}` : names.join('')
 }
-const sourcePlaceholder = computed(() => labels((t) => canRead(t.capabilities)))
+const sourcePlaceholder = computed(() => (props.streaming ? '支持实时同步的数据源' : labels((t) => canRead(t.capabilities))))
 const targetPlaceholder = computed(() => labels((t) => !!wizardSinks[t.capabilities.sinkConnector ?? '']))
 
 function emptyForm(): WizardForm {
