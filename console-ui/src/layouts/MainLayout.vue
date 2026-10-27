@@ -93,7 +93,7 @@ async function logout() {
             <path d="M2 6c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 5 3" />
           </svg>
         </span>
-        <span class="brand-name">SeaTunnel Console</span>
+        <span class="brand-name">数据采集平台</span>
         <span v-if="title" class="divider" />
         <nav v-if="crumbs.length" class="crumbs" aria-label="当前位置">
           <template v-for="(c, i) in crumbs" :key="i">

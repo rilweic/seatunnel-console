@@ -72,7 +72,7 @@ async function submit() {
             </svg>
           </span>
           <div>
-            <div class="name">SeaTunnel Console</div>
+            <div class="name">数据采集平台</div>
             <div class="sub">数据集成任务管理平台</div>
           </div>
         </div>
@@ -131,7 +131,7 @@ async function submit() {
               <path d="M2 8c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 5 3M2 16c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 5 3" />
             </svg>
           </span>
-          <span>SeaTunnel Console</span>
+          <span>数据采集平台</span>
         </div>
 
         <div class="form-heading">
