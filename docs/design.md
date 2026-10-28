@@ -109,9 +109,9 @@
 ### 4.2 EngineClient 抽象（长期约束：支持 Flink 和 Spark）
 
 - 第一阶段只实现 `ZetaRestClient`
-- **P3 要支持 Flink 和 Spark**。SeaTunnel 的 REST API 是 Zeta 独有的，Flink 和 Spark 要用 `start-seatunnel-flink-*-connector-v2.sh` / `start-seatunnel-spark-*-connector-v2.sh`，或者引擎自己的 API（Flink JobManager REST、YARN、Livy），每种引擎要单独实现
-- 连接信息由 console 渲染（第 6 节），和引擎无关，Flink 和 Spark 也能沿用
-- 前提、能力差别、console 要改的地方和本地测试环境见 [flink-spark.md](flink-spark.md)（2026-10-28 草案，未定稿）
+- **P3 要支持 Flink**（2026-10-28 定：只做 Flink，Spark 不做）。SeaTunnel 的 REST API 是 Zeta 独有的，Flink 要用 `start-seatunnel-flink-*-connector-v2.sh`（即 `flink run`）提交、Flink JobManager REST 监控，单独实现。console 登记多个集群（Zeta / Flink），任务选集群
+- 连接信息由 console 渲染（第 6 节），和引擎无关，Flink 也能沿用
+- 前提、官方启动脚本的分析、部署方式（Standalone / YARN / K8s）的提交差别、能力差别、console 要改的地方和本地测试环境见 [flink-spark.md](flink-spark.md)（2026-10-28 草案，方向已定，未写代码）
 
 ### 4.3 SeaTunnel 集群的部署前提
 
@@ -667,7 +667,7 @@ P2 已完成，2026-10-27 合并到 main：
 
 ### P3 扩展
 
-- Flink 和 Spark 引擎（EngineClient 的新实现）：方案草案见 [flink-spark.md](flink-spark.md)，动手前先讨论一轮
+- Flink 引擎（EngineClient 的新实现）和集群登记：方案见 [flink-spark.md](flink-spark.md)，方向已定（§0），剩余问题见其 §8
 - 告警的外部渠道（Webhook、钉钉、企微），订阅 §10.7 的消息
 - 更多数据源；ES 作为来源（HTTP 来源已提前，§7.13）
 - 类似 Tapdata Board 的拖拽快速创建
