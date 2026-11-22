@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Folder, Lightning, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
+import { ArrowDown, Coin, DArrowLeft, DArrowRight, DataBoard, Delete, Folder, Lightning, Lock, Monitor, Tickets, Timer, User } from '@element-plus/icons-vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -73,6 +73,7 @@ const menuGroups = computed(() => [
         ? [
             { path: '/users', title: '用户管理', icon: User },
             { path: '/encrypt-keys', title: '加密密钥', icon: Lock },
+            { path: '/retention', title: '数据保留', icon: Delete },
           ]
         : []),
     ],

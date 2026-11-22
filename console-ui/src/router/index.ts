@@ -50,6 +50,7 @@ const router = createRouter({
         { path: 'cluster', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群健康检查' } },
         { path: 'users', component: () => import('@/views/UsersView.vue'), meta: { title: '用户管理', admin: true } },
         { path: 'encrypt-keys', component: () => import('@/views/EncryptKeysView.vue'), meta: { title: '加密密钥', admin: true } },
+        { path: 'retention', component: () => import('@/views/RetentionView.vue'), meta: { title: '数据保留', admin: true } },
       ],
     },
   ],

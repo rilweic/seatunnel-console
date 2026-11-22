@@ -3,7 +3,6 @@ package com.dataintegration.console.server.run;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -80,21 +79,51 @@ public class LocalLogStorage implements LogStorage {
         }
     }
 
-    /** Daily at 03:30, drop whole day directories past retention. */
-    @Scheduled(cron = "0 30 3 * * *")
-    public void purgeExpired() {
+    /** Drops whole day directories past the configured default retention. */
+    public PurgeStats purgeExpired() {
+        return purgeOlderThan(LocalDate.now().minusDays(retentionDays));
+    }
+
+    @Override
+    public StorageStats stats() {
         Path root = dataDir.resolve(ROOT);
         if (!Files.isDirectory(root)) {
-            return;
+            return new StorageStats(0, 0);
         }
-        LocalDate cutoff = LocalDate.now().minusDays(retentionDays);
+        long files = 0;
+        long bytes = 0;
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : (Iterable<Path>) walk::iterator) {
+                if (Files.isRegularFile(path)) {
+                    files++;
+                    try {
+                        bytes += Files.size(path);
+                    } catch (IOException ignored) {
+                        // file vanished concurrently
+                    }
+                }
+            }
+        } catch (IOException e) {
+            log.warn("Log storage stats scan failed: {}", e.toString());
+        }
+        return new StorageStats(files, bytes);
+    }
+
+    @Override
+    public PurgeStats purgeOlderThan(LocalDate cutoff) {
+        Path root = dataDir.resolve(ROOT);
+        if (cutoff == null || !Files.isDirectory(root)) {
+            return new PurgeStats(0, 0);
+        }
+        long[] totals = new long[2]; // [files, bytes]
         try (Stream<Path> days = Files.list(root)) {
             days.filter(Files::isDirectory)
                     .filter(dir -> isBefore(dir.getFileName().toString(), cutoff))
-                    .forEach(LocalLogStorage::deleteRecursively);
+                    .forEach(dir -> deleteRecursively(dir, totals));
         } catch (IOException e) {
             log.warn("Log retention sweep failed: {}", e.toString());
         }
+        return new PurgeStats(totals[0], totals[1]);
     }
 
     private static boolean isBefore(String dirName, LocalDate cutoff) {
@@ -105,11 +134,16 @@ public class LocalLogStorage implements LogStorage {
         }
     }
 
-    private static void deleteRecursively(Path dir) {
+    private static void deleteRecursively(Path dir, long[] totals) {
         try (Stream<Path> paths = Files.walk(dir)) {
             paths.sorted(Comparator.reverseOrder()).forEach(path -> {
                 try {
-                    Files.deleteIfExists(path);
+                    boolean isFile = Files.isRegularFile(path);
+                    long size = isFile ? Files.size(path) : 0;
+                    if (Files.deleteIfExists(path) && isFile) {
+                        totals[0]++;
+                        totals[1] += size;
+                    }
                 } catch (IOException e) {
                     log.warn("Cannot delete {}: {}", path, e.toString());
                 }

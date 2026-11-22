@@ -17,4 +17,18 @@ public interface LogStorage {
 
     /** Deletes one archived log if its key is valid and the file still exists. */
     void delete(String key);
+
+    /** Current archived log file count and total size in bytes. */
+    default StorageStats stats() {
+        return new StorageStats(0, 0);
+    }
+
+    /** Deletes archived logs strictly older than {@code cutoff} (day directory < cutoff). */
+    default PurgeStats purgeOlderThan(LocalDate cutoff) {
+        return new PurgeStats(0, 0);
+    }
+
+    record StorageStats(long fileCount, long totalBytes) {}
+
+    record PurgeStats(long deletedFiles, long deletedBytes) {}
 }

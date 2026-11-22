@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -132,15 +131,23 @@ public class Messages {
      * Drops messages that last happened longer ago than the retention, except open problems: an
      * outage that outlasts the retention is reported once and must stay until it clears.
      */
-    @Scheduled(cron = "0 40 3 * * *")
-    public void purge() {
-        LocalDateTime cutoff = LocalDateTime.now().minus(retention);
+    public int purge() {
+        return purge(retention);
+    }
+
+    /** Drops expired messages older than {@code window}, preserving open unresolved problems. */
+    public int purge(Duration window) {
+        if (window == null || window.isZero() || window.isNegative()) {
+            return 0;
+        }
+        LocalDateTime cutoff = LocalDateTime.now().minus(window);
         int purged = delete(() -> new LambdaQueryWrapper<Message>()
                 .lt(Message::getLastAt, cutoff)
                 .and(w -> w.isNull(Message::getDedupKey).or().isNotNull(Message::getResolvedAt)));
         if (purged > 0) {
-            log.info("Purged {} message(s) older than {} days", purged, retention.toDays());
+            log.info("Purged {} message(s) older than {} days", purged, window.toDays());
         }
+        return purged;
     }
 
     /**

@@ -115,8 +115,8 @@ async function save() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" :title="isEdit ? '编辑集群' : '登记集群'" width="600px">
-    <el-form label-width="115px">
+  <el-dialog v-model="visible" :title="isEdit ? '编辑集群' : '登记集群'" width="620px">
+    <el-form label-width="140px">
       <el-form-item label="集群名称" required>
         <el-input v-model="form.name" maxlength="100" placeholder="例如：本地 Flink 1.20 集群" />
       </el-form-item>
