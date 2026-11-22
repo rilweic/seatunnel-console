@@ -1,7 +1,7 @@
 # seatunnel-console 表结构
 
-> 状态：已更新至 V17（P1 / P2 实时 / P3 多集群与 Flink / 数据保留与清理）
-> 建表脚本：`console-server/src/main/resources/db/migration/V1__init.sql` – `V17__data_retention.sql`，由 Flyway 在启动时执行
+> 状态：已更新至 V18（P1 / P2 实时 / P3 多集群与 Flink / 数据保留与 XXL-JOB 清理调度）
+> 建表脚本：`console-server/src/main/resources/db/migration/V1__init.sql` – `V18__retention_xxl_job.sql`，由 Flyway 在启动时执行
 > 总体设计见 [design.md](design.md)，Flink 方案见 [flink-spark.md](flink-spark.md)
 
 ## 1. 通用约定
@@ -63,7 +63,7 @@ project ─┬─< project_param
 | `stream_table_schema` | 实时任务每张表、每一端一行：`columns_json` 是最近一次看到的结构，运行中定时和实际结构对比、发现表结构变更（V11）；`start_columns_json` 是最近一次启动时的结构，详情页按它列出启动以来每张表的变化（V12）。删除任务时一起删掉 |
 | `message` | 站内消息（V15，design.md §10.7）。`owner_id` 是接收人（任务创建人；集群类为空，只有管理员能看到，管理员看到全部）。会被解决的消息带 `dedup_key`，生成列 `open_key` 在未解决时等于它并且唯一，同一件事未解决期间（或解决后一小时内，会被重新打开）只累加 `repeat_count`、更新 `last_at`；`notified_at` 是最近一次要求关注的时间，重复发生时最多一小时往后挪一次；`resolved_at` 是解决时间。最近一次发生超过 90 天的每天清理，删除任务时一起删除 |
 | `message_read` | 谁在什么时候读过哪条消息；`read_at` 早于消息的 `notified_at`（读过之后又要求关注）算未读 |
-| `retention_policy` | 历史数据保留与自动清理策略（V17，单行配置 `id = 1`）：定时开关、每日执行小时、指标采样/运行记录/归档日志/站内消息各自保留天数（`0` 表示永久保留） |
+| `retention_policy` | 历史数据保留与自动清理策略（V17 / V18，单行配置 `id = 1`）：定时开关、每日执行小时、指标采样/运行记录/归档日志/站内消息各自保留天数（`0` 表示永久保留），以及同步到 XXL-JOB 的 `xxl_job_id` 与同步状态（`SYNCED` / `FAILED` / `LOCAL`） |
 | `retention_cleanup_log` | 每次定时或手动数据清理的审计记录（V17）：触发方式、执行人、状态、各类删除行数/释放日志字节数、耗时与错误信息，自动保留最近 100 条 |
 
 ## 4. 运行实例

@@ -33,6 +33,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -172,12 +173,23 @@ public class StreamService {
     /** States of the listed jobs, by job id; offline jobs are left out. */
     public Map<String, StreamSummary> summaries(List<String> jobIds) {
         Map<String, StreamSummary> result = new LinkedHashMap<>();
-        for (String jobId : jobIds) {
-            JobStream stream = identity.find(jobId);
+        if (jobIds == null || jobIds.isEmpty()) {
+            return result;
+        }
+        List<String> uniqueIds = jobIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (uniqueIds.isEmpty()) {
+            return result;
+        }
+        Map<String, JobStream> streamsByJob = new HashMap<>();
+        identity.findAll(uniqueIds).forEach(stream -> streamsByJob.put(stream.getJobDefinitionId(), stream));
+        Map<String, JobInstance> lastByJob = new HashMap<>();
+        runs.lastRuns(uniqueIds).forEach(instance -> lastByJob.put(instance.getJobDefinitionId(), instance));
+        for (String jobId : uniqueIds) {
+            JobStream stream = streamsByJob.get(jobId);
             if (stream == null) {
                 continue;
             }
-            JobInstance last = runs.lastRun(jobId);
+            JobInstance last = lastByJob.get(jobId);
             result.put(jobId, new StreamSummary(state(stream), last == null || stream.getCurrentInstanceId() == null ? null : last.getStartedAt(),
                     stream.getLastReadAt(), stream.getCheckpointProblem(),
                     last == null ? null : last.getStatus(), last == null ? null : last.getErrorMessage()));

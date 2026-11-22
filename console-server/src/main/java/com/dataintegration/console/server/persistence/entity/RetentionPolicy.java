@@ -24,6 +24,9 @@ public class RetentionPolicy {
     private Integer instanceRetentionDays;
     private Integer logRetentionDays;
     private Integer messageRetentionDays;
+    private Integer xxlJobId;
+    private String syncStatus;
+    private String syncError;
     private String updatedBy;
     private LocalDateTime updatedAt;
 }

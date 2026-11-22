@@ -13,6 +13,10 @@ const loading = ref(false)
 const saving = ref(false)
 const runningCleanup = ref(false)
 const updatedAt = ref<string | null>(null)
+const schedulerMode = ref<'XXL_JOB' | 'LOCAL'>('LOCAL')
+const xxlJobId = ref<number | null>(null)
+const syncStatus = ref<'SYNCED' | 'FAILED' | 'LOCAL' | null>(null)
+const syncError = ref<string | null>(null)
 
 const form = reactive({
   enabled: true,
@@ -56,6 +60,10 @@ async function loadAll() {
     form.instanceRetentionDays = policy.instanceRetentionDays
     form.logRetentionDays = policy.logRetentionDays
     form.messageRetentionDays = policy.messageRetentionDays
+    schedulerMode.value = policy.schedulerMode
+    xxlJobId.value = policy.xxlJobId
+    syncStatus.value = policy.syncStatus
+    syncError.value = policy.syncError
     updatedAt.value = policy.updatedAt
     stats.value = overview
     history.value = logs
@@ -68,8 +76,16 @@ async function savePolicy() {
   saving.value = true
   try {
     const saved = await retentionApi.updatePolicy({ ...form })
+    schedulerMode.value = saved.schedulerMode
+    xxlJobId.value = saved.xxlJobId
+    syncStatus.value = saved.syncStatus
+    syncError.value = saved.syncError
     updatedAt.value = saved.updatedAt
-    ElMessage.success('保留策略已保存')
+    if (saved.syncStatus === 'FAILED') {
+      ElMessage.warning(`保留策略已保存，但同步 XXL-JOB 失败：${saved.syncError || '未知错误'}`)
+    } else {
+      ElMessage.success('保留策略已保存')
+    }
     stats.value = await retentionApi.getStats()
   } finally {
     saving.value = false
@@ -187,7 +203,18 @@ onMounted(loadAll)
     <section class="panel">
       <div class="head">
         <div>
-          <h2>保留策略配置</h2>
+          <div class="title-row">
+            <h2>保留策略配置</h2>
+            <el-tag v-if="schedulerMode === 'XXL_JOB' && syncStatus === 'SYNCED'" type="success" size="small" effect="plain">
+              XXL-JOB 调度{{ xxlJobId ? ` #${xxlJobId}` : '' }}
+            </el-tag>
+            <el-tag v-else-if="schedulerMode === 'XXL_JOB' && syncStatus === 'FAILED'" type="danger" size="small" effect="plain" :title="syncError || ''">
+              XXL-JOB 同步失败
+            </el-tag>
+            <el-tag v-else type="info" size="small" effect="plain">
+              本地定时调度
+            </el-tag>
+          </div>
           <p class="sub">
             天数填 <strong>0</strong> 表示永久保留、不自动清理。所有清理均分批执行，且不会删除运行中的任务实例或未解决的告警消息。
           </p>
@@ -330,6 +357,12 @@ onMounted(loadAll)
   font-size: 16px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sub {

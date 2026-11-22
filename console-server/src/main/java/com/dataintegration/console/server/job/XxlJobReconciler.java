@@ -58,30 +58,62 @@ public class XxlJobReconciler {
         this.xxlJobAdminClient = xxlJobAdminClient;
     }
 
+    private static final java.time.Duration FULL_AUDIT_INTERVAL = java.time.Duration.ofHours(6);
+
+    private volatile LocalDateTime lastFullAuditAt;
+
     /** The last completed or aborted round, for the health page; null before the first one. */
     public Round lastRound() {
         return lastRound;
     }
 
+    /**
+     * Runs incremental reconciliation every 10 minutes (only schedules with {@code sync_status != SYNCED}
+     * plus deleted jobs that still hold an XXL-JOB id — normally 0 HTTP calls), and a full drift
+     * audit once every 6 hours to catch jobs manually removed in xxl-job-admin.
+     */
     @Scheduled(initialDelayString = "${console.xxl-job.reconcile-initial-delay:2m}", fixedDelayString = "${console.xxl-job.reconcile-interval:10m}")
     public void reconcile() {
         XxlJobAdminClient client = xxlJobAdminClient.getIfAvailable();
-        if (client != null) {
-            lastRound = run(client);
+        if (client == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        boolean needFull = lastFullAuditAt == null || lastFullAuditAt.plus(FULL_AUDIT_INTERVAL).isBefore(now);
+        Round round = needFull ? run(client) : runIncremental(client);
+        lastRound = round;
+        if (needFull && round.error() == null) {
+            lastFullAuditAt = now;
         }
     }
 
+    /** Fast path: only retries failed/pending schedules and cleans up deleted jobs' orphan XXL-JOB entries. */
+    Round runIncremental(XxlJobAdminClient client) {
+        List<String> dirtyIds = scheduleMapper.selectList(
+                        new LambdaQueryWrapper<JobSchedule>()
+                                .select(JobSchedule::getJobDefinitionId)
+                                .ne(JobSchedule::getSyncStatus, "SYNCED"))
+                .stream()
+                .map(JobSchedule::getJobDefinitionId)
+                .toList();
+        List<JobDefinition> jobs = dirtyIds.isEmpty() ? List.of() : jobMapper.selectByIds(dirtyIds);
+        return reconcileJobs(client, jobs);
+    }
+
     Round run(XxlJobAdminClient client) {
-        Map<Reconciled, Integer> counts = new EnumMap<>(Reconciled.class);
-        List<String> failures = new ArrayList<>();
         Set<String> scheduled = scheduleMapper.selectList(new LambdaQueryWrapper<JobSchedule>().select(JobSchedule::getJobDefinitionId))
                 .stream()
                 .map(JobSchedule::getJobDefinitionId)
                 .collect(Collectors.toSet());
-        List<JobDefinition> jobs = jobMapper.selectList(new LambdaQueryWrapper<JobDefinition>()
-                .isNotNull(JobDefinition::getXxlJobId)
-                .or()
-                .in(!scheduled.isEmpty(), JobDefinition::getId, scheduled));
+        List<JobDefinition> jobs = jobMapper.selectList(null).stream()
+                .filter(j -> j.getXxlJobId() != null || scheduled.contains(j.getId()))
+                .toList();
+        return reconcileJobs(client, jobs);
+    }
+
+    private Round reconcileJobs(XxlJobAdminClient client, List<JobDefinition> jobs) {
+        Map<Reconciled, Integer> counts = new EnumMap<>(Reconciled.class);
+        List<String> failures = new ArrayList<>();
         int removed = 0;
         try {
             for (JobDefinition job : jobs) {

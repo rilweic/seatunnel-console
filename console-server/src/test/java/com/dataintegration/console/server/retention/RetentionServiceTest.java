@@ -27,6 +27,8 @@ import com.dataintegration.console.server.run.LocalLogStorage;
 import com.dataintegration.console.server.run.LogStorage;
 import com.dataintegration.console.server.run.LogStorage.PurgeStats;
 import com.dataintegration.console.server.run.LogStorage.StorageStats;
+import com.dataintegration.console.server.scheduler.ScheduleSpec;
+import com.dataintegration.console.server.scheduler.XxlJobAdminClient;
 
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -34,6 +36,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -64,6 +67,7 @@ class RetentionServiceTest {
     private SysUserMapper userMapper;
     private LogStorage logStorage;
     private Messages messages;
+    private ObjectProvider<XxlJobAdminClient> xxlJobProvider;
 
     private RetentionService service;
     private RetentionPolicy defaultPolicy;
@@ -91,6 +95,9 @@ class RetentionServiceTest {
         userMapper = mock(SysUserMapper.class);
         logStorage = mock(LogStorage.class);
         messages = mock(Messages.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<XxlJobAdminClient> provider = mock(ObjectProvider.class);
+        xxlJobProvider = provider;
 
         defaultPolicy = new RetentionPolicy();
         defaultPolicy.setId(RetentionPolicy.SINGLETON_ID);
@@ -107,7 +114,7 @@ class RetentionServiceTest {
         service = new RetentionService(
                 policyMapper, cleanupLogMapper, metricSampleMapper, instanceMapper,
                 attemptMapper, eventMapper, backfillMapper, messageMapper,
-                userMapper, logStorage, messages);
+                userMapper, logStorage, messages, xxlJobProvider);
     }
 
     @Test
@@ -129,7 +136,21 @@ class RetentionServiceTest {
         assertEquals(4, updated.runHour());
         assertEquals(0, updated.metricRetentionDays());
         assertEquals(60, updated.instanceRetentionDays());
-        verify(policyMapper).updateById(any(RetentionPolicy.class));
+        verify(policyMapper, org.mockito.Mockito.atLeastOnce()).updateById(any(RetentionPolicy.class));
+    }
+
+    @Test
+    void updatePolicySyncsToXxlJobWhenEnabled() {
+        XxlJobAdminClient xxl = mock(XxlJobAdminClient.class);
+        when(xxlJobProvider.getIfAvailable()).thenReturn(xxl);
+        when(xxl.addJob(any(), any(ScheduleSpec.class), any(), any())).thenReturn(88);
+
+        PolicyView updated = service.updatePolicy(new UpdatePolicyRequest(true, 4, 14, 90, 30, 90), "admin");
+
+        assertEquals("XXL_JOB", updated.schedulerMode());
+        assertEquals(88, updated.xxlJobId());
+        assertEquals("SYNCED", updated.syncStatus());
+        verify(xxl).startJob(88);
     }
 
     @Test

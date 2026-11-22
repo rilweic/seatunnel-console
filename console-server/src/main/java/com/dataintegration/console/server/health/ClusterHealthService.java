@@ -25,6 +25,7 @@ import com.dataintegration.console.server.scheduler.XxlJobProperties;
 
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -37,11 +38,9 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Quick health checks for the cluster health page (docs/design.md §4.3): what can be told from the
@@ -88,6 +87,8 @@ public class ClusterHealthService {
     /** Database wizard connectors are always required; HTTP is checked when a live job uses it. */
     private static final List<String> WIZARD_CONNECTORS = List.of("source/Jdbc", "sink/Jdbc", "sink/Elasticsearch");
 
+    private static final int CONNECTOR_SCAN_BATCH_SIZE = 500;
+
     private final EngineRegistry engines;
     private final JobDefinitionMapper jobMapper;
     private final JobVersionMapper versionMapper;
@@ -97,6 +98,7 @@ public class ClusterHealthService {
     private final Path dataDir;
     private final XxlJobReconciler reconciler;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).proxy(HttpClient.Builder.NO_PROXY).build();
+    private final AtomicReference<Map<String, Integer>> connectorUsageCache = new AtomicReference<>();
 
     public ClusterHealthService(
             EngineRegistry engines,
@@ -183,11 +185,11 @@ public class ClusterHealthService {
             }
         }
 
-        Map<String, Set<String>> usage = connectorUsage();
-        for (Map.Entry<String, Set<String>> e : usage.entrySet()) {
+        Map<String, Integer> usage = cachedConnectorUsage();
+        for (Map.Entry<String, Integer> e : usage.entrySet()) {
             String[] parts = e.getKey().split("/", 2);
             String label = (parts[0].equals("source") ? "Source " : "Sink ") + parts[1];
-            String users = e.getValue().isEmpty() ? "向导会用到" : "被任务使用：" + String.join("、", e.getValue());
+            String users = e.getValue() == 0 ? "向导会用到" : "被 " + e.getValue() + " 个任务使用";
             try {
                 checks.add(engineClient.hasConnector(parts[0], parts[1])
                         ? new Check("连接器", label, Status.OK, "已安装（" + users + "）")
@@ -197,43 +199,73 @@ public class ClusterHealthService {
             }
         }
         checks.add(new Check("连接器", "说明", Status.OK,
-                "只能检查响应的那个 master；其他节点是否装齐、JDBC 驱动是否在 lib/ 下，请点\"运行诊断\"用真实作业确认"));
+                "连接器使用统计每 15 分钟自动更新；只能检查响应的那个 master，其他节点是否装齐、JDBC 驱动是否在 lib/ 下，请点\"运行诊断\"用真实作业确认"));
         XxlJobStatus xxlJob = addXxlJobChecks(checks);
         addConsoleChecks(checks);
         return new Health(checks, masters, workers, overview, xxlJob);
     }
 
+    /** Periodically refreshes connector usage counts in batches so the health page never parses thousands of HOCONs on demand. */
+    @Scheduled(
+            initialDelayString = "${console.health.connector-scan-initial-delay:30s}",
+            fixedDelayString = "${console.health.connector-scan-interval:15m}")
+    public void refreshConnectorUsage() {
+        connectorUsageCache.set(scanConnectorUsage());
+    }
+
+    private Map<String, Integer> cachedConnectorUsage() {
+        Map<String, Integer> cached = connectorUsageCache.get();
+        if (cached != null) {
+            return cached;
+        }
+        Map<String, Integer> scanned = scanConnectorUsage();
+        connectorUsageCache.set(scanned);
+        return scanned;
+    }
+
     /**
-     * Connector -> names of live jobs whose current version uses it, plus the wizard's connectors.
-     * A version that cannot be parsed is skipped; its own runs will report the problem.
+     * Connector -> number of live jobs whose current version uses it, plus the wizard's connectors.
+     * Queries only {@code hocon_template} in chunks of {@value #CONNECTOR_SCAN_BATCH_SIZE}.
      */
-    private Map<String, Set<String>> connectorUsage() {
-        Map<String, Set<String>> usage = new LinkedHashMap<>();
-        WIZARD_CONNECTORS.forEach(c -> usage.put(c, new LinkedHashSet<>()));
-        List<JobDefinition> jobs = jobMapper.selectList(new LambdaQueryWrapper<JobDefinition>().isNotNull(JobDefinition::getCurrentVersionId));
-        if (jobs.isEmpty()) {
+    private Map<String, Integer> scanConnectorUsage() {
+        Map<String, Integer> usage = new LinkedHashMap<>();
+        WIZARD_CONNECTORS.forEach(c -> usage.put(c, 0));
+        List<String> versionIds = jobMapper.selectList(
+                        new LambdaQueryWrapper<JobDefinition>()
+                                .select(JobDefinition::getCurrentVersionId)
+                                .isNotNull(JobDefinition::getCurrentVersionId))
+                .stream()
+                .map(JobDefinition::getCurrentVersionId)
+                .distinct()
+                .toList();
+        if (versionIds.isEmpty()) {
             return usage;
         }
-        Map<String, JobVersion> versions = versionMapper
-                .selectList(new LambdaQueryWrapper<JobVersion>()
-                        .in(JobVersion::getId, jobs.stream().map(JobDefinition::getCurrentVersionId).toList()))
-                .stream()
-                .collect(Collectors.toMap(JobVersion::getId, v -> v));
         LocalDateTime now = LocalDateTime.now();
-        for (JobDefinition job : jobs) {
-            JobVersion version = versions.get(job.getCurrentVersionId());
-            if (version == null) {
-                continue;
-            }
-            try {
-                HoconTemplate template = HoconTemplate.parse(Variables.render(version.getHoconTemplate(), Map.of(), now));
-                for (String section : List.of("source", "sink")) {
-                    for (HoconTemplate.Block block : template.blocks(section)) {
-                        usage.computeIfAbsent(section + "/" + block.connector(), k -> new LinkedHashSet<>()).add(job.getName());
-                    }
+        for (int from = 0; from < versionIds.size(); from += CONNECTOR_SCAN_BATCH_SIZE) {
+            List<String> batchIds = versionIds.subList(from, Math.min(from + CONNECTOR_SCAN_BATCH_SIZE, versionIds.size()));
+            List<JobVersion> versions = versionMapper.selectList(
+                    new LambdaQueryWrapper<JobVersion>()
+                            .select(JobVersion::getId, JobVersion::getHoconTemplate)
+                            .in(JobVersion::getId, batchIds));
+            for (JobVersion version : versions) {
+                if (version.getHoconTemplate() == null) {
+                    continue;
                 }
-            } catch (ConsoleException e) {
-                // reported by the job's own runs
+                try {
+                    HoconTemplate template = HoconTemplate.parse(Variables.render(version.getHoconTemplate(), Map.of(), now));
+                    java.util.Set<String> seenInJob = new java.util.HashSet<>();
+                    for (String section : List.of("source", "sink")) {
+                        for (HoconTemplate.Block block : template.blocks(section)) {
+                            String key = section + "/" + block.connector();
+                            if (seenInJob.add(key)) {
+                                usage.merge(key, 1, Integer::sum);
+                            }
+                        }
+                    }
+                } catch (ConsoleException e) {
+                    // reported by the job's own runs
+                }
             }
         }
         return usage;

@@ -28,6 +28,7 @@ public class XxlJobAdminClient {
     private static final Logger log = LoggerFactory.getLogger(XxlJobAdminClient.class);
 
     public static final String HANDLER_NAME = "seatunnelJobHandler";
+    public static final String RETENTION_HANDLER_NAME = "retentionCleanupHandler";
 
     public static final String HEADER_ACCESS_TOKEN = "XXL-JOB-ACCESS-TOKEN";
     public static final String HEADER_APPNAME = "XXL-JOB-APPNAME";
@@ -68,6 +69,11 @@ public class XxlJobAdminClient {
 
     /** Creates a stopped job and returns its XXL-JOB id. Call {@link #startJob} to activate it. */
     public int addJob(String name, ScheduleSpec spec, String executorParam) {
+        return addJob(name, spec, HANDLER_NAME, executorParam);
+    }
+
+    /** Creates a stopped job with a specific bean handler name and returns its XXL-JOB id. */
+    public int addJob(String name, ScheduleSpec spec, String executorHandler, String executorParam) {
         JobAddRequest request = new JobAddRequest();
         request.setJobGroup(properties.jobGroupId());
         request.setName(name);
@@ -76,7 +82,7 @@ public class XxlJobAdminClient {
         request.setScheduleConf(spec.cron());
         request.setMisfireStrategy(spec.misfireStrategy().name());
         request.setExecutorRouteStrategy("FIRST");
-        request.setExecutorHandler(HANDLER_NAME);
+        request.setExecutorHandler(executorHandler);
         request.setExecutorParam(executorParam);
         request.setExecutorBlockStrategy(spec.blockStrategy().name());
         request.setExecutorTimeout(spec.timeoutSeconds());
@@ -118,6 +124,10 @@ public class XxlJobAdminClient {
     }
 
     public void updateJob(int jobId, String name, ScheduleSpec spec, String executorParam) {
+        updateJob(jobId, name, spec, HANDLER_NAME, executorParam);
+    }
+
+    public void updateJob(int jobId, String name, ScheduleSpec spec, String executorHandler, String executorParam) {
         JobUpdateRequest request = new JobUpdateRequest();
         request.setId(jobId);
         request.setName(name);
@@ -126,7 +136,7 @@ public class XxlJobAdminClient {
         request.setScheduleConf(spec.cron());
         request.setMisfireStrategy(spec.misfireStrategy().name());
         request.setExecutorRouteStrategy("FIRST");
-        request.setExecutorHandler(HANDLER_NAME);
+        request.setExecutorHandler(executorHandler);
         request.setExecutorParam(executorParam);
         request.setExecutorBlockStrategy(spec.blockStrategy().name());
         request.setExecutorTimeout(spec.timeoutSeconds());

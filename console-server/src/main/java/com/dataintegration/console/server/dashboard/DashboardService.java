@@ -70,12 +70,17 @@ public class DashboardService {
             Map<String, String> cluster,
             StreamDashboard.Summary realtime) {}
 
+    private static final long GLOBAL_CACHE_TTL_NANOS = 15_000_000_000L;
+
+    private record CachedDashboard(long loadedAtNanos, Dashboard value) {}
+
     private final JobDefinitionMapper jobMapper;
     private final JobInstanceMapper instanceMapper;
     private final JobScheduleMapper scheduleMapper;
     private final InstanceService instanceService;
     private final EngineRegistry engines;
     private final StreamDashboard streamDashboard;
+    private final java.util.concurrent.ConcurrentHashMap<String, CachedDashboard> globalCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public DashboardService(
             JobDefinitionMapper jobMapper,
@@ -94,6 +99,23 @@ public class DashboardService {
 
     /** @param mine only jobs the current user created, and their runs */
     public Dashboard dashboard(boolean mine) {
+        if (!mine) {
+            String cacheKey = com.dataintegration.console.server.auth.Access.isAdmin()
+                    ? "ADMIN"
+                    : String.valueOf(CurrentUser.idOrNull());
+            CachedDashboard cached = globalCache.get(cacheKey);
+            long nowNanos = System.nanoTime();
+            if (cached != null && nowNanos - cached.loadedAtNanos() < GLOBAL_CACHE_TTL_NANOS) {
+                return cached.value();
+            }
+            Dashboard computed = computeDashboard(false);
+            globalCache.put(cacheKey, new CachedDashboard(System.nanoTime(), computed));
+            return computed;
+        }
+        return computeDashboard(true);
+    }
+
+    private Dashboard computeDashboard(boolean mine) {
         LocalDateTime now = LocalDateTime.now();
         LocalDate today = now.toLocalDate();
         String me = CurrentUser.idOrNull();
@@ -107,11 +129,21 @@ public class DashboardService {
         Map<String, String> jobNames = jobs.stream().collect(Collectors.toMap(JobDefinition::getId, JobDefinition::getName));
         String scope = mine ? "select id from job_definition where created_by = " + quote(me) : null;
 
-        List<JobSchedule> schedules = jobNames.isEmpty()
-                ? List.of()
-                : scheduleMapper.selectList(new LambdaQueryWrapper<JobSchedule>()
-                        .eq(JobSchedule::getEnabled, true)
-                        .in(JobSchedule::getJobDefinitionId, jobNames.keySet()));
+        List<JobSchedule> schedules;
+        if (jobNames.isEmpty()) {
+            schedules = List.of();
+        } else if (!mine) {
+            // Avoid a huge IN (...) clause at 3,000+ jobs; filter out soft-deleted jobs in memory.
+            schedules = scheduleMapper.selectList(new LambdaQueryWrapper<JobSchedule>()
+                            .eq(JobSchedule::getEnabled, true))
+                    .stream()
+                    .filter(s -> jobNames.containsKey(s.getJobDefinitionId()))
+                    .toList();
+        } else {
+            schedules = scheduleMapper.selectList(new LambdaQueryWrapper<JobSchedule>()
+                    .eq(JobSchedule::getEnabled, true)
+                    .in(JobSchedule::getJobDefinitionId, jobNames.keySet()));
+        }
 
         List<Day> trend = trend(today, scope);
         Day todayStats = trend.get(trend.size() - 1);

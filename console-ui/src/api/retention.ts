@@ -7,6 +7,10 @@ export interface RetentionPolicyView {
   instanceRetentionDays: number
   logRetentionDays: number
   messageRetentionDays: number
+  schedulerMode: 'XXL_JOB' | 'LOCAL'
+  xxlJobId: number | null
+  syncStatus: 'SYNCED' | 'FAILED' | 'LOCAL' | null
+  syncError: string | null
   updatedAt: string | null
 }
 

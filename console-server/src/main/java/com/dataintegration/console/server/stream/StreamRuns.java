@@ -154,6 +154,10 @@ public class StreamRuns {
                 .last("limit 1"));
     }
 
+    public List<JobInstance> lastRuns(List<String> jobIds) {
+        return jobIds == null || jobIds.isEmpty() ? List.of() : instances.selectLatestStreamRuns(jobIds);
+    }
+
     public JobInstanceAttempt newAttempt(JobInstance instance) {
         JobInstanceAttempt attempt = new JobInstanceAttempt();
         attempt.setInstanceId(instance.getId());

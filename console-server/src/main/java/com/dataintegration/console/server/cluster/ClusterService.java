@@ -194,6 +194,7 @@ public class ClusterService {
         c.setIsDefault(makeDefault);
         c.setCreatedBy(CurrentUser.idOrNull());
         clusterMapper.insert(c);
+        registry.evictAll();
         return toView(c, 0L);
     }
 
@@ -235,6 +236,7 @@ public class ClusterService {
         EngineCluster patch = new EngineCluster();
         patch.setIsDefault(true);
         clusterMapper.update(patch, new LambdaUpdateWrapper<EngineCluster>().eq(EngineCluster::getId, id));
+        registry.evictAll();
     }
 
     @Transactional

@@ -48,6 +48,8 @@ public class EngineRegistry {
     private final ConsoleProperties properties;
     private final Path flinkTempDir;
     private final Map<String, Cached> cache = new ConcurrentHashMap<>();
+    private final Map<String, EngineCluster> clusterCache = new ConcurrentHashMap<>();
+    private volatile EngineCluster defaultClusterCache;
     private volatile EngineClient fallbackZeta;
 
     public EngineRegistry(
@@ -111,25 +113,46 @@ public class EngineRegistry {
 
     public EngineCluster resolveCluster(String clusterId) {
         if (clusterId != null && !clusterId.isBlank()) {
+            EngineCluster cached = clusterCache.get(clusterId);
+            if (cached != null) {
+                return cached;
+            }
             EngineCluster found = clusterMapper.selectById(clusterId);
             if (found == null) {
                 throw new ConsoleException(ErrorCodes.NOT_FOUND, "集群不存在：" + clusterId);
             }
+            clusterCache.put(clusterId, found);
             return found;
+        }
+        EngineCluster cachedDefault = defaultClusterCache;
+        if (cachedDefault != null) {
+            return cachedDefault;
         }
         EngineCluster def = clusterMapper.selectOne(
                 new LambdaQueryWrapper<EngineCluster>().eq(EngineCluster::getIsDefault, true).last("LIMIT 1"));
-        if (def != null) {
-            return def;
+        if (def == null) {
+            def = clusterMapper.selectOne(
+                    new LambdaQueryWrapper<EngineCluster>().orderByAsc(EngineCluster::getCreatedAt).last("LIMIT 1"));
         }
-        return clusterMapper.selectOne(
-                new LambdaQueryWrapper<EngineCluster>().orderByAsc(EngineCluster::getCreatedAt).last("LIMIT 1"));
+        if (def != null) {
+            defaultClusterCache = def;
+            clusterCache.put(def.getId(), def);
+        }
+        return def;
     }
 
     public void evict(String clusterId) {
         if (clusterId != null) {
             cache.remove(clusterId);
+            clusterCache.remove(clusterId);
         }
+        defaultClusterCache = null;
+    }
+
+    public void evictAll() {
+        cache.clear();
+        clusterCache.clear();
+        defaultClusterCache = null;
     }
 
     public EngineClient buildClient(EngineCluster cluster) {

@@ -24,6 +24,7 @@ const activeAttempt = ref<number>(Number(route.query.attempt) || 0)
 const log = ref<LogView | null>(null)
 const metrics = ref<RunMetrics | null>(null)
 const logLoading = ref(false)
+const autoRefreshLog = ref(false)
 const followTail = ref(true)
 const logBox = ref<HTMLElement | null>(null)
 const logFullscreen = ref(false)
@@ -126,16 +127,23 @@ async function loadMetrics() {
 
 let disposed = false
 
+watch(autoRefreshLog, (enabled) => {
+  if (enabled && active.value) {
+    loadLog()
+  }
+})
+
 /**
- * While the run is active, refresh status, metrics and the live SeaTunnel log every few seconds.
+ * While the run is active, refresh status and metrics every few seconds. Log refresh is optional.
  * A failed request (shown by the HTTP layer) does not end the refreshing; leaving the page does,
  * also for a request still on its way.
  */
 async function refresh() {
   window.clearTimeout(timer)
   try {
+    const wasActive = active.value
     await loadDetail()
-    await Promise.all([loadLog(), loadMetrics()])
+    await Promise.all([autoRefreshLog.value || !log.value || (wasActive && !active.value) ? loadLog() : Promise.resolve(), loadMetrics()])
   } catch {
     // already reported; try again on the next tick while the run is active
   } finally {
@@ -300,6 +308,7 @@ onBeforeUnmount(() => {
                 <el-radio-button v-for="a in detail.attempts" :key="a.attemptNo" :value="a.attemptNo">第 {{ a.attemptNo }} 次</el-radio-button>
               </el-radio-group>
               <el-checkbox v-model="followTail" size="small">跟随最新</el-checkbox>
+              <el-checkbox v-model="autoRefreshLog" size="small">自动刷新日志</el-checkbox>
               <el-button size="small" :loading="logLoading" @click="loadLog">刷新日志</el-button>
               <el-button size="small" @click="toggleLogFullscreen">{{ logFullscreen ? '退出全屏' : '全屏查看' }}</el-button>
             </div>

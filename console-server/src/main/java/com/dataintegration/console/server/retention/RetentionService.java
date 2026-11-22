@@ -26,9 +26,16 @@ import com.dataintegration.console.server.persistence.mapper.SysUserMapper;
 import com.dataintegration.console.server.run.LogStorage;
 import com.dataintegration.console.server.run.LogStorage.PurgeStats;
 import com.dataintegration.console.server.run.LogStorage.StorageStats;
+import com.dataintegration.console.server.scheduler.ScheduleSpec;
+import com.dataintegration.console.server.scheduler.ScheduleSpec.BlockStrategy;
+import com.dataintegration.console.server.scheduler.ScheduleSpec.MisfireStrategy;
+import com.dataintegration.console.server.scheduler.XxlJobAdminClient;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -54,6 +61,7 @@ public class RetentionService {
 
     private static final Logger log = LoggerFactory.getLogger(RetentionService.class);
 
+    private static final String XXL_JOB_NAME = "[系统] 历史数据保留清理";
     private static final int MAX_RETENTION_DAYS = 3650;
     private static final int METRIC_BATCH_SIZE = 2000;
     private static final int INSTANCE_BATCH_SIZE = 200;
@@ -71,6 +79,7 @@ public class RetentionService {
     private final SysUserMapper userMapper;
     private final LogStorage logStorage;
     private final Messages messages;
+    private final ObjectProvider<XxlJobAdminClient> xxlJobAdminClient;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -85,7 +94,8 @@ public class RetentionService {
             MessageMapper messageMapper,
             SysUserMapper userMapper,
             LogStorage logStorage,
-            Messages messages) {
+            Messages messages,
+            ObjectProvider<XxlJobAdminClient> xxlJobAdminClient) {
         this.policyMapper = policyMapper;
         this.cleanupLogMapper = cleanupLogMapper;
         this.metricSampleMapper = metricSampleMapper;
@@ -97,11 +107,21 @@ public class RetentionService {
         this.userMapper = userMapper;
         this.logStorage = logStorage;
         this.messages = messages;
+        this.xxlJobAdminClient = xxlJobAdminClient;
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void syncOnStartup() {
+        try {
+            syncXxlJob(loadOrInitPolicy());
+        } catch (RuntimeException e) {
+            log.warn("Initial XXL-JOB sync for retention cleanup failed: {}", e.toString());
+        }
     }
 
     public PolicyView getPolicy() {
         RetentionPolicy p = loadOrInitPolicy();
-        return toPolicyView(p);
+        return toPolicyView(p, xxlJobAdminClient.getIfAvailable() != null);
     }
 
     public PolicyView updatePolicy(UpdatePolicyRequest req, String userId) {
@@ -127,9 +147,10 @@ public class RetentionService {
         p.setUpdatedBy(userId);
         p.setUpdatedAt(LocalDateTime.now());
         policyMapper.updateById(p);
-        log.info("Retention policy updated by {}: enabled={}, runHour={}, metric={}d, instance={}d, log={}d, message={}d",
-                userId, p.getEnabled(), p.getRunHour(), metricDays, instanceDays, logDays, messageDays);
-        return toPolicyView(p);
+        syncXxlJob(p);
+        log.info("Retention policy updated by {}: enabled={}, runHour={}, metric={}d, instance={}d, log={}d, message={}d, xxlJobId={}",
+                userId, p.getEnabled(), p.getRunHour(), metricDays, instanceDays, logDays, messageDays, p.getXxlJobId());
+        return toPolicyView(p, xxlJobAdminClient.getIfAvailable() != null);
     }
 
     public StorageOverview getStats() {
@@ -218,10 +239,35 @@ public class RetentionService {
         }
     }
 
-    /** Hourly check at :05; runs once per calendar day when current hour matches policy.runHour. */
+    /** Invoked by {@code RetentionJobHandler} when XXL-JOB triggers scheduled cleanup. */
+    public CleanupLogView runFromXxlJob() {
+        if (!running.compareAndSet(false, true)) {
+            return null;
+        }
+        try {
+            RetentionCleanupLog entry = executeCleanup("SCHEDULED", null);
+            return toLogView(entry, null);
+        } finally {
+            running.set(false);
+        }
+    }
+
+    /**
+     * Hourly check at :05.
+     *
+     * <p>When XXL-JOB is enabled, scheduled cleanup is driven by XXL-JOB ({@code retentionCleanupHandler});
+     * this method only retries syncing the policy if the previous sync failed. When XXL-JOB is
+     * disabled ({@code console.xxl-job.enabled=false}), this method drives daily cleanup locally.
+     */
     @Scheduled(cron = "0 5 * * * *")
     public void scheduledCheck() {
         RetentionPolicy p = loadOrInitPolicy();
+        if (xxlJobAdminClient.getIfAvailable() != null) {
+            if (!"SYNCED".equals(p.getSyncStatus())) {
+                syncXxlJob(p);
+            }
+            return;
+        }
         if (!Boolean.TRUE.equals(p.getEnabled())) {
             return;
         }
@@ -243,6 +289,57 @@ public class RetentionService {
             executeCleanup("SCHEDULED", null);
         } finally {
             running.set(false);
+        }
+    }
+
+    void syncXxlJob(RetentionPolicy p) {
+        XxlJobAdminClient client = xxlJobAdminClient.getIfAvailable();
+        if (client == null) {
+            if (!"LOCAL".equals(p.getSyncStatus()) || p.getSyncError() != null) {
+                p.setSyncStatus("LOCAL");
+                p.setSyncError(null);
+                policyMapper.updateById(p);
+            }
+            return;
+        }
+        ScheduleSpec spec = new ScheduleSpec(
+                "0 5 " + p.getRunHour() + " * * ?",
+                0,
+                0,
+                BlockStrategy.DISCARD_LATER,
+                MisfireStrategy.DO_NOTHING);
+        try {
+            Integer jobId = p.getXxlJobId();
+            if (jobId == null) {
+                jobId = client.addJob(XXL_JOB_NAME, spec, XxlJobAdminClient.RETENTION_HANDLER_NAME, "");
+                p.setXxlJobId(jobId);
+            } else {
+                try {
+                    client.updateJob(jobId, XXL_JOB_NAME, spec, XxlJobAdminClient.RETENTION_HANDLER_NAME, "");
+                } catch (ConsoleException e) {
+                    if (e.getCode() != ErrorCodes.SCHEDULER_JOB_MISSING) {
+                        throw e;
+                    }
+                    jobId = client.addJob(XXL_JOB_NAME, spec, XxlJobAdminClient.RETENTION_HANDLER_NAME, "");
+                    p.setXxlJobId(jobId);
+                }
+            }
+            if (Boolean.TRUE.equals(p.getEnabled())) {
+                client.startJob(jobId);
+            } else {
+                client.stopJob(jobId);
+            }
+            p.setSyncStatus("SYNCED");
+            p.setSyncError(null);
+            policyMapper.updateById(p);
+            log.info("Synced retention cleanup to XXL-JOB jobId={} (enabled={}, cron='{}')",
+                    jobId, p.getEnabled(), spec.cron());
+        } catch (RuntimeException e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            p.setSyncStatus("FAILED");
+            p.setSyncError(msg.length() > 480 ? msg.substring(0, 480) : msg);
+            policyMapper.updateById(p);
+            log.warn("Failed to sync retention cleanup to XXL-JOB: {}", msg);
         }
     }
 
@@ -390,7 +487,7 @@ public class RetentionService {
         return count == null ? 0L : count;
     }
 
-    private static PolicyView toPolicyView(RetentionPolicy p) {
+    private static PolicyView toPolicyView(RetentionPolicy p, boolean xxlJobEnabled) {
         return new PolicyView(
                 Boolean.TRUE.equals(p.getEnabled()),
                 p.getRunHour(),
@@ -398,6 +495,10 @@ public class RetentionService {
                 p.getInstanceRetentionDays(),
                 p.getLogRetentionDays(),
                 p.getMessageRetentionDays(),
+                xxlJobEnabled ? "XXL_JOB" : "LOCAL",
+                p.getXxlJobId(),
+                p.getSyncStatus(),
+                p.getSyncError(),
                 p.getUpdatedAt());
     }
 
@@ -436,6 +537,10 @@ public class RetentionService {
             int instanceRetentionDays,
             int logRetentionDays,
             int messageRetentionDays,
+            String schedulerMode,
+            Integer xxlJobId,
+            String syncStatus,
+            String syncError,
             LocalDateTime updatedAt) {}
 
     public record StorageOverview(

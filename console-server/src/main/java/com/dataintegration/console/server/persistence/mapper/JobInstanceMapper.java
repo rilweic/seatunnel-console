@@ -25,4 +25,23 @@ public interface JobInstanceMapper extends BaseMapper<JobInstance> {
             </script>
             """)
     List<JobInstance> selectLatestPerJob(@Param("jobIds") Collection<String> jobIds);
+
+    /** Latest streaming start per job, including the failure message shown on the list. */
+    @Select("""
+            <script>
+            select i.id, i.job_definition_id, i.status, i.started_at, i.created_at, i.error_message
+            from job_instance i
+            where i.id in (
+              select (select j.id from job_instance j
+                      where j.job_definition_id = ids.job_id and j.trigger_type = 'START'
+                      order by j.created_at desc, j.id desc limit 1)
+              from (
+                <foreach collection="jobIds" item="id" separator=" union all ">
+                  select #{id} as job_id
+                </foreach>
+              ) ids
+            )
+            </script>
+            """)
+    List<JobInstance> selectLatestStreamRuns(@Param("jobIds") Collection<String> jobIds);
 }

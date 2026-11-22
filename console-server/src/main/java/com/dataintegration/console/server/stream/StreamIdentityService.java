@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.List;
 
 /**
  * The identity a streaming job has on its source database (docs/design.md §12 P2, Q9): a block of
@@ -77,6 +78,10 @@ public class StreamIdentityService {
     /** The job's stream row, or null for an offline job. */
     public JobStream find(String jobId) {
         return mapper.selectById(jobId);
+    }
+
+    public List<JobStream> findAll(List<String> jobIds) {
+        return jobIds == null || jobIds.isEmpty() ? List.of() : mapper.selectByIds(jobIds);
     }
 
     /**
