@@ -210,11 +210,23 @@ defineExpose({ load })
         </div>
         <template v-if="overview.schedule?.enabled">
           <div class="value small">{{ formatTime(overview.schedule.nextFireTimes[0]) }}</div>
-          <div class="sub">下次运行 · <code>{{ overview.schedule.cron }}</code></div>
+          <div class="schedule-details">
+            <span>下次计划运行</span>
+            <el-popover v-if="overview.schedule.nextFireTimes.length" trigger="click" placement="bottom-start" :width="245">
+              <template #reference>
+                <el-button link type="primary" size="small">查看后续时间</el-button>
+              </template>
+              <div class="upcoming-title">接下来 {{ overview.schedule.nextFireTimes.length }} 次计划运行</div>
+              <ol class="upcoming-times">
+                <li v-for="time in overview.schedule.nextFireTimes" :key="time">{{ formatTime(time) }}</li>
+              </ol>
+            </el-popover>
+          </div>
+          <div class="sub">Cron 表达式：<code>{{ overview.schedule.cron }}</code></div>
         </template>
         <template v-else-if="overview.schedule">
           <div class="value muted-value">已暂停</div>
-          <div class="sub"><code>{{ overview.schedule.cron }}</code></div>
+          <div class="sub">Cron 表达式：<code>{{ overview.schedule.cron }}</code></div>
         </template>
         <template v-else>
           <div class="value muted-value">未配置</div>
@@ -380,6 +392,27 @@ defineExpose({ load })
 
 .value.small {
   font-size: 16px;
+}
+
+.schedule-details {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.upcoming-title {
+  font-weight: 600;
+}
+
+.upcoming-times {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  line-height: 1.9;
+  font-variant-numeric: tabular-nums;
 }
 
 .muted-value {
