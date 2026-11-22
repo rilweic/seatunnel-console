@@ -5,6 +5,8 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.datasource.cdc.CdcSupport;
 import com.dataintegration.console.engine.EngineClient;
+import com.dataintegration.console.engine.EngineClient.StopResult;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.auth.CurrentUser;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.job.JobConfigRenderer;
@@ -106,13 +108,13 @@ public class StreamService {
     private final StreamRuns runs;
     private final StreamSubmitter submitter;
     private final CdcReadiness readiness;
-    private final EngineClient engine;
+    private final EngineRegistry engines;
     private final DatasourceService datasources;
     private final ObjectMapper objectMapper;
     private final SchemaDriftWatcher schemaWatcher;
 
     public StreamService(JobService jobService, StreamIdentityService identity, StreamRuns runs, StreamSubmitter submitter,
-            CdcReadiness readiness, EngineClient engine, DatasourceService datasources, ObjectMapper objectMapper,
+            CdcReadiness readiness, EngineRegistry engines, DatasourceService datasources, ObjectMapper objectMapper,
             SchemaDriftWatcher schemaWatcher) {
         this.schemaWatcher = schemaWatcher;
         this.jobService = jobService;
@@ -120,7 +122,7 @@ public class StreamService {
         this.runs = runs;
         this.submitter = submitter;
         this.readiness = readiness;
-        this.engine = engine;
+        this.engines = engines;
         this.datasources = datasources;
         this.objectMapper = objectMapper;
     }
@@ -218,7 +220,13 @@ public class StreamService {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "当前配置和源表、目标表对不上，请先编辑任务：" + String.join("；", errors));
             }
         }
-        JobInstance instance = runs.create(job, version, startup.isEmpty() ? null : objectMapper.writeValueAsString(startup), CurrentUser.idOrNull());
+        String oldRestorePath = stream.getRestorePath();
+        JobInstance instance = runs.create(
+                job,
+                version,
+                engines.engineType(job.getClusterId()).name(),
+                startup.isEmpty() ? null : objectMapper.writeValueAsString(startup),
+                CurrentUser.idOrNull());
         if (!runs.claim(jobId, instance.getId())) {
             runs.abandon(instance, "任务已经在运行");
             throw new ConsoleException(ErrorCodes.CONFLICT, "任务已经在运行");
@@ -226,6 +234,7 @@ public class StreamService {
         RunRecorder recorder = runs.recorder();
         recorder.event(instance.getId(), null, RunEventType.CREATED, Level.INFO, "启动 v" + versionNo(version) + "：" + decision.note());
         JobInstanceAttempt attempt = runs.newAttempt(instance);
+        StreamSubmitter.SubmitResult submitted;
         try {
             JobConfigRenderer.Rendered rendered = submitter.render(job, version, instance);
             List<String> problems = readiness.startErrors(stream, rendered.template(),
@@ -234,14 +243,16 @@ public class StreamService {
             if (!problems.isEmpty()) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "源库不满足实时同步条件：" + String.join("；", problems));
             }
-            submitter.submit(job, instance, attempt, rendered.config(), decision.mode(), decision.restoreFrom());
+            submitted = submitter.submit(job, instance, attempt, rendered.config(), decision.mode(), decision.restoreFrom(), decision.restorePath());
         } catch (RuntimeException e) {
             runs.finish(instance, RunStatus.FAILED, "启动失败：" + e.getMessage(), null);
             throw e;
         }
-        if (decision.fresh()) {
-            // kept until now, so a start that fails before the engine leaves the old point usable
+        if (decision.fresh() && submitted.confirmed()) {
+            // Only forget and dispose the previous savepoint once the engine confirmed the new job;
+            // on RESPONSE_LOST the new job may never have started, so the old savepoint must stay intact.
             runs.forgetRestorePoint(jobId, instance.getId());
+            disposeSavepointQuietly(job.getClusterId(), oldRestorePath);
         }
         try {
             // what the tables look like now, so changes from here on are noticed
@@ -257,7 +268,8 @@ public class StreamService {
      * force, after which it can only resume from the latest checkpoint.
      */
     public StreamView stop(String jobId, boolean force) {
-        requireStreaming(jobService.requireEditable(jobId));
+        JobDefinition job = jobService.requireEditable(jobId);
+        requireStreaming(job);
         JobStream stream = identity.require(jobId);
         if (stream.getCurrentInstanceId() == null) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "任务没有在运行");
@@ -290,8 +302,34 @@ public class StreamService {
             runs.finish(instance, RunStatus.CANCELED, "已停止", null);
             return view(jobId);
         }
-        engine.stop(Long.parseLong(attempt.getEngineJobId()), !force, force);
+        EngineClient engine = engines.clientFor(job.getClusterId());
+        StopResult stopped = engine.stop(attempt.getEngineJobId(), !force, force);
+        if (stopped.savepointPath() != null && !stopped.savepointPath().isBlank()) {
+            // Atomically finish this specific instance and record its savepoint path FIRST (bound to
+            // current_instance_id = instance.getId()), before marking the attempt finished, so
+            // StreamMonitor can never see attempt.finishedAt != null while current_instance_id is still set.
+            runs.finish(instance, RunStatus.CANCELED, "已停止，savepoint 已保存；下次启动从这里继续",
+                    new StreamRuns.RestorePoint(RestorePlan.Kind.SAVEPOINT, attempt.getEngineJobId(),
+                            stopped.savepointPath(), instance.getJobVersionId(), null));
+            if (attempt.getFinishedAt() == null) {
+                attempt.setEngineStatus("SAVEPOINT_DONE");
+                attempt.setFinishedAt(LocalDateTime.now());
+                runs.recorder().update(attempt);
+            }
+        }
         return view(jobId);
+    }
+
+    /** Best-effort disposal of an external savepoint/checkpoint on Flink; never blocks callers. */
+    public void disposeSavepointQuietly(String clusterId, String path) {
+        if (path == null || path.isBlank()) {
+            return;
+        }
+        try {
+            engines.clientFor(clusterId).disposeSavepoint(path);
+        } catch (RuntimeException e) {
+            // Flink may be unreachable or the path already gone; do not block start/delete.
+        }
     }
 
     public StreamView updateSettings(String jobId, Settings settings) {

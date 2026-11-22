@@ -39,6 +39,7 @@ import TableMapping from './wizard/TableMapping.vue'
 
 const props = defineProps<{
   jobId: string
+  clusterId?: string | null
   ownerId: string | null
   readonly: boolean
   initialForm: WizardForm | null
@@ -208,7 +209,10 @@ async function loadOptionDefs() {
   if (!plugin || !sinkPlugin) return
   try {
     const handled = sourceUi.value?.handledOptions ?? []
-    const [src, snk] = await Promise.all([connectorApi.options('source', plugin), connectorApi.options('sink', sinkPlugin)])
+    const [src, snk] = await Promise.all([
+      connectorApi.options('source', plugin, props.clusterId),
+      connectorApi.options('sink', sinkPlugin, props.clusterId),
+    ])
     sourceOptionDefs.value = src.filter((o) => !handled.includes(o.key) && !o.key.startsWith('auth.'))
     sinkOptionDefs.value = snk.filter((o) => !HANDLED_SINK_OPTIONS.includes(o.key) && !o.key.startsWith('auth.'))
   } catch {

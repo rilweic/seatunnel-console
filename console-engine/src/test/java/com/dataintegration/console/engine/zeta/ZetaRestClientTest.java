@@ -11,6 +11,7 @@ import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.EngineLogFile;
 import com.dataintegration.console.engine.SubmitJobRequest;
+import com.dataintegration.console.engine.TailBuffer;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -52,9 +53,9 @@ class ZetaRestClientTest {
         respond("/submit-job", 200, "{\"jobId\": \"733584788375093248\", \"jobName\": \"smoke\"}");
         ZetaRestClient client = client(List.of(baseUrl), "admin", "secret");
 
-        long jobId = client.submit(SubmitJobRequest.fresh("smoke job", "env { job.mode = \"batch\" }"));
+        String jobId = client.submit(SubmitJobRequest.fresh("smoke job", "env { job.mode = \"batch\" }"));
 
-        assertThat(jobId).isEqualTo(733584788375093248L);
+        assertThat(jobId).isEqualTo("733584788375093248");
         HttpExchange exchange = lastExchange.get();
         assertThat(exchange.getRequestMethod()).isEqualTo("POST");
         assertThat(exchange.getRequestURI().getRawQuery()).isEqualTo("format=hocon&jobName=smoke+job");
@@ -69,7 +70,7 @@ class ZetaRestClientTest {
         ZetaRestClient client = client(List.of(baseUrl), null, null);
 
         client.submit(
-                new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, 1L, null));
+                new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, "1", null, null));
 
         assertThat(lastExchange.get().getRequestURI().getRawQuery())
                 .isEqualTo("format=hocon&jobName=j&restoreMode=SAVEPOINT&restoreSourceJobId=1");
@@ -80,18 +81,18 @@ class ZetaRestClientTest {
     void freshSubmitCarriesTheCallersJobId() {
         respond("/submit-job", 200, "{\"jobId\": \"5000000000000000001\"}");
 
-        long jobId = client(List.of(baseUrl), null, null).submit(SubmitJobRequest.fresh("j", "cfg").withJobId(5000000000000000001L));
+        String jobId = client(List.of(baseUrl), null, null).submit(SubmitJobRequest.fresh("j", "cfg").withJobId("5000000000000000001"));
 
-        assertThat(jobId).isEqualTo(5000000000000000001L);
+        assertThat(jobId).isEqualTo("5000000000000000001");
         assertThat(lastExchange.get().getRequestURI().getRawQuery()).isEqualTo("format=hocon&jobName=j&jobId=5000000000000000001");
     }
 
     @Test
     void logTailKeepsOnlyTheLastBytes() {
-        ZetaRestClient.TailBuffer tail = new ZetaRestClient.TailBuffer(7);
+        TailBuffer tail = new TailBuffer(7);
         tail.write("0123456789".getBytes(StandardCharsets.UTF_8));
         tail.write("abcdefghij".getBytes(StandardCharsets.UTF_8));
-        ZetaRestClient.TailBuffer whole = new ZetaRestClient.TailBuffer(64);
+        TailBuffer whole = new TailBuffer(64);
         whole.write("0123456789".getBytes(StandardCharsets.UTF_8));
 
         assertThat(tail.result().text()).isEqualTo("defghij");
@@ -118,7 +119,7 @@ class ZetaRestClientTest {
                     List.of("http://127.0.0.1:" + silent.getAddress().getPort(), baseUrl), null, null,
                     Duration.ofSeconds(1), Duration.ofMillis(300)));
 
-            assertThatThrownBy(() -> client.submit(SubmitJobRequest.fresh("j", "cfg").withJobId(5000000000000000001L)))
+            assertThatThrownBy(() -> client.submit(SubmitJobRequest.fresh("j", "cfg").withJobId("5000000000000000001")))
                     .isInstanceOf(ConsoleException.class)
                     .extracting(e -> ((ConsoleException) e).getCode())
                     .isEqualTo(ErrorCodes.ENGINE_RESPONSE_LOST);
@@ -131,7 +132,7 @@ class ZetaRestClientTest {
     void stopPostsJsonBody() {
         respond("/stop-job", 200, "{\"jobId\": 7}");
 
-        client(List.of(baseUrl), null, null).stop(7L, true, false);
+        client(List.of(baseUrl), null, null).stop("7", true, false);
 
         assertThat(lastBody.get())
                 .contains("\"jobId\":7")
@@ -151,7 +152,7 @@ class ZetaRestClientTest {
                  "errorMsg": null}
                 """);
 
-        Optional<EngineJobInfo> info = client(List.of(baseUrl), null, null).jobInfo(7L);
+        Optional<EngineJobInfo> info = client(List.of(baseUrl), null, null).jobInfo("7");
 
         assertThat(info).isPresent();
         assertThat(info.get().status()).isEqualTo(EngineJobStatus.FINISHED);
@@ -167,7 +168,7 @@ class ZetaRestClientTest {
                  "diagnostics": {"pipelines": [{"pipelineId": 1, "restoreCount": 2}], "totalPipelineRestoreCount": 2}}
                 """);
 
-        assertThat(client(List.of(baseUrl), null, null).jobInfo(9L).orElseThrow().pipelineRestores()).isEqualTo(2);
+        assertThat(client(List.of(baseUrl), null, null).jobInfo("9").orElseThrow().pipelineRestores()).isEqualTo(2);
     }
 
     @Test
@@ -175,11 +176,11 @@ class ZetaRestClientTest {
         respond("/submit-job", 200, "{\"jobId\": 3}");
         ZetaRestClient client = client(List.of(baseUrl), null, null);
 
-        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.CHECKPOINT, 1L, 3L));
+        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.CHECKPOINT, "1", null, "3"));
         assertThat(lastExchange.get().getRequestURI().getRawQuery())
                 .isEqualTo("format=hocon&jobName=j&restoreMode=CHECKPOINT&restoreSourceJobId=1&jobId=3");
 
-        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, 1L, 3L));
+        client.submit(new SubmitJobRequest("j", "cfg", SubmitJobRequest.RestoreMode.SAVEPOINT, "1", null, "3"));
         assertThat(lastExchange.get().getRequestURI().getRawQuery())
                 .isEqualTo("format=hocon&jobName=j&restoreMode=SAVEPOINT&restoreSourceJobId=1");
     }
@@ -195,7 +196,7 @@ class ZetaRestClientTest {
                    "latestCompleted": {"checkpointId": 2, "completedTimestamp": 3000}, "latestFailed": {}}]}
                 """);
 
-        EngineCheckpoints checkpoints = client(List.of(baseUrl), null, null).checkpoints(5L).orElseThrow();
+        EngineCheckpoints checkpoints = client(List.of(baseUrl), null, null).checkpoints("5").orElseThrow();
 
         assertThat(checkpoints).isEqualTo(new EngineCheckpoints(7, 6, 1, 3000L, 2500L, "CHECKPOINT_EXPIRED"));
     }
@@ -204,14 +205,14 @@ class ZetaRestClientTest {
     void noPipelinesMeansNoCheckpointStatistics() {
         respond("/jobs/checkpoints/6", 200, "{\"jobId\": \"6\"}");
 
-        assertThat(client(List.of(baseUrl), null, null).checkpoints(6L)).isEmpty();
+        assertThat(client(List.of(baseUrl), null, null).checkpoints("6")).isEmpty();
     }
 
     @Test
     void jobInfoWithoutStatusMeansUnknownJob() {
         respond("/job-info/8", 200, "{\"jobId\": \"8\"}");
 
-        assertThat(client(List.of(baseUrl), null, null).jobInfo(8L)).isEmpty();
+        assertThat(client(List.of(baseUrl), null, null).jobInfo("8")).isEmpty();
     }
 
     @Test
@@ -246,7 +247,7 @@ class ZetaRestClientTest {
         respond("/logs/job-7.log", 200, "line1\nline2\n");
         ZetaRestClient client = client(List.of(baseUrl), "admin", "secret");
 
-        List<EngineLogFile> files = client.listLogs(7L);
+        List<EngineLogFile> files = client.listLogs("7");
         EngineClient.LogContent content = client.readLog(files.get(0), 1024);
 
         assertThat(files).containsExactly(new EngineLogFile("n1:8080", "job-7.log", baseUrl + "/logs/job-7.log"));
@@ -289,7 +290,7 @@ class ZetaRestClientTest {
     void noPerJobLogsGivesEmptyList() {
         respond("/logs/8", 200, "[]");
 
-        assertThat(client(List.of(baseUrl), null, null).listLogs(8L)).isEmpty();
+        assertThat(client(List.of(baseUrl), null, null).listLogs("8")).isEmpty();
     }
 
     @Test

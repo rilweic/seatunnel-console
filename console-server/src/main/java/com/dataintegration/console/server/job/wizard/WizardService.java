@@ -4,6 +4,7 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.datasource.http.HttpPreviewResponse;
 import com.dataintegration.console.datasource.meta.ColumnMeta;
 import com.dataintegration.console.datasource.meta.TableMeta;
+import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.job.wizard.WizardForm.DataMode;
@@ -97,12 +98,16 @@ public class WizardService {
      * @param variables the job's variables as a run now would see them, for rendering filters
      */
     public PrecheckResult precheck(WizardForm form, Map<String, String> variables) {
+        return precheck(form, variables, EngineType.ZETA);
+    }
+
+    public PrecheckResult precheck(WizardForm form, Map<String, String> variables, EngineType engineType) {
         List<Check> checks = new ArrayList<>();
         Endpoints endpoints;
         Generated generated;
         try {
             endpoints = endpoints(form);
-            generated = WizardGenerator.generate(form, endpoints);
+            generated = WizardGenerator.generate(form, endpoints, engineType);
         } catch (ConsoleException e) {
             checks.add(new Check(Level.ERROR, e.getMessage()));
             return new PrecheckResult(checks, null);

@@ -19,6 +19,44 @@
 | 10 | console 的 Docker 镜像带不带 Flink 客户端 | 暂不考虑 |
 | 9 | 部署方式 | Standalone / session 下 console 功能一样；application 模式影响"集群地址"（§3）。第一版只支持 Standalone / session |
 
+### 0.1 整体流程图
+
+下图是当前设计，Flink 接入尚未实现；提交、恢复和连接器加载等行为仍需按 §7.6 实测。
+
+```mermaid
+flowchart TD
+    admin[管理员登记集群并设置默认集群] --> cluster[Zeta 或 Flink 集群]
+    user[用户创建任务] --> choose[选择集群并保存任务]
+    cluster --> choose
+    choose --> start{任务类型}
+    start -->|离线：手动、调度、重跑、补数| xxl[XXL-JOB 触发运行]
+    start -->|实时：启动或恢复| stream[Console 直接启动]
+    xxl --> render[渲染任务配置并注入凭据]
+    stream --> render
+    render --> engine{集群引擎}
+
+    engine -->|Zeta| zeta[通过 Zeta REST 提交配置]
+    zeta --> zmonitor[通过 Zeta REST 查询、停止和读取日志]
+
+    engine -->|Flink| temp[在提交端写入受限的临时配置文件]
+    temp --> cli[本机 Flink 客户端加载 SeaTunnel 发行包并提交]
+    cli --> cleanup[提交后删除临时配置文件]
+    cli --> flink[已有的 Flink Standalone / session 集群]
+    flink --> data[TaskManager 访问来源和目标数据源]
+    flink --> monitor[Console 通过 Flink REST 查询状态和指标]
+    monitor --> logs[按需读取 Flink 日志]
+    monitor --> stop{停止或恢复实时任务}
+    stop -->|停止| savepoint[请求 savepoint 并记录路径]
+    savepoint --> state[(集群配置的状态存储)]
+    stop -->|恢复| restore[用记录的 savepoint 或 checkpoint 路径重新提交]
+    state --> restore
+    restore --> render
+    cli -. 提交结果不确定 .-> reconcile[通过 Flink REST 按作业名查找，避免重复提交]
+    reconcile -. 找回作业 .-> monitor
+```
+
+任务创建后不能更换集群；需要迁移时复制任务并在新集群全新启动。Flink 的离线任务先实现，实时任务和恢复能力后续实现；作业名查找、固定 jobId 和恢复细节仍需验证。
+
 ## 1. 前提
 
 ### 1.1 Flink 客户端是什么
@@ -419,61 +457,66 @@ done
 
 ### 7.3 `docker-compose.yml`
 
+模拟一个由第三方维护、已配好 checkpoint / savepoint 的纯 Flink 1.20.1 集群（不含 SeaTunnel，不挂作业目录）：
+
 ```yaml
-# Flink 1.20 单节点（jobmanager + taskmanager）。
-name: seatunnel-engines
+# Flink 1.20 单节点（jobmanager + taskmanager），模拟纯外部 Flink 集群。
+name: flink-cluster
 
 x-common: &common
+  image: flink:1.20.1-scala_2.12-java11           # 官方镜像，amd64 / arm64
+  restart: unless-stopped
   extra_hosts:
-    - "host.docker.internal:host-gateway"   # 容器里访问宿主机上的数据库（Linux 必须加）
+    - "host.docker.internal:host-gateway"         # 容器里访问宿主机上的数据库（Linux 必须加）
   volumes:
-    - ${SEATUNNEL_DIST:-~/software/seatunnel-engines}:/opt/seatunnel   # 验证 §7.6 第 1 项时去掉这行
-    - ./jobs:/opt/jobs                                                  # 作业配置
-    - ./flink-state:/opt/flink-state                                    # checkpoint / savepoint
+    - ./flink-state:/opt/flink-state              # checkpoint / savepoint（仅限单机测试）
 
 services:
   jobmanager:
     <<: *common
-    image: flink:1.20.1-scala_2.12-java11      # 官方镜像，amd64 / arm64
+    container_name: flink-jobmanager
     command: jobmanager
     ports:
-      - "8082:8081"
+      - "8082:8081"                               # 8081 被 xxl-job-admin 占用，对外暴露为 8082
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1600m
         rest.bind-address: 0.0.0.0
-        state.checkpoints.dir: file:///opt/flink-state/checkpoints
-        state.savepoints.dir: file:///opt/flink-state/savepoints
+        rest.server.max-content-length: 268435456
+        execution.checkpointing.dir: file:///opt/flink-state/checkpoints
+        execution.checkpointing.savepoint-dir: file:///opt/flink-state/savepoints
         execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 
   taskmanager:
     <<: *common
-    image: flink:1.20.1-scala_2.12-java11
+    container_name: flink-taskmanager
     command: taskmanager
-    depends_on: [jobmanager]
+    depends_on:
+      - jobmanager
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: jobmanager
-        taskmanager.numberOfTaskSlots: 4
-        taskmanager.memory.process.size: 2048m
-        state.checkpoints.dir: file:///opt/flink-state/checkpoints
-        state.savepoints.dir: file:///opt/flink-state/savepoints
+        taskmanager.numberOfTaskSlots: 8
+        taskmanager.memory.process.size: 3072m
+        taskmanager.memory.jvm-metaspace.size: 512m
+        execution.checkpointing.dir: file:///opt/flink-state/checkpoints
+        execution.checkpointing.savepoint-dir: file:///opt/flink-state/savepoints
+        execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
 ```
 
 这里的 checkpoint 配置是在模拟"集群维护方已经配好"（§5.6）。
 
-### 7.4 提交
+### 7.4 启动与提交
 
-两种方式：在容器里提交（和 SeaTunnel e2e 一样，用来确认发行包本身没问题），和从宿主机提交（模拟做法 1，宿主机要有同版本 Flink 客户端）：
+启动前先创建状态目录并放开权限（避免 Linux 上容器内 `flink` 用户 UID 9999 写状态时报权限不足），再从宿主机用同版本 Flink 客户端和精简 SeaTunnel 发行包远程提交（模拟做法 1）：
 
 ```bash
+mkdir -p ./flink-state/checkpoints ./flink-state/savepoints
+chmod -R 777 ./flink-state
 docker compose up -d                        # http://localhost:8082
 
-# 容器里
-docker compose exec jobmanager \
-  /opt/seatunnel/bin/start-seatunnel-flink-20-connector-v2.sh --config /opt/jobs/demo.conf
-
-# 宿主机（做法 1）
+# 宿主机远程提交（做法 1）
 FLINK_HOME=~/software/flink-1.20.1 ~/software/seatunnel-engines/bin/start-seatunnel-flink-20-connector-v2.sh \
   -m localhost:8082 --config jobs/demo.conf --name demo
 ```

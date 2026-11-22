@@ -266,7 +266,7 @@ public class InstanceService {
      * engine (which keeps per-job logs for history-job-expire-minutes, one day by default).
      */
     public LogView log(String instanceId, int attemptNo) {
-        require(instanceId);
+        JobInstance instance = require(instanceId);
         JobInstanceAttempt attempt =
                 attempts(instanceId).stream()
                         .filter(a -> a.getAttemptNo() == attemptNo)
@@ -285,7 +285,9 @@ public class InstanceService {
             return new LogView("UNAVAILABLE", "", false, reason);
         }
         try {
-            EngineLogService.CollectedLog live = engineLogService.collect(Long.parseLong(attempt.getEngineJobId()));
+            JobDefinition job = jobMapper.selectById(instance.getJobDefinitionId());
+            String clusterId = job == null ? null : job.getClusterId();
+            EngineLogService.CollectedLog live = engineLogService.collect(clusterId, attempt.getEngineJobId());
             if (live.fileCount() == 0) {
                 return new LogView("UNAVAILABLE", "", false,
                         "SeaTunnel has no per-job log for engine job " + attempt.getEngineJobId()

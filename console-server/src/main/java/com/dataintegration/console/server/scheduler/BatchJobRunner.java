@@ -13,7 +13,6 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Submits a batch job and blocks until it reaches a terminal state (docs/design.md §5.2 steps 3–4).
@@ -32,7 +31,7 @@ public class BatchJobRunner {
 
     /** Receives progress; the XXL-JOB handler forwards it to the scheduler log. */
     public interface Listener {
-        void onSubmitted(long engineJobId);
+        void onSubmitted(String engineJobId);
 
         void onProgress(EngineJobInfo info);
 
@@ -45,7 +44,7 @@ public class BatchJobRunner {
      * @param metrics last metrics seen, empty when the engine lost the job
      */
     public record Outcome(
-            long engineJobId, EngineJobStatus finalStatus, Map<String, String> metrics, String errorMessage) {
+            String engineJobId, EngineJobStatus finalStatus, Map<String, String> metrics, String errorMessage) {
 
         public boolean succeeded() {
             return finalStatus == EngineJobStatus.FINISHED;
@@ -91,18 +90,10 @@ public class BatchJobRunner {
         this.pause = pause;
     }
 
-    /**
-     * An engine job id for a fresh submission. Zeta's own ids come from a Hazelcast flake id
-     * generator and stay far below 2^62; ids from here start there, so the two never meet.
-     */
-    public static long newJobId() {
-        return ThreadLocalRandom.current().nextLong(1L << 62, Long.MAX_VALUE);
-    }
-
     /** On interrupt the thread's interrupt flag is restored before returning. */
     public Outcome run(SubmitJobRequest request, Listener listener, CancelSignal signal) {
-        SubmitJobRequest withId = request.jobId() == null ? request.withJobId(newJobId()) : request;
-        long jobId;
+        SubmitJobRequest withId = request.jobId() == null ? request.withJobId(engineClient.newJobId()) : request;
+        String jobId;
         try {
             jobId = engineClient.submit(withId);
         } catch (ConsoleException e) {
@@ -121,7 +112,7 @@ public class BatchJobRunner {
      * confirmed either way, the run ends UNKNOWABLE: retrying could run it twice, while giving up
      * leaves the decision, with the id to look for, to whoever reads the run.
      */
-    private Outcome afterLostSubmission(long jobId, ConsoleException failure, Listener listener, CancelSignal signal) {
+    private Outcome afterLostSubmission(String jobId, ConsoleException failure, Listener listener, CancelSignal signal) {
         // Cleared so the lookups can run; restored before returning.
         boolean interrupted = Thread.interrupted();
         submitted(listener, jobId);
@@ -153,7 +144,7 @@ public class BatchJobRunner {
         }
     }
 
-    private Outcome watch(long jobId, Listener listener, CancelSignal signal) {
+    private Outcome watch(String jobId, Listener listener, CancelSignal signal) {
         Map<String, String> lastMetrics = Map.of();
         int failedPolls = 0;
         while (true) {
@@ -207,7 +198,7 @@ public class BatchJobRunner {
      * before the stop keeps its real outcome. A stop that fails or does not take effect is reported
      * as UNKNOWABLE, never as CANCELED, since the job may still be writing.
      */
-    private Outcome cancel(long jobId, Map<String, String> lastMetrics, Listener listener, String reason) {
+    private Outcome cancel(String jobId, Map<String, String> lastMetrics, Listener listener, String reason) {
         Optional<Outcome> ended = endedOutcome(jobId, listener);
         if (ended.isPresent()) {
             warn(listener, reason + ", but engine job " + jobId + " had already ended as " + ended.get().finalStatus());
@@ -239,7 +230,7 @@ public class BatchJobRunner {
     }
 
     /** The job's outcome if the engine reports it as ended; empty while running or unreadable. */
-    private Optional<Outcome> endedOutcome(long jobId, Listener listener) {
+    private Optional<Outcome> endedOutcome(String jobId, Listener listener) {
         try {
             Optional<EngineJobInfo> info = engineClient.jobInfo(jobId);
             if (info.isPresent() && info.get().status().isTerminal()) {
@@ -256,7 +247,7 @@ public class BatchJobRunner {
     // A failure to record something (e.g. a database hiccup) must never end the watch over a job
     // that is already on the cluster: it would keep running with nobody stopping or recording it.
 
-    private static void submitted(Listener listener, long jobId) {
+    private static void submitted(Listener listener, String jobId) {
         try {
             listener.onSubmitted(jobId);
         } catch (RuntimeException e) {

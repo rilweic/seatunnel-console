@@ -4,6 +4,7 @@ import static com.dataintegration.console.server.job.wizard.Hocon.invalid;
 import static com.dataintegration.console.server.job.wizard.Hocon.notBlank;
 
 import com.dataintegration.console.datasource.DataSourceCapabilities;
+import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.datasource.jdbc.SqlDialect;
 import com.dataintegration.console.server.job.ValidationSpec;
 import com.dataintegration.console.server.job.Variables;
@@ -75,6 +76,11 @@ public final class WizardGenerator {
     private WizardGenerator() {}
 
     public static Generated generate(WizardForm form, Endpoints endpoints) {
+        return generate(form, endpoints, EngineType.ZETA);
+    }
+
+    public static Generated generate(WizardForm form, Endpoints endpoints, EngineType engineType) {
+        EngineType engine = engineType == null ? EngineType.ZETA : engineType;
         requireShape(form, endpoints);
         WizardSource source = WizardConnectors.source(endpoints.sourceType(), form);
         WizardSink sink = WizardConnectors.sink(endpoints.targetType());
@@ -89,8 +95,10 @@ public final class WizardGenerator {
                 .append(Math.min(Math.max(1, form.parallelism()), from.maxParallelism())).append('\n');
         if (form.streaming()) {
             hocon.append("  checkpoint.interval = ").append(form.stream().checkpointMillis()).append('\n');
-            // a forced stop or a failure can then still restore from the latest checkpoint (§12 P2, Q26)
-            hocon.append("  checkpoint.retain-after-job-cancelled = true\n");
+            if (engine == EngineType.ZETA) {
+                // a forced stop or a failure can then still restore from the latest checkpoint (§12 P2, Q26)
+                hocon.append("  checkpoint.retain-after-job-cancelled = true\n");
+            }
         }
         hocon.append("}\n\n");
         source.append(hocon, form, endpoints);

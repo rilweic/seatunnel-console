@@ -39,7 +39,11 @@ public class StreamRuns {
      *
      * @param blocked why restoring would fail again; the next start is then fresh
      */
-    public record RestorePoint(Kind kind, long engineJobId, String versionId, String blocked) {}
+    public record RestorePoint(Kind kind, String engineJobId, String restorePath, String versionId, String blocked) {
+        public RestorePoint(Kind kind, String engineJobId, String versionId, String blocked) {
+            this(kind, engineJobId, null, versionId, blocked);
+        }
+    }
 
     private final RunRecorder recorder;
     private final JobStreamMapper streams;
@@ -67,7 +71,7 @@ public class StreamRuns {
     }
 
     /** A new RUNNING run of the job's current version, not yet the job's current run. */
-    public JobInstance create(JobDefinition job, JobVersion version, String startupParamsJson, String userId) {
+    public JobInstance create(JobDefinition job, JobVersion version, String engineType, String startupParamsJson, String userId) {
         JobInstance instance = new JobInstance();
         instance.setProjectId(job.getProjectId());
         instance.setJobDefinitionId(job.getId());
@@ -79,7 +83,7 @@ public class StreamRuns {
         instance.setStartedAt(now);
         instance.setAttemptCount(0);
         instance.setMaxAttempts(1);
-        instance.setEngineType("ZETA");
+        instance.setEngineType(engineType);
         instance.setStartupParamsJson(startupParamsJson);
         instance.setVariablesJson(startupParamsJson);
         instance.setCreatedBy(userId);
@@ -110,6 +114,7 @@ public class StreamRuns {
         streams.update(null, new LambdaUpdateWrapper<JobStream>()
                 .set(JobStream::getRestoreKind, null)
                 .set(JobStream::getRestoreEngineJobId, null)
+                .set(JobStream::getRestorePath, null)
                 .set(JobStream::getRestoreVersionId, null)
                 .set(JobStream::getRestoreBlocked, null)
                 .eq(JobStream::getJobDefinitionId, jobId)
@@ -195,7 +200,8 @@ public class StreamRuns {
                 .eq(JobStream::getCurrentInstanceId, instance.getId());
         if (point != null) {
             update.set(JobStream::getRestoreKind, point.kind() == null ? null : point.kind().name())
-                    .set(JobStream::getRestoreEngineJobId, point.kind() == null ? null : String.valueOf(point.engineJobId()))
+                    .set(JobStream::getRestoreEngineJobId, point.kind() == null ? null : point.engineJobId())
+                    .set(JobStream::getRestorePath, point.kind() == null ? null : point.restorePath())
                     .set(JobStream::getRestoreVersionId, point.versionId())
                     .set(JobStream::getRestoreBlocked, point.blocked());
         }

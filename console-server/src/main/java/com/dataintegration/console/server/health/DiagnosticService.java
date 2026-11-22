@@ -6,6 +6,7 @@ import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.SubmitJobRequest;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.health.ClusterHealthService.Check;
 import com.dataintegration.console.server.health.ClusterHealthService.Status;
@@ -54,15 +55,15 @@ public class DiagnosticService {
             sink { Console { plugin_input = ["probe"] } }
             """;
 
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
     private final DatasourceService datasourceService;
     private final DatasourceMapper datasourceMapper;
     private final StreamProbe streamProbe;
 
-    public DiagnosticService(EngineClient engineClient, DatasourceService datasourceService, DatasourceMapper datasourceMapper,
+    public DiagnosticService(EngineRegistry engines, DatasourceService datasourceService, DatasourceMapper datasourceMapper,
             StreamProbe streamProbe) {
         this.streamProbe = streamProbe;
-        this.engineClient = engineClient;
+        this.engines = engines;
         this.datasourceService = datasourceService;
         this.datasourceMapper = datasourceMapper;
     }
@@ -71,13 +72,18 @@ public class DiagnosticService {
         Check judge(EngineJobInfo info);
     }
 
-    private record Probe(String name, long jobId, Verdict verdict) {}
+    private record Probe(String name, String jobId, Verdict verdict) {}
 
     public List<Check> run() {
+        return run(null);
+    }
+
+    public List<Check> run(String clusterId) {
+        EngineClient engineClient = engines.clientFor(clusterId);
         List<Check> results = new ArrayList<>();
         List<Probe> probes = new ArrayList<>();
 
-        submit("作业日志", LOG_JOB, this::judgeLogs, probes, results);
+        submit(engineClient, "作业日志", LOG_JOB, info -> judgeLogs(engineClient, info), probes, results);
         for (DatasourceEntity ds : datasourceMapper.selectList(new LambdaQueryWrapper<DatasourceEntity>()
                 .in(DatasourceEntity::getType, jdbcDriverTypes())
                 .orderByAsc(DatasourceEntity::getName))) {
@@ -90,16 +96,16 @@ public class DiagnosticService {
                 continue;
             }
             String name = ds.getName() + "（" + ds.getType() + "）";
-            submit("JDBC " + name, config,
+            submit(engineClient, "JDBC " + name, config,
                     info -> info.status().name().equals("FINISHED")
                             ? new Check("JDBC 驱动", name, Status.OK, "worker 能加载驱动并连上数据库")
                             : new Check("JDBC 驱动", name, Status.ERROR, "作业 " + info.status() + "：" + info.errorMessage()
-                                    + "。检查每个节点 lib/ 下是否有对应的 JDBC 驱动，以及 worker 能否访问数据库"),
+                                    + "。检查驱动与网络访问"),
                     probes, results);
         }
 
         // runs while the batch probes do; it takes a few checkpoints and a stop and start
-        results.add(streamProbe.run());
+        results.add(streamProbe.run(engineClient));
 
         long deadline = System.currentTimeMillis() + TIMEOUT.toMillis();
         List<Probe> pending = new ArrayList<>(probes);
@@ -131,21 +137,25 @@ public class DiagnosticService {
     }
 
     /** SeaTunnel rejects a job whose source cannot be set up (e.g. no driver) at submission, with HTTP 500. */
-    private void submit(String name, String config, Verdict verdict, List<Probe> probes, List<Check> results) {
+    private void submit(EngineClient engineClient, String name, String config, Verdict verdict, List<Probe> probes, List<Check> results) {
         try {
-            long jobId = engineClient.submit(SubmitJobRequest.fresh("console-diagnostic: " + name, config));
+            String jobId = engineClient.submit(SubmitJobRequest.fresh("console-diagnostic: " + name, config));
             probes.add(new Probe(name, jobId, verdict));
         } catch (ConsoleException e) {
             String group = name.startsWith("JDBC") ? "JDBC 驱动" : "诊断作业";
             results.add(new Check(group, name.replaceFirst("^JDBC ", ""), Status.ERROR,
-                    "提交被拒绝：" + e.getMessage() + "。根因在 master 的 logs/seatunnel-engine-server.log；常见原因是缺少驱动或连接器"));
+                    "提交被拒绝：" + e.getMessage()));
         }
     }
 
-    private Check judgeLogs(EngineJobInfo info) {
+    private Check judgeLogs(EngineClient engineClient, EngineJobInfo info) {
         if (!info.status().name().equals("FINISHED")) {
             return new Check("作业日志", "FakeSource → Console", Status.ERROR,
                     "诊断作业 " + info.status() + "：" + info.errorMessage() + "（需要 FakeSource 和 Console 连接器）");
+        }
+        if (!engineClient.archivesPerJobLogs()) {
+            return new Check("作业日志", "FakeSource → Console", Status.OK,
+                    "诊断作业运行成功（Flink 不按作业拆分日志，异常快照会自动归档，JM/TM 日志可按需查看）");
         }
         try {
             return engineClient.listLogs(info.jobId()).isEmpty()

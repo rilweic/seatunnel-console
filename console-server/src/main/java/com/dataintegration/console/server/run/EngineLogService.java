@@ -4,6 +4,7 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineClient.LogContent;
 import com.dataintegration.console.engine.EngineLogFile;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 
 import org.springframework.stereotype.Component;
 
@@ -18,24 +19,30 @@ public class EngineLogService {
 
     /** Same limit as Zeta's default log-response-max-size-mb. */
     public static final long MAX_BYTES = 64L * 1024 * 1024;
+    /** Per-file cap for shared node logs (Flink JM/TM) so live viewing stays lightweight. */
+    private static final long SHARED_NODE_LOG_CAP = 512L * 1024;
 
     public record CollectedLog(String text, boolean truncated, int fileCount) {}
 
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
 
-    public EngineLogService(EngineClient engineClient) {
-        this.engineClient = engineClient;
+    public EngineLogService(EngineRegistry engines) {
+        this.engines = engines;
     }
 
     /**
      * @return empty text with fileCount 0 when the engine has no per-job log for this job
      */
-    public CollectedLog collect(long engineJobId) {
+    public CollectedLog collect(String clusterId, String engineJobId) {
+        EngineClient engineClient = engines.clientFor(clusterId);
         List<EngineLogFile> files = engineClient.listLogs(engineJobId);
         if (files.isEmpty()) {
             return new CollectedLog("", false, 0);
         }
         long budget = Math.max(1, MAX_BYTES / files.size());
+        if (!engineClient.archivesPerJobLogs()) {
+            budget = Math.min(budget, SHARED_NODE_LOG_CAP);
+        }
         StringBuilder text = new StringBuilder();
         boolean truncated = false;
         for (EngineLogFile file : files) {

@@ -2,8 +2,8 @@ package com.dataintegration.console.server.run;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
-import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.server.auth.CurrentUser;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.SyncWindow;
@@ -47,7 +47,7 @@ public class RunService {
     private final ScheduleService scheduleService;
     private final RunRecorder recorder;
     private final RunExecutor runExecutor;
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
     private final ObjectProvider<XxlJobAdminClient> xxlJobAdminClient;
     private final ObjectMapper objectMapper;
     private final TaskExecutor localExecutor;
@@ -57,14 +57,14 @@ public class RunService {
             ScheduleService scheduleService,
             RunRecorder recorder,
             RunExecutor runExecutor,
-            EngineClient engineClient,
+            EngineRegistry engines,
             ObjectProvider<XxlJobAdminClient> xxlJobAdminClient,
             ObjectMapper objectMapper) {
         this.jobService = jobService;
         this.scheduleService = scheduleService;
         this.recorder = recorder;
         this.runExecutor = runExecutor;
-        this.engineClient = engineClient;
+        this.engines = engines;
         this.xxlJobAdminClient = xxlJobAdminClient;
         this.objectMapper = objectMapper;
         this.localExecutor = localPool();
@@ -199,7 +199,7 @@ public class RunService {
         instance.setMaxAttempts(Math.max(1, run.maxAttempts()));
         instance.setRerunOfInstanceId(run.rerunOfInstanceId());
         instance.setBackfillBatchId(run.backfillBatchId());
-        instance.setEngineType(engineClient.type().name());
+        instance.setEngineType(engines.engineType(run.job().getClusterId()).name());
         instance.setStartupParamsJson(startup);
         // Shown as the run's variables until it starts and the final values replace them.
         instance.setVariablesJson(startup);

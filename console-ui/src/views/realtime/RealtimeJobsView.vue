@@ -95,6 +95,12 @@ onBeforeUnmount(() => window.clearInterval(timer))
         </template>
       </el-table-column>
       <el-table-column prop="projectName" label="项目" min-width="120" show-overflow-tooltip />
+      <el-table-column label="执行集群" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <el-tag :type="row.engineType === 'FLINK' ? 'warning' : 'primary'" size="small">{{ row.engineType || 'ZETA' }}</el-tag>
+          <span class="sub inline">{{ row.clusterName ?? '默认集群' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="150">
         <template #default="{ row }">
           <template v-if="summaries[row.id]">

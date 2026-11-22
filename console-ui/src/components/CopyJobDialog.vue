@@ -4,30 +4,44 @@ import { ElMessage } from 'element-plus'
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { clustersApi, type ClusterView } from '@/api/clusters'
 import { jobApi, projectApi, type ProjectView } from '@/api/console'
 
-const props = defineProps<{ job: { id: string; name: string; projectId: string; jobType?: 'BATCH' | 'STREAMING' } | null }>()
+const props = defineProps<{ job: { id: string; name: string; projectId: string; clusterId?: string | null; jobType?: 'BATCH' | 'STREAMING' } | null }>()
 const visible = defineModel<boolean>({ required: true })
 
 const router = useRouter()
 const name = ref('')
 const projectId = ref('')
+const clusterId = ref('')
 const projects = ref<ProjectView[]>([])
+const clusters = ref<ClusterView[]>([])
 const copying = ref(false)
 
 watch(visible, async (open) => {
   if (!open || !props.job) return
   name.value = `${props.job.name}_copy`
   projectId.value = props.job.projectId
-  projects.value = (await projectApi.list({ size: 200 })).items.filter((p) => p.editable)
+  const [projPage, clusterList] = await Promise.all([projectApi.list({ size: 200 }), clustersApi.list()])
+  projects.value = projPage.items.filter((p) => p.editable)
   if (!projects.value.some((p) => p.id === projectId.value)) projectId.value = projects.value[0]?.id ?? ''
+  clusters.value = clusterList
+  clusterId.value =
+    (props.job.clusterId && clusterList.some((c) => c.id === props.job!.clusterId) ? props.job.clusterId : '') ||
+    clusterList.find((c) => c.isDefault)?.id ||
+    clusterList[0]?.id ||
+    ''
 })
 
 async function copy() {
   if (!props.job || !name.value.trim() || !projectId.value) return
   copying.value = true
   try {
-    const { job, scheduleCopied } = await jobApi.copy(props.job.id, { name: name.value.trim(), projectId: projectId.value })
+    const { job, scheduleCopied } = await jobApi.copy(props.job.id, {
+      name: name.value.trim(),
+      projectId: projectId.value,
+      clusterId: clusterId.value || undefined,
+    })
     ElMessage.success(scheduleCopied ? '已复制，调度设置也复制了过来（未启用）' : '已复制')
     visible.value = false
     router.push(job.jobType === 'STREAMING' ? `/realtime/${job.id}` : `/jobs/${job.id}`)
@@ -46,6 +60,16 @@ async function copy() {
       <el-form-item label="项目" required>
         <el-select v-model="projectId" filterable placeholder="选择项目" class="full">
           <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item v-if="clusters.length" label="执行集群">
+        <el-select v-model="clusterId" placeholder="选择执行集群" class="full">
+          <el-option
+            v-for="c in clusters"
+            :key="c.id"
+            :label="`${c.name}（${c.engineType}${c.isDefault ? ' · 默认' : ''}）`"
+            :value="c.id"
+          />
         </el-select>
       </el-form-item>
     </el-form>

@@ -248,7 +248,7 @@ onMounted(async () => {
     <span class="tip">在 source / sink 的连接器里写 <code>datasource_id</code>，密码不会出现在配置中。目前支持 Jdbc、Elasticsearch 和 Http 连接器。</span>
   </div>
   <el-input ref="editor" v-model="hocon" type="textarea" :rows="24" class="code" spellcheck="false" />
-  <TransformInsertDialog v-model="transformOpen" @insert="insertTransform" />
+  <TransformInsertDialog v-model="transformOpen" :cluster-id="job.clusterId" @insert="insertTransform" />
 
   <div class="section-title">
     任务参数

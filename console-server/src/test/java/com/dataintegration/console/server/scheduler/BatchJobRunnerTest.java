@@ -45,9 +45,9 @@ class BatchJobRunnerTest {
         BatchJobRunner.Outcome outcome = runner((d, s) -> false).run(request(), listener, new CancelSignal());
 
         assertThat(outcome.succeeded()).isTrue();
-        assertThat(outcome.engineJobId()).isEqualTo(42L);
+        assertThat(outcome.engineJobId()).isEqualTo("42");
         assertThat(outcome.metrics()).containsEntry("SinkWriteCount", "10");
-        assertThat(listener.submitted).containsExactly(42L);
+        assertThat(listener.submitted).containsExactly("42");
         assertThat(listener.progress).hasSize(2);
     }
 
@@ -57,7 +57,7 @@ class BatchJobRunnerTest {
                 () ->
                         Optional.of(
                                 new EngineJobInfo(
-                                        42L, "j", EngineJobStatus.FAILED, null, Map.of(), "table not found")));
+                                        "42", "j", EngineJobStatus.FAILED, null, Map.of(), "table not found")));
 
         BatchJobRunner.Outcome outcome = runner((d, s) -> false).run(request(), listener, new CancelSignal());
 
@@ -102,7 +102,7 @@ class BatchJobRunnerTest {
                         .run(request(), listener, new CancelSignal());
 
         assertThat(outcome.finalStatus()).isEqualTo(EngineJobStatus.CANCELED);
-        assertThat(engine.stopped).containsExactly(42L);
+        assertThat(engine.stopped).containsExactly("42");
         assertThat(engine.interruptedDuringStop).isFalse();
         assertThat(outcome.errorMessage()).isEqualTo(BatchJobRunner.INTERRUPTED);
         assertThat(Thread.currentThread().isInterrupted()).isTrue();
@@ -129,7 +129,7 @@ class BatchJobRunnerTest {
         assertThat(outcome.finalStatus()).isEqualTo(EngineJobStatus.CANCELED);
         assertThat(outcome.errorMessage()).isEqualTo("stopped by admin");
         assertThat(outcome.metrics()).containsEntry("SinkWriteCount", "7");
-        assertThat(engine.stopped).containsExactly(42L);
+        assertThat(engine.stopped).containsExactly("42");
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
     }
 
@@ -159,7 +159,7 @@ class BatchJobRunnerTest {
 
         runner((d, s) -> false).run(request(), listener, new CancelSignal());
 
-        assertThat(engine.submittedJobId).isNotNull().isGreaterThanOrEqualTo(1L << 62);
+        assertThat(engine.submittedJobId).isEqualTo("42");
     }
 
     @Test
@@ -206,7 +206,7 @@ class BatchJobRunnerTest {
         engine.respond(() -> info(EngineJobStatus.FINISHED, "10"));
         BatchJobRunner.Listener broken = new BatchJobRunner.Listener() {
             @Override
-            public void onSubmitted(long engineJobId) {
+            public void onSubmitted(String engineJobId) {
                 throw new IllegalStateException("database down");
             }
 
@@ -262,7 +262,7 @@ class BatchJobRunnerTest {
 
         assertThat(outcome.finalStatus()).isEqualTo(EngineJobStatus.FAILED);
         assertThat(outcome.errorMessage()).contains("lost contact").contains("stopped it");
-        assertThat(engine.stopped).containsExactly(42L);
+        assertThat(engine.stopped).containsExactly("42");
     }
 
     @Test
@@ -321,14 +321,14 @@ class BatchJobRunnerTest {
 
     private static Optional<EngineJobInfo> info(EngineJobStatus status, String written) {
         return Optional.of(
-                new EngineJobInfo(42L, "j", status, null, Map.of("SinkWriteCount", written), null));
+                new EngineJobInfo("42", "j", status, null, Map.of("SinkWriteCount", written), null));
     }
 
     private static final class FakeEngine implements EngineClient {
         private final Deque<Supplier<Optional<EngineJobInfo>>> responses = new ArrayDeque<>();
-        private final List<Long> stopped = new ArrayList<>();
+        private final List<String> stopped = new ArrayList<>();
         private boolean interruptedDuringStop;
-        private Long submittedJobId;
+        private String submittedJobId;
         private ConsoleException submitFailure;
         private ConsoleException stopFailure;
 
@@ -339,6 +339,11 @@ class BatchJobRunnerTest {
         @Override
         public EngineType type() {
             return EngineType.ZETA;
+        }
+
+        @Override
+        public String newJobId() {
+            return "42";
         }
 
         @Override
@@ -367,30 +372,31 @@ class BatchJobRunnerTest {
         }
 
         @Override
-        public long submit(SubmitJobRequest request) {
+        public String submit(SubmitJobRequest request) {
             submittedJobId = request.jobId();
             if (submitFailure != null) {
                 throw submitFailure;
             }
-            return 42L;
+            return "42";
         }
 
         @Override
-        public void stop(long jobId, boolean withSavepoint, boolean force) {
+        public StopResult stop(String jobId, boolean withSavepoint, boolean force) {
             if (stopFailure != null) {
                 throw stopFailure;
             }
             stopped.add(jobId);
             interruptedDuringStop = Thread.currentThread().isInterrupted();
+            return StopResult.NONE;
         }
 
         @Override
-        public Optional<EngineJobInfo> jobInfo(long jobId) {
+        public Optional<EngineJobInfo> jobInfo(String jobId) {
             return responses.removeFirst().get();
         }
 
         @Override
-        public List<EngineLogFile> listLogs(long jobId) {
+        public List<EngineLogFile> listLogs(String jobId) {
             return List.of();
         }
 
@@ -401,12 +407,12 @@ class BatchJobRunnerTest {
     }
 
     private static final class RecordingListener implements BatchJobRunner.Listener {
-        private final List<Long> submitted = new ArrayList<>();
+        private final List<String> submitted = new ArrayList<>();
         private final List<EngineJobInfo> progress = new ArrayList<>();
         private final List<String> warnings = new ArrayList<>();
 
         @Override
-        public void onSubmitted(long engineJobId) {
+        public void onSubmitted(String engineJobId) {
             submitted.add(engineJobId);
         }
 

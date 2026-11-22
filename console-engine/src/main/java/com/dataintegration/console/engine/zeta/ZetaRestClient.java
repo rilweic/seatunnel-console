@@ -12,6 +12,7 @@ import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.EngineLogFile;
 import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.engine.SubmitJobRequest;
+import com.dataintegration.console.engine.TailBuffer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.ExecutionException;
@@ -72,6 +74,15 @@ public class ZetaRestClient implements EngineClient {
     @Override
     public EngineType type() {
         return EngineType.ZETA;
+    }
+
+    /**
+     * Zeta's own ids come from a Hazelcast flake id generator and stay far below 2^62; ids from
+     * here start there, so the two never meet.
+     */
+    @Override
+    public String newJobId() {
+        return String.valueOf(ThreadLocalRandom.current().nextLong(1L << 62, Long.MAX_VALUE));
     }
 
     @Override
@@ -190,7 +201,7 @@ public class ZetaRestClient implements EngineClient {
     }
 
     @Override
-    public long submit(SubmitJobRequest request) {
+    public String submit(SubmitJobRequest request) {
         StringJoiner query = new StringJoiner("&", "?", "");
         query.add("format=hocon");
         if (request.jobName() != null) {
@@ -217,26 +228,28 @@ public class ZetaRestClient implements EngineClient {
             throw new ConsoleException(
                     ErrorCodes.ENGINE_REQUEST_FAILED, "submit-job returned no jobId: " + body);
         }
-        log.info("Submitted job '{}' to Zeta, jobId={}", request.jobName(), jobId.asString());
-        return jobId.asLong();
+        String id = jobId.asString();
+        log.info("Submitted job '{}' to Zeta, jobId={}", request.jobName(), id);
+        return id;
     }
 
     @Override
-    public void stop(long jobId, boolean withSavepoint, boolean force) {
+    public StopResult stop(String jobId, boolean withSavepoint, boolean force) {
         String payload =
                 mapper.writeValueAsString(
                         Map.of(
-                                "jobId", jobId,
+                                "jobId", Long.parseLong(jobId),
                                 "isStopWithSavePoint", withSavepoint,
                                 "force", force));
         send(
                 "/stop-job",
                 HttpRequest.newBuilder().POST(HttpRequest.BodyPublishers.ofString(payload)),
                 "application/json");
+        return StopResult.NONE;
     }
 
     @Override
-    public Optional<EngineJobInfo> jobInfo(long jobId) {
+    public Optional<EngineJobInfo> jobInfo(String jobId) {
         JsonNode body = send("/job-info/" + jobId, HttpRequest.newBuilder().GET(), "application/json");
         // An unknown or expired job comes back as {"jobId": "..."} without a status.
         if (!body.hasNonNull("jobStatus")) {
@@ -264,7 +277,7 @@ public class ZetaRestClient implements EngineClient {
     }
 
     @Override
-    public Optional<EngineCheckpoints> checkpoints(long jobId) {
+    public Optional<EngineCheckpoints> checkpoints(String jobId) {
         // GET /jobs/checkpoints/{id} (verified on 3.0.1): {"pipelines": [{"counts": {"triggered", "completed",
         // "failed", ...}, "latestCompleted": {"completedTimestamp", ...}, "latestFailed": {"triggerTimestamp",
         // "failureReason", ...}}]}; empty objects when there is none
@@ -299,7 +312,7 @@ public class ZetaRestClient implements EngineClient {
     }
 
     @Override
-    public List<EngineLogFile> listLogs(long jobId) {
+    public List<EngineLogFile> listLogs(String jobId) {
         // Response format (verified on 3.0.0): [{"node": "host:port", "logLink": "http://...", "logName": "job-<id>.log"}]
         JsonNode body = send("/logs/" + jobId + "?format=json", HttpRequest.newBuilder().GET(), "application/json");
         List<EngineLogFile> files = new ArrayList<>();
@@ -374,38 +387,6 @@ public class ZetaRestClient implements EngineClient {
                     ErrorCodes.ENGINE_REQUEST_FAILED, "reading log " + file.name() + " returned HTTP " + response.statusCode());
         }
         return tail.result();
-    }
-
-    /** Keeps the last {@code capacity} bytes written to it, however many arrive. */
-    static final class TailBuffer {
-        private final byte[] ring;
-        private long total;
-
-        TailBuffer(int capacity) {
-            this.ring = new byte[Math.max(1, capacity)];
-        }
-
-        synchronized void write(byte[] chunk) {
-            int offset = 0;
-            while (offset < chunk.length) {
-                int pos = (int) (total % ring.length);
-                int len = Math.min(chunk.length - offset, ring.length - pos);
-                System.arraycopy(chunk, offset, ring, pos, len);
-                offset += len;
-                total += len;
-            }
-        }
-
-        synchronized LogContent result() {
-            if (total <= ring.length) {
-                return new LogContent(new String(ring, 0, (int) total, StandardCharsets.UTF_8), false);
-            }
-            int start = (int) (total % ring.length);
-            byte[] ordered = new byte[ring.length];
-            System.arraycopy(ring, start, ordered, 0, ring.length - start);
-            System.arraycopy(ring, 0, ordered, ring.length - start, start);
-            return new LogContent(new String(ordered, StandardCharsets.UTF_8), true);
-        }
     }
 
     private JsonNode send(String path, HttpRequest.Builder builder, String contentType) {

@@ -155,6 +155,7 @@ onMounted(load)
           v-model:step="wizardStep"
           v-model:params="wizardParams"
           :job-id="jobId"
+          :cluster-id="job.clusterId"
           :owner-id="job.ownerId"
           :readonly="false"
           :initial-form="version?.form ?? null"

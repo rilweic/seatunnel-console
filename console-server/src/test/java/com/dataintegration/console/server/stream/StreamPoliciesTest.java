@@ -32,7 +32,7 @@ class StreamPoliciesTest {
     @Test
     void startsFromTheSavedPositionUnlessTheSourceChangedOrRestoringWouldFailAgain() {
         assertThat(RestorePlan.decide(stream("SAVEPOINT", "7", null), Asked.AUTO, false).mode()).isEqualTo(RestoreMode.SAVEPOINT);
-        assertThat(RestorePlan.decide(stream("CHECKPOINT", "7", null), Asked.AUTO, false).restoreFrom()).isEqualTo(7L);
+        assertThat(RestorePlan.decide(stream("CHECKPOINT", "7", null), Asked.AUTO, false).restoreFrom()).isEqualTo("7");
         assertThat(RestorePlan.decide(stream("SAVEPOINT", "7", null), Asked.AUTO, true).fresh()).isTrue();
         assertThat(RestorePlan.decide(stream("CHECKPOINT", "7", "DDL"), Asked.AUTO, false).note()).contains("DDL");
         assertThat(RestorePlan.decide(stream(null, null, null), Asked.AUTO, false).fresh()).isTrue();
@@ -43,6 +43,11 @@ class StreamPoliciesTest {
         assertThatThrownBy(() -> RestorePlan.decide(stream("SAVEPOINT", "7", null), Asked.CHECKPOINT, false))
                 .hasMessageContaining("savepoint");
         assertThat(RestorePlan.decide(stream("SAVEPOINT", "7", null), Asked.SAVEPOINT, true).mode()).isEqualTo(RestoreMode.SAVEPOINT);
+        JobStream flinkStream = stream("SAVEPOINT", "11112222333344445555666677778888", null);
+        flinkStream.setRestorePath("file:/opt/flink-state/savepoints/sp-1");
+        RestorePlan.Decision flinkDecision = RestorePlan.decide(flinkStream, Asked.AUTO, false);
+        assertThat(flinkDecision.mode()).isEqualTo(RestoreMode.SAVEPOINT);
+        assertThat(flinkDecision.restorePath()).isEqualTo("file:/opt/flink-state/savepoints/sp-1");
     }
 
     private static JobInstanceAttempt attempt(int minutes) {

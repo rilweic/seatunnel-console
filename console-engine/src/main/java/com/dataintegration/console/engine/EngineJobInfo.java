@@ -12,7 +12,7 @@ import java.util.Map;
  *     failure; the job still reports RUNNING meanwhile (Zeta gives up after a few and fails it)
  */
 public record EngineJobInfo(
-        long jobId,
+        String jobId,
         String jobName,
         EngineJobStatus status,
         String createTime,
@@ -21,7 +21,7 @@ public record EngineJobInfo(
         int pipelineRestores) {
 
     public EngineJobInfo(
-            long jobId, String jobName, EngineJobStatus status, String createTime, Map<String, String> metrics, String errorMessage) {
+            String jobId, String jobName, EngineJobStatus status, String createTime, Map<String, String> metrics, String errorMessage) {
         this(jobId, jobName, status, createTime, metrics, errorMessage, 0);
     }
 }

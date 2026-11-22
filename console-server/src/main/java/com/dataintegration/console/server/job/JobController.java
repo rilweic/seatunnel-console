@@ -34,13 +34,14 @@ public class JobController {
 
     public record CreateRequest(
             @NotBlank String projectId,
+            String clusterId,
             @NotBlank @Size(max = 128) String name,
             @NotBlank String jobType,
             String editMode,
             @Size(max = 512) String description) {}
 
-    /** @param projectId null for the source job's project */
-    public record CopyRequest(@NotBlank @Size(max = 128) String name, String projectId) {}
+    /** @param projectId null for the source job's project; @param clusterId null for the source job's cluster */
+    public record CopyRequest(@NotBlank @Size(max = 128) String name, String projectId, String clusterId) {}
 
     /** @param scheduleCopied whether the source job's schedule was copied (always disabled) */
     public record CopyResult(JobView job, boolean scheduleCopied) {}
@@ -97,12 +98,13 @@ public class JobController {
 
     @PostMapping
     public Result<JobView> create(@Valid @RequestBody CreateRequest body) {
-        return Result.ok(jobService.create(body.projectId(), body.name(), body.jobType(), body.editMode(), body.description()));
+        return Result.ok(jobService.create(
+                body.projectId(), body.clusterId(), body.name(), body.jobType(), body.editMode(), body.description()));
     }
 
     @PostMapping("/{id}/copy")
     public Result<CopyResult> copy(@PathVariable String id, @Valid @RequestBody CopyRequest body) {
-        JobView job = jobService.copy(id, body.name(), body.projectId());
+        JobView job = jobService.copy(id, body.name(), body.projectId(), body.clusterId());
         // After the copy committed: the schedule goes through XXL-JOB, which must not hold up the copy.
         return Result.ok(new CopyResult(job, scheduleService.copyDisabled(id, job.id())));
     }

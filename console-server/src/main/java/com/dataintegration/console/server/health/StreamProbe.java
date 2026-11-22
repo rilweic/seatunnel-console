@@ -2,7 +2,9 @@ package com.dataintegration.console.server.health;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.engine.EngineClient;
+import com.dataintegration.console.engine.EngineClient.StopResult;
 import com.dataintegration.console.engine.EngineJobStatus;
+import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.engine.SubmitJobRequest;
 import com.dataintegration.console.engine.SubmitJobRequest.RestoreMode;
 import com.dataintegration.console.server.health.ClusterHealthService.Check;
@@ -11,14 +13,16 @@ import com.dataintegration.console.server.health.ClusterHealthService.Status;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
  * The "实时任务检查" of the cluster diagnostics (docs/design.md §12 P2, Q31): whether checkpoints
  * and savepoints actually work, by doing what a real-time job's stop and start do with a tiny
  * streaming job: wait for a completed checkpoint, stop with a savepoint, restore from it, stop.
- * This tests the checkpoint storage as configured rather than reading the configuration, which
- * the REST API does not expose. Every step that fails says which one and why.
  */
 @Component
 public class StreamProbe {
@@ -34,45 +38,72 @@ public class StreamProbe {
             sink { Console { plugin_input = ["fake"] } }
             """;
 
-    private final EngineClient engine;
-
-    public StreamProbe(EngineClient engine) {
-        this.engine = engine;
-    }
-
-    public Check run() {
-        long jobId;
+    public Check run(EngineClient engine) {
+        // Pre-choose every engine job id and record it before calling submit(), so even a
+        // RESPONSE_LOST during the initial or restored submission is still stopped in finally.
+        Set<String> submittedIds = new LinkedHashSet<>();
+        String initialId = engine.newJobId();
+        String savepointPath = null;
         try {
-            jobId = engine.submit(SubmitJobRequest.fresh("console-diagnostic: stream", JOB));
-        } catch (ConsoleException e) {
-            return error("提交实时诊断作业被拒绝：" + e.getMessage() + "（需要 FakeSource 和 Console 连接器）");
-        }
-        try {
+            submittedIds.add(initialId);
+            String jobId;
+            try {
+                jobId = engine.submit(SubmitJobRequest.fresh("console-diagnostic: stream", JOB).withJobId(initialId));
+                submittedIds.add(jobId);
+            } catch (ConsoleException e) {
+                return error("提交实时诊断作业失败：" + e.getMessage() + "（需要 FakeSource 和 Console 连接器）");
+            }
             if (!await(() -> engine.checkpoints(jobId).map(c -> c.completed() > 0).orElse(false))) {
                 return error("诊断作业运行 " + STEP_TIMEOUT.toSeconds() + " 秒还没有完成过 checkpoint："
-                        + "检查 seatunnel.yaml 的 checkpoint.storage 配置，以及存储目录是否可写");
+                        + "检查集群的 checkpoint 存储配置以及目录是否可写");
             }
-            engine.stop(jobId, true, false);
-            if (!await(() -> status(jobId) == EngineJobStatus.SAVEPOINT_DONE)) {
-                return error("带 savepoint 停止没有完成（状态 " + status(jobId) + "）：实时任务的正常停止会失败，只能强制停止");
+            StopResult stopped = engine.stop(jobId, true, false);
+            savepointPath = stopped.savepointPath();
+            String restoredId;
+            if (engine.type() == EngineType.FLINK) {
+                if (savepointPath == null || savepointPath.isBlank()) {
+                    return error("带 savepoint 停止没有返回保存路径：检查 Flink 集群的 execution.checkpointing.savepoint-dir 配置");
+                }
+                String chosenRestoreId = engine.newJobId();
+                submittedIds.add(chosenRestoreId);
+                restoredId = engine.submit(new SubmitJobRequest(
+                        "console-diagnostic: stream", JOB, RestoreMode.SAVEPOINT, null, savepointPath, chosenRestoreId));
+                submittedIds.add(restoredId);
+            } else {
+                if (!await(() -> status(engine, jobId) == EngineJobStatus.SAVEPOINT_DONE)) {
+                    return error("带 savepoint 停止没有完成（状态 " + status(engine, jobId) + "）：实时任务的正常停止会失败，只能强制停止");
+                }
+                restoredId = engine.submit(new SubmitJobRequest(
+                        "console-diagnostic: stream", JOB, RestoreMode.SAVEPOINT, jobId, null, null));
+                submittedIds.add(restoredId);
             }
-            engine.submit(new SubmitJobRequest("console-diagnostic: stream", JOB, RestoreMode.SAVEPOINT, jobId, null));
-            if (!await(() -> status(jobId) == EngineJobStatus.RUNNING)) {
-                return error("从 savepoint 恢复没有成功（状态 " + status(jobId) + "）：实时任务停止后无法接着同步");
+            String checkId = restoredId;
+            if (!await(() -> status(engine, checkId) == EngineJobStatus.RUNNING)) {
+                return error("从 savepoint 恢复没有成功（状态 " + status(engine, checkId) + "）：实时任务停止后无法接着同步");
             }
             return new Check("实时任务", NAME, Status.OK, "checkpoint 能完成，带 savepoint 停止和从 savepoint 恢复都正常");
         } catch (ConsoleException e) {
             return error("诊断中断：" + e.getMessage());
         } finally {
-            try {
-                engine.stop(jobId, false, true);
-            } catch (ConsoleException e) {
-                // already ended
+            List<String> toStop = new ArrayList<>(submittedIds);
+            for (String id : toStop) {
+                try {
+                    engine.stop(id, false, true);
+                } catch (ConsoleException e) {
+                    // already ended or never reached engine
+                }
+            }
+            if (savepointPath != null) {
+                try {
+                    engine.disposeSavepoint(savepointPath);
+                } catch (ConsoleException e) {
+                    // best effort
+                }
             }
         }
     }
 
-    private EngineJobStatus status(long jobId) {
+    private static EngineJobStatus status(EngineClient engine, String jobId) {
         return engine.jobInfo(jobId).map(i -> i.status()).orElse(EngineJobStatus.UNKNOWABLE);
     }
 

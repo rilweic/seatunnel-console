@@ -178,6 +178,9 @@ export interface JobView extends Owned {
   id: string
   projectId: string
   projectName: string | null
+  clusterId: string | null
+  clusterName: string | null
+  engineType: 'ZETA' | 'FLINK' | string
   name: string
   jobType: 'BATCH' | 'STREAMING'
   editMode: 'FORM' | 'SCRIPT'
@@ -363,7 +366,8 @@ export interface ConnectorOption {
 }
 
 export const connectorApi = {
-  options: (type: 'source' | 'sink' | 'transform', plugin: string) => get<ConnectorOption[]>(`/connectors/${type}/${plugin}/options`),
+  options: (type: 'source' | 'sink' | 'transform', plugin: string, clusterId?: string | null) =>
+    get<ConnectorOption[]>(`/connectors/${type}/${plugin}/options`, clusterId ? { clusterId } : undefined),
 }
 
 export interface VersionSummary {
@@ -434,10 +438,10 @@ export const jobApi = {
   list: (params: { projectId?: string; keyword?: string; mine?: boolean; jobType?: JobView['jobType']; page?: number; size?: number }) =>
     get<PageResult<JobView>>('/jobs', params),
   get: (id: string) => get<{ job: JobView; currentVersion: VersionDetail | null }>(`/jobs/${id}`),
-  create: (body: { projectId: string; name: string; jobType: JobView['jobType']; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
+  create: (body: { projectId: string; clusterId?: string; name: string; jobType: JobView['jobType']; editMode: 'FORM' | 'SCRIPT'; description?: string }) =>
     post<JobView>('/jobs', body),
   update: (id: string, body: { name: string; description?: string | null; projectId?: string }) => put<JobView>(`/jobs/${id}`, body),
-  copy: (id: string, body: { name: string; projectId: string }) =>
+  copy: (id: string, body: { name: string; projectId: string; clusterId?: string }) =>
     post<{ job: JobView; scheduleCopied: boolean }>(`/jobs/${id}/copy`, body),
   overview: (id: string) => get<JobOverview>(`/jobs/${id}/overview`),
   remove: (id: string, deleteRuns = true) => del<void>(`/jobs/${id}?deleteRuns=${deleteRuns}`),
@@ -858,9 +862,10 @@ export interface XxlJobStatus {
 }
 
 export const clusterApi = {
-  overview: () => get<Record<string, string>>('/cluster/overview'),
-  health: () => get<ClusterHealth>('/cluster/health'),
-  diagnose: () => post<HealthCheck[]>('/cluster/diagnose', undefined, LONG_TIMEOUT.diagnose),
+  overview: (clusterId?: string) => get<Record<string, string>>('/cluster/overview', clusterId ? { clusterId } : undefined),
+  health: (clusterId?: string) => get<ClusterHealth>('/cluster/health', clusterId ? { clusterId } : undefined),
+  diagnose: (clusterId?: string) =>
+    post<HealthCheck[]>(clusterId ? `/cluster/diagnose?clusterId=${encodeURIComponent(clusterId)}` : '/cluster/diagnose', undefined, LONG_TIMEOUT.diagnose),
 }
 
 export interface DashboardDay {

@@ -3,8 +3,10 @@ package com.dataintegration.console.server.health;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.engine.EngineClient;
+import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.engine.EngineWorker;
 import com.dataintegration.console.engine.MasterStatus;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.job.HoconTemplate;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.XxlJobReconciler;
@@ -86,7 +88,7 @@ public class ClusterHealthService {
     /** Database wizard connectors are always required; HTTP is checked when a live job uses it. */
     private static final List<String> WIZARD_CONNECTORS = List.of("source/Jdbc", "sink/Jdbc", "sink/Elasticsearch");
 
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
     private final JobDefinitionMapper jobMapper;
     private final JobVersionMapper versionMapper;
     private final JobScheduleMapper scheduleMapper;
@@ -97,7 +99,7 @@ public class ClusterHealthService {
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).proxy(HttpClient.Builder.NO_PROXY).build();
 
     public ClusterHealthService(
-            EngineClient engineClient,
+            EngineRegistry engines,
             JobDefinitionMapper jobMapper,
             JobVersionMapper versionMapper,
             JobScheduleMapper scheduleMapper,
@@ -105,7 +107,7 @@ public class ClusterHealthService {
             ObjectProvider<XxlJobProperties> xxlJobProperties,
             @Value("${console.data-dir:./data}") String dataDir,
             XxlJobReconciler reconciler) {
-        this.engineClient = engineClient;
+        this.engines = engines;
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.scheduleMapper = scheduleMapper;
@@ -116,44 +118,64 @@ public class ClusterHealthService {
     }
 
     public Health check() {
+        return check(null);
+    }
+
+    public Health check(String clusterId) {
+        EngineClient engineClient = engines.clientFor(clusterId);
+        boolean isFlink = engineClient.type() == EngineType.FLINK;
+        String group = isFlink ? "Flink" : "SeaTunnel";
         List<Check> checks = new ArrayList<>();
         List<MasterStatus> masters = engineClient.probeMasters();
         boolean anyMaster = false;
         for (MasterStatus m : masters) {
             if (!m.reachable() || m.error() != null) {
-                checks.add(new Check("SeaTunnel", "Master " + m.url(), Status.ERROR,
-                        m.reachable() ? m.error() : "连不上：" + m.error() + "。确认集群以 cluster 模式运行，并开启了 http（seatunnel.yaml 的 enable-http）"));
+                checks.add(new Check(group, (isFlink ? "JobManager " : "Master ") + m.url(), Status.ERROR,
+                        m.reachable() ? m.error() : "连不上：" + m.error()));
                 continue;
             }
             anyMaster = true;
-            checks.add(new Check("SeaTunnel", "Master " + m.url(), Status.OK, "可连通，响应 " + m.latencyMillis() + " ms"));
-            if (Boolean.FALSE.equals(m.authRequired())) {
-                checks.add(new Check("SeaTunnel", "认证 " + m.url(), Status.WARN,
-                        "没有开启 Basic 认证，任何能访问这个端口的人都能提交和停止作业（seatunnel.yaml 的 enable-basic-auth）"));
-            } else if (Boolean.TRUE.equals(m.authRequired())) {
-                checks.add(new Check("SeaTunnel", "认证 " + m.url(), Status.OK, "已开启 Basic 认证"));
-            }
-            if (m.version() == null || !m.version().startsWith("3.0")) {
-                checks.add(new Check("SeaTunnel", "版本 " + m.url(), Status.WARN,
-                        "集群版本是 " + m.version() + "，console 按 3.0.x 开发和验证，其他版本的 REST 行为可能不同"));
+            checks.add(new Check(group, (isFlink ? "JobManager " : "Master ") + m.url(), Status.OK, "可连通，响应 " + m.latencyMillis() + " ms"));
+            if (!isFlink) {
+                if (Boolean.FALSE.equals(m.authRequired())) {
+                    checks.add(new Check(group, "认证 " + m.url(), Status.WARN,
+                            "没有开启 Basic 认证，任何能访问这个端口的人都能提交和停止作业（seatunnel.yaml 的 enable-basic-auth）"));
+                } else if (Boolean.TRUE.equals(m.authRequired())) {
+                    checks.add(new Check(group, "认证 " + m.url(), Status.OK, "已开启 Basic 认证"));
+                }
+                if (m.version() == null || !m.version().startsWith("3.0")) {
+                    checks.add(new Check(group, "版本 " + m.url(), Status.WARN,
+                            "集群版本是 " + m.version() + "，console 按 3.0.x 开发和验证，其他版本的 REST 行为可能不同"));
+                } else {
+                    checks.add(new Check(group, "版本 " + m.url(), Status.OK, m.version()));
+                }
             } else {
-                checks.add(new Check("SeaTunnel", "版本 " + m.url(), Status.OK, m.version()));
+                if (m.version() != null && m.version().startsWith("1.19.")) {
+                    checks.add(new Check(group, "版本 " + m.url(), Status.ERROR,
+                            "检测到 Flink " + m.version() + "，SeaTunnel 3.0 不支持 1.19，请使用 1.20.x 或 1.15–1.18"));
+                } else {
+                    checks.add(new Check(group, "版本 " + m.url(), Status.OK, m.version() == null ? "未知" : m.version()));
+                }
             }
         }
         if (!anyMaster) {
-            checks.add(new Check("SeaTunnel", "其余检查", Status.WARN, "没有可用的 master，跳过节点和连接器检查"));
+            checks.add(new Check(group, "其余检查", Status.WARN, "没有可用的 master，跳过节点和连接器检查"));
             XxlJobStatus xxlJob = addXxlJobChecks(checks);
             addConsoleChecks(checks);
             return new Health(checks, masters, List.of(), Map.of(), xxlJob);
         }
 
+        for (String warning : engineClient.configWarnings()) {
+            checks.add(new Check(group, "集群配置", Status.WARN, warning));
+        }
+
         Map<String, String> overview = engineClient.overview();
         List<EngineWorker> workers = engineClient.workers();
         if (workers.isEmpty()) {
-            checks.add(new Check("SeaTunnel", "Worker 节点", Status.ERROR, "集群没有可用的 worker 节点，作业无法运行"));
+            checks.add(new Check(group, isFlink ? "TaskManager 节点" : "Worker 节点", Status.ERROR, "集群没有可用的计算节点，作业无法运行"));
         } else {
-            checks.add(new Check("SeaTunnel", "Worker 节点", Status.OK, workers.size() + " 个"));
-            if (workers.size() > 1) {
+            checks.add(new Check(group, isFlink ? "TaskManager 节点" : "Worker 节点", Status.OK, workers.size() + " 个"));
+            if (!isFlink && workers.size() > 1) {
                 // the REST API does not tell where checkpoints are stored, so this cannot be checked (§12 P2, Q31)
                 checks.add(new Check("实时任务", "checkpoint 存储", Status.WARN,
                         "多节点集群的 checkpoint 必须放在 HDFS / S3 / OSS 等共享存储上（seatunnel.yaml 的 checkpoint.storage），"

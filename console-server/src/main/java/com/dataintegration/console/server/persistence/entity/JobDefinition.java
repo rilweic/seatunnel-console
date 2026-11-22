@@ -20,6 +20,7 @@ public class JobDefinition {
     private String id;
 
     private String projectId;
+    private String clusterId;
     private String name;
     private String jobType;
     private String editMode;

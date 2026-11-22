@@ -9,6 +9,8 @@ import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.server.auth.SecurityConfig;
+import com.dataintegration.console.server.cluster.ClusterService;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +33,8 @@ class ClusterControllerTest {
 
     @Autowired private MockMvc mockMvc;
 
+    @MockitoBean private EngineRegistry engines;
+    @MockitoBean private ClusterService clusterService;
     @MockitoBean private EngineClient engineClient;
     @MockitoBean private ClusterHealthService healthService;
     @MockitoBean private DiagnosticService diagnosticService;
@@ -47,6 +51,7 @@ class ClusterControllerTest {
     @Test
     @WithMockUser
     void overviewWrapsEngineResponse() throws Exception {
+        when(engines.clientFor((String) null)).thenReturn(engineClient);
         when(engineClient.overview()).thenReturn(Map.of("projectVersion", "3.0.0"));
 
         mockMvc.perform(get("/api/cluster/overview"))
@@ -58,6 +63,7 @@ class ClusterControllerTest {
     @Test
     @WithMockUser
     void unreachableClusterReturns503() throws Exception {
+        when(engines.clientFor((String) null)).thenReturn(engineClient);
         when(engineClient.overview())
                 .thenThrow(new ConsoleException(ErrorCodes.ENGINE_UNAVAILABLE, "no Zeta master reachable"));
 

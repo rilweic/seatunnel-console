@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { CircleCheckFilled, Refresh, VideoPlay, WarningFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { CircleCheckFilled, Plus, Refresh, VideoPlay, WarningFilled, CircleCloseFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 
+import { clustersApi, type ClusterView } from '@/api/clusters'
 import { clusterApi, type ClusterHealth, type HealthCheck } from '@/api/console'
+import ClusterFormDialog from '@/components/ClusterFormDialog.vue'
+import { useUserStore } from '@/stores/user'
 import { formatTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+
+const userStore = useUserStore()
+const clusters = ref<ClusterView[]>([])
+const selectedClusterId = ref<string>('')
+const dialogOpen = ref(false)
+const editingCluster = ref<ClusterView | null>(null)
 
 const health = ref<ClusterHealth | null>(null)
 const loading = ref(false)
@@ -12,11 +22,21 @@ const failed = ref('')
 const diagnosis = ref<HealthCheck[] | null>(null)
 const diagnosing = ref(false)
 
+const selectedCluster = computed(() => clusters.value.find((c) => c.id === selectedClusterId.value) ?? null)
+
+async function loadClusters() {
+  clusters.value = await clustersApi.list()
+  if (!clusters.value.some((c) => c.id === selectedClusterId.value)) {
+    selectedClusterId.value = clusters.value.find((c) => c.isDefault)?.id ?? clusters.value[0]?.id ?? ''
+  }
+}
+
 async function load() {
   loading.value = true
   failed.value = ''
+  diagnosis.value = null
   try {
-    health.value = await clusterApi.health()
+    health.value = await clusterApi.health(selectedClusterId.value || undefined)
   } catch (e) {
     failed.value = (e as { response?: { data?: { message?: string } } }).response?.data?.message ?? '健康检查失败'
   } finally {
@@ -24,11 +44,46 @@ async function load() {
   }
 }
 
+async function selectCluster(id: string) {
+  selectedClusterId.value = id
+  await load()
+}
+
+function openCreate() {
+  editingCluster.value = null
+  dialogOpen.value = true
+}
+
+function openEdit(c: ClusterView) {
+  editingCluster.value = c
+  dialogOpen.value = true
+}
+
+async function onClusterSaved(saved: ClusterView) {
+  await loadClusters()
+  selectedClusterId.value = saved.id
+  await load()
+}
+
+async function makeDefault(c: ClusterView) {
+  await clustersApi.setDefault(c.id)
+  ElMessage.success(`已将「${c.name}」设为默认集群`)
+  await loadClusters()
+}
+
+async function removeCluster(c: ClusterView) {
+  await ElMessageBox.confirm(`确认删除集群「${c.name}」？`, '删除集群', { type: 'warning' })
+  await clustersApi.remove(c.id)
+  ElMessage.success('已删除集群')
+  await loadClusters()
+  await load()
+}
+
 async function diagnose() {
   diagnosing.value = true
   diagnosis.value = null
   try {
-    diagnosis.value = await clusterApi.diagnose()
+    diagnosis.value = await clusterApi.diagnose(selectedClusterId.value || undefined)
   } finally {
     diagnosing.value = false
   }
@@ -52,16 +107,23 @@ const groups = computed(() => {
   return [...map.entries()]
 })
 
-/** The overview fields shown, in this order; the engine's version and commit are left out. */
+/** The overview fields shown, in this order; supports both Zeta and Flink overview keys. */
 const OVERVIEW_LABELS: Record<string, string> = {
   workers: 'Worker 数',
+  taskmanagers: 'TaskManager 数',
   runningJobs: '运行中作业',
+  'jobs-running': '运行中作业',
   pendingJobs: '排队作业',
   finishedJobs: '已完成作业',
+  'jobs-finished': '已完成作业',
   failedJobs: '失败作业',
+  'jobs-failed': '失败作业',
   cancelledJobs: '已取消作业',
+  'jobs-cancelled': '已取消作业',
   totalSlot: '总 slot',
+  'slots-total': '总 slot',
   unassignedSlot: '空闲 slot',
+  'slots-available': '空闲 slot',
 }
 
 const overviewItems = computed(() =>
@@ -73,13 +135,48 @@ const overviewItems = computed(() =>
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`
 const statusIcon = { OK: CircleCheckFilled, WARN: WarningFilled, ERROR: CircleCloseFilled }
 
-onMounted(load)
+onMounted(async () => {
+  await loadClusters()
+  await load()
+})
 </script>
 
 <template>
   <div class="page">
+    <el-card shadow="never">
+      <PageHeader title="执行集群" description="登记 SeaTunnel Zeta 或 Apache Flink 集群；点击某行可切换下方健康检查与诊断的目标集群。">
+        <el-button v-if="userStore.isAdmin" type="primary" :icon="Plus" @click="openCreate">登记集群</el-button>
+      </PageHeader>
+      <el-table :data="clusters" highlight-current-row @current-change="(row: ClusterView | null) => row && selectCluster(row.id)">
+        <el-table-column label="名称" min-width="180">
+          <template #default="{ row }">
+            <span class="cluster-name">{{ row.name }}</span>
+            <el-tag v-if="row.isDefault" size="small" type="success" class="ml-6">默认</el-tag>
+            <el-tag v-if="row.id === selectedClusterId" size="small" effect="plain" class="ml-6">当前查看</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="引擎" width="110">
+          <template #default="{ row }">
+            <el-tag :type="row.engineType === 'FLINK' ? 'warning' : 'primary'" size="small">{{ row.engineType }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="restUrls" label="REST 地址" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="jobCount" label="绑定任务" width="95" />
+        <el-table-column v-if="userStore.isAdmin" label="操作" width="210" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click.stop="openEdit(row)">编辑</el-button>
+            <el-button v-if="!row.isDefault" link type="primary" @click.stop="makeDefault(row)">设为默认</el-button>
+            <el-button v-if="!row.isDefault" link type="danger" :disabled="row.jobCount > 0" @click.stop="removeCluster(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+
     <el-card v-loading="loading" shadow="never">
-      <PageHeader title="集群健康检查" description="检查 SeaTunnel 集群和 console 的运行前提与连通状态。打开页面时自动执行，不会提交任何作业。">
+      <PageHeader
+        :title="selectedCluster ? `集群健康检查 · ${selectedCluster.name}` : '集群健康检查'"
+        description="检查目标集群和 console 的运行前提与连通状态。切换集群时自动执行，不会提交任何作业。"
+      >
         <el-button :icon="Refresh" @click="load">重新检查</el-button>
       </PageHeader>
 
@@ -209,10 +306,19 @@ onMounted(load)
         </div>
       </div>
     </el-card>
+    <ClusterFormDialog v-model="dialogOpen" :cluster="editingCluster" @saved="onClusterSaved" />
   </div>
 </template>
 
 <style scoped>
+.cluster-name {
+  font-weight: 500;
+}
+
+.ml-6 {
+  margin-left: 6px;
+}
+
 .page {
   display: flex;
   flex-direction: column;

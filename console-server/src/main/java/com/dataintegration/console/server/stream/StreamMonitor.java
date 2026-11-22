@@ -7,6 +7,8 @@ import com.dataintegration.console.engine.EngineCheckpoints;
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineJobStatus;
+import com.dataintegration.console.engine.EngineType;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.engine.SubmitJobRequest.RestoreMode;
 import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.job.JobService;
@@ -66,7 +68,7 @@ public class StreamMonitor {
     private final StreamRuns runs;
     private final StreamSubmitter submitter;
     private final JobService jobService;
-    private final EngineClient engine;
+    private final EngineRegistry engines;
     private final AttemptLogArchiver logArchiver;
     private final ObjectMapper objectMapper;
     private final Duration sampleInterval;
@@ -81,14 +83,14 @@ public class StreamMonitor {
         boolean slowStopReported;
     }
 
-    public StreamMonitor(JobStreamMapper streams, StreamRuns runs, StreamSubmitter submitter, JobService jobService, EngineClient engine,
+    public StreamMonitor(JobStreamMapper streams, StreamRuns runs, StreamSubmitter submitter, JobService jobService, EngineRegistry engines,
             AttemptLogArchiver logArchiver, ObjectMapper objectMapper,
             @Value("${console.stream.sample-interval:60s}") Duration sampleInterval) {
         this.streams = streams;
         this.runs = runs;
         this.submitter = submitter;
         this.jobService = jobService;
-        this.engine = engine;
+        this.engines = engines;
         this.logArchiver = logArchiver;
         this.objectMapper = objectMapper;
         this.sampleInterval = sampleInterval;
@@ -119,6 +121,11 @@ public class StreamMonitor {
             }
             return;
         }
+        if (attempt != null && submitter.isSubmitting(attempt.getId())) {
+            // A thread in this console process is still queuing or running the submission; never
+            // time it out or restart a duplicate while it is still active.
+            return;
+        }
         if (attempt == null || attempt.getSubmittedAt() == null && attempt.getFinishedAt() == null) {
             LocalDateTime began = attempt != null && attempt.getCreatedAt() != null ? attempt.getCreatedAt() : instance.getStartedAt();
             if (began != null && began.isAfter(LocalDateTime.now().minus(SUBMIT_GRACE))) {
@@ -133,10 +140,13 @@ public class StreamMonitor {
             // The console went away during the submission: the engine may have the job under the
             // id recorded beforehand, so look it up like a submission whose answer was lost.
         }
-        long engineJobId = Long.parseLong(attempt.getEngineJobId());
+        String engineJobId = attempt.getEngineJobId();
+        JobDefinition jobDef = jobService.require(stream.getJobDefinitionId());
+        String clusterId = jobDef.getClusterId();
+        EngineClient engine = engines.clientFor(clusterId);
         if (attempt.getFinishedAt() != null) {
             // ended in an earlier poll that stopped halfway
-            ended(stream, instance, attempt, engineJobId, EngineJobStatus.parse(attempt.getEngineStatus()), Map.of());
+            ended(engine, clusterId, stream, instance, attempt, engineJobId, EngineJobStatus.parse(attempt.getEngineStatus()), Map.of());
             return;
         }
         var info = engine.jobInfo(engineJobId);
@@ -146,8 +156,8 @@ public class StreamMonitor {
                 return;
             }
             recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.ERROR, Level.ERROR,
-                    "SeaTunnel 里找不到引擎作业 " + engineJobId + "（集群可能重启过，或提交没有成功）");
-            ended(stream, instance, attempt, engineJobId, EngineJobStatus.UNKNOWABLE, Map.of());
+                    "引擎里找不到引擎作业 " + engineJobId + "（集群可能重启过，或提交没有成功）");
+            ended(engine, clusterId, stream, instance, attempt, engineJobId, EngineJobStatus.UNKNOWABLE, Map.of());
             return;
         }
         EngineJobInfo job = info.get();
@@ -156,16 +166,16 @@ public class StreamMonitor {
             attempt.setSubmittedAt(LocalDateTime.now());
             recorder.update(attempt);
             recorder.event(instance.getId(), attempt.getAttemptNo(), RunEventType.SUBMITTED, Level.WARN,
-                    "提交时 console 中断过，SeaTunnel 里有引擎作业 " + engineJobId + "，继续观察");
+                    "提交时 console 中断过，引擎里有作业 " + engineJobId + "，继续观察");
         }
         if (job.status().isTerminal()) {
-            ended(stream, instance, attempt, engineJobId, job.status(), job.metrics());
+            ended(engine, clusterId, stream, instance, attempt, engineJobId, job.status(), job.metrics());
         } else {
-            running(stream, instance, attempt, engineJobId, job);
+            running(engine, stream, instance, attempt, engineJobId, job);
         }
     }
 
-    private void running(JobStream stream, JobInstance instance, JobInstanceAttempt attempt, long engineJobId, EngineJobInfo job) {
+    private void running(EngineClient engine, JobStream stream, JobInstance instance, JobInstanceAttempt attempt, String engineJobId, EngineJobInfo job) {
         RunRecorder recorder = runs.recorder();
         Seen s = seen.computeIfAbsent(attempt.getId(), k -> new Seen());
         if (job.status() != s.status) {
@@ -187,7 +197,7 @@ public class StreamMonitor {
         Instant now = Instant.now();
         if (Duration.between(s.sampledAt, now).compareTo(sampleInterval) >= 0) {
             s.sampledAt = now;
-            sample(stream, instance, attempt, engineJobId, job, s);
+            sample(engine, stream, instance, attempt, engineJobId, job, s);
         }
         if (stream.getStopRequested() != null && !s.slowStopReported && stream.getStopRequestedAt() != null
                 && stream.getStopRequestedAt().isBefore(LocalDateTime.now().minus(SLOW_STOP))) {
@@ -199,7 +209,7 @@ public class StreamMonitor {
     }
 
     /** Counters, the throughput sample, when data last came in, and checkpoint health; once per sample interval. */
-    private void sample(JobStream stream, JobInstance instance, JobInstanceAttempt attempt, long engineJobId, EngineJobInfo job, Seen s) {
+    private void sample(EngineClient engine, JobStream stream, JobInstance instance, JobInstanceAttempt attempt, String engineJobId, EngineJobInfo job, Seen s) {
         RunRecorder recorder = runs.recorder();
         if (!job.metrics().isEmpty()) {
             EngineMetrics metrics = EngineMetrics.parse(job.metrics(), objectMapper);
@@ -227,9 +237,18 @@ public class StreamMonitor {
             update.set(JobStream::getCheckpointAt, LocalDateTime.ofInstant(Instant.ofEpochMilli(checkpoints.lastCompletedAt()), ZoneId.systemDefault()));
             // From its first completed checkpoint on, this engine job is where a failure or a
             // forced stop resumes; until then it is still the point the run started from.
-            if (!String.valueOf(engineJobId).equals(stream.getRestoreEngineJobId()) || !Kind.CHECKPOINT.name().equals(stream.getRestoreKind())) {
+            // On Flink, a checkpoint is only restorable when it has an external path; never record
+            // a pathless checkpoint as a restore point (otherwise a restore would fail or silently start fresh).
+            boolean canRestore = engine.type() != EngineType.FLINK
+                    || (checkpoints.latestExternalPath() != null && !checkpoints.latestExternalPath().isBlank());
+            boolean pathChanged = checkpoints.latestExternalPath() != null
+                    && !checkpoints.latestExternalPath().equals(stream.getRestorePath());
+            if (canRestore && (!engineJobId.equals(stream.getRestoreEngineJobId())
+                    || !Kind.CHECKPOINT.name().equals(stream.getRestoreKind())
+                    || pathChanged)) {
                 update.set(JobStream::getRestoreKind, Kind.CHECKPOINT.name())
-                        .set(JobStream::getRestoreEngineJobId, String.valueOf(engineJobId))
+                        .set(JobStream::getRestoreEngineJobId, engineJobId)
+                        .set(JobStream::getRestorePath, checkpoints.latestExternalPath())
                         .set(JobStream::getRestoreVersionId, instance.getJobVersionId())
                         .set(JobStream::getRestoreBlocked, null);
                 // The engine job has come far enough to checkpoint: earlier failures are behind it,
@@ -263,33 +282,65 @@ public class StreamMonitor {
         return DEFAULT_CHECKPOINT_INTERVAL;
     }
 
+    /** Grace window for an in-flight Flink stop-with-savepoint call to record its path and finish the run. */
+    private static final Duration SAVEPOINT_STOP_GRACE = Duration.ofMinutes(3);
+
     /** The engine job is over: record why, and either restart it or end the run. */
-    private void ended(JobStream stream, JobInstance instance, JobInstanceAttempt attempt, long engineJobId, EngineJobStatus status,
+    private void ended(EngineClient engine, String clusterId, JobStream stream, JobInstance instance, JobInstanceAttempt attempt, String engineJobId, EngineJobStatus status,
             Map<String, String> metrics) {
-        RunRecorder recorder = runs.recorder();
-        seen.remove(attempt.getId());
-        String logText = null;
-        if (attempt.getFinishedAt() == null) {
-            attempt.setEngineStatus(status.name());
-            attempt.setFinishedAt(LocalDateTime.now());
-            if (!metrics.isEmpty()) {
-                attempt.setMetricsJson(objectMapper.writeValueAsString(metrics));
-                recorder.counters(instance.getId(), EngineMetrics.parse(metrics, objectMapper));
-            }
-            recorder.update(attempt);
-            logText = logArchiver.archive(instance.getId(), attempt, engineJobId);
+        // Re-read the live job_stream row so a stop requested after tick() started is always seen,
+        // and bail out if StreamService.stop() has already finished and released this instance.
+        JobStream latest = streams.selectById(stream.getJobDefinitionId());
+        if (latest == null || !instance.getId().equals(latest.getCurrentInstanceId())) {
+            return;
         }
+        // On Flink, stop-with-savepoint transitions the job to FINISHED before StreamService.stop()
+        // finishes polling /savepoints/{reqId} and atomically calls runs.finish(). Always wait
+        // within the grace window (even if an earlier checkpoint path is already on job_stream) so
+        // the monitor never mistakes the old checkpoint for the new savepoint or frees the job early.
+        if (engine.type() == EngineType.FLINK
+                && status == EngineJobStatus.FINISHED
+                && "SAVEPOINT".equals(latest.getStopRequested())) {
+            if (latest.getStopRequestedAt() != null
+                    && latest.getStopRequestedAt().isAfter(LocalDateTime.now().minus(SAVEPOINT_STOP_GRACE))) {
+                return;
+            }
+            // Grace expired (e.g. console crashed mid-stop): end the run without fabricating a
+            // SAVEPOINT out of an earlier checkpoint path.
+            recordAttemptEnded(clusterId, instance, attempt, engineJobId, status, metrics);
+            runs.finish(instance, RunStatus.CANCELED,
+                    "停止并保存 savepoint 超时未能获取路径；" + resumesFrom(stream.getJobDefinitionId()), null);
+            return;
+        }
+        String logText = recordAttemptEnded(clusterId, instance, attempt, engineJobId, status, metrics);
         String versionId = instance.getJobVersionId();
         switch (status) {
             case SAVEPOINT_DONE -> runs.finish(instance, RunStatus.CANCELED, "已停止，savepoint 已保存；下次启动从这里继续",
-                    new RestorePoint(Kind.SAVEPOINT, engineJobId, versionId, null));
+                    new RestorePoint(Kind.SAVEPOINT, engineJobId, null, versionId, null));
             case CANCELED -> runs.finish(instance, RunStatus.CANCELED, "已强制停止；" + resumesFrom(stream.getJobDefinitionId()), null);
-            case FINISHED -> runs.finish(instance, RunStatus.SUCCESS, "引擎作业已结束", new RestorePoint(null, engineJobId, versionId, null));
+            case FINISHED -> runs.finish(instance, RunStatus.SUCCESS, "引擎作业已结束", new RestorePoint(null, engineJobId, null, versionId, null));
             default -> failed(stream, instance, attempt, engineJobId, status, StreamFailure.fromLog(logText));
         }
     }
 
-    private void failed(JobStream stream, JobInstance instance, JobInstanceAttempt attempt, long engineJobId, EngineJobStatus status,
+    private String recordAttemptEnded(String clusterId, JobInstance instance, JobInstanceAttempt attempt,
+            String engineJobId, EngineJobStatus status, Map<String, String> metrics) {
+        RunRecorder recorder = runs.recorder();
+        seen.remove(attempt.getId());
+        if (attempt.getFinishedAt() != null) {
+            return null;
+        }
+        attempt.setEngineStatus(status.name());
+        attempt.setFinishedAt(LocalDateTime.now());
+        if (!metrics.isEmpty()) {
+            attempt.setMetricsJson(objectMapper.writeValueAsString(metrics));
+            recorder.counters(instance.getId(), EngineMetrics.parse(metrics, objectMapper));
+        }
+        recorder.update(attempt);
+        return logArchiver.archive(clusterId, instance.getId(), attempt, engineJobId);
+    }
+
+    private void failed(JobStream stream, JobInstance instance, JobInstanceAttempt attempt, String engineJobId, EngineJobStatus status,
             StreamFailure failure) {
         RunRecorder recorder = runs.recorder();
         String cause = failure.summary() == null ? "引擎作业 " + engineJobId + " " + status : failure.summary();
@@ -352,7 +403,7 @@ public class StreamMonitor {
         runs.recorder().event(instance.getId(), attempt.getAttemptNo(), RunEventType.RETRY, Level.INFO, "自动重启：" + decision.note());
         try {
             JobConfigRenderer.Rendered rendered = submitter.render(job, jobService.requireVersion(instance.getJobVersionId()), instance);
-            submitter.submit(job, instance, attempt, rendered.config(), decision.mode(), decision.restoreFrom());
+            submitter.submit(job, instance, attempt, rendered.config(), decision.mode(), decision.restoreFrom(), decision.restorePath());
         } catch (RuntimeException e) {
             runs.finish(instance, RunStatus.FAILED, "自动重启失败：" + e.getMessage(), null);
         }

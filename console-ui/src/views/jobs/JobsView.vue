@@ -95,6 +95,12 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column prop="projectName" label="项目" min-width="120" show-overflow-tooltip />
+      <el-table-column label="执行集群" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <el-tag :type="row.engineType === 'FLINK' ? 'warning' : 'primary'" size="small">{{ row.engineType || 'ZETA' }}</el-tag>
+          <span class="sub inline">{{ row.clusterName ?? '默认集群' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="配置方式" width="90">
         <template #default="{ row }">{{ row.editMode === 'FORM' ? '向导' : '脚本' }}</template>
       </el-table-column>

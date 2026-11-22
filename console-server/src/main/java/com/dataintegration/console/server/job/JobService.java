@@ -8,15 +8,18 @@ import com.dataintegration.console.common.ErrorCodes;
 import com.dataintegration.console.common.PageResult;
 import com.dataintegration.console.server.auth.Access;
 import com.dataintegration.console.server.auth.CurrentUser;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.datasource.DatasourceService;
 import com.dataintegration.console.server.encryptkey.EncryptKeyService;
 import com.dataintegration.console.server.job.HoconTemplate.DatasourceRef;
 import com.dataintegration.console.server.job.wizard.WizardForm;
 import com.dataintegration.console.server.job.wizard.WizardService;
 import com.dataintegration.console.server.persistence.entity.BackfillBatch;
+import com.dataintegration.console.server.persistence.entity.EngineCluster;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
 import com.dataintegration.console.server.persistence.entity.JobSchedule;
+import com.dataintegration.console.server.persistence.entity.JobStream;
 import com.dataintegration.console.server.persistence.entity.JobVersion;
 import com.dataintegration.console.server.persistence.entity.JobVersionDatasource;
 import com.dataintegration.console.server.persistence.mapper.BackfillBatchMapper;
@@ -76,6 +79,9 @@ public class JobService {
             String id,
             String projectId,
             String projectName,
+            String clusterId,
+            String clusterName,
+            String engineType,
             String name,
             String jobType,
             String editMode,
@@ -143,6 +149,7 @@ public class JobService {
     private final RunCleanupService runCleanup;
     private final StreamIdentityService streams;
     private final CdcReadiness cdcReadiness;
+    private final EngineRegistry engines;
 
     public JobService(
             JobDefinitionMapper jobMapper,
@@ -164,7 +171,8 @@ public class JobService {
             EncryptKeyService encryptKeys,
             RunCleanupService runCleanup,
             StreamIdentityService streams,
-            CdcReadiness cdcReadiness) {
+            CdcReadiness cdcReadiness,
+            EngineRegistry engines) {
         this.jobMapper = jobMapper;
         this.versionMapper = versionMapper;
         this.versionDatasourceMapper = versionDatasourceMapper;
@@ -185,6 +193,7 @@ public class JobService {
         this.runCleanup = runCleanup;
         this.streams = streams;
         this.cdcReadiness = cdcReadiness;
+        this.engines = engines;
     }
 
     /** @param mine only the current user's jobs */
@@ -220,12 +229,18 @@ public class JobService {
     }
 
     public JobView create(String projectId, String name, String jobType, String editMode, String description) {
+        return create(projectId, null, name, jobType, editMode, description);
+    }
+
+    public JobView create(String projectId, String clusterId, String name, String jobType, String editMode, String description) {
         projectService.requireEditable(projectId);
         if (!TYPE_BATCH.equals(jobType) && !TYPE_STREAMING.equals(jobType)) {
             throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "job type must be BATCH or STREAMING");
         }
+        EngineCluster cluster = engines.resolveCluster(clusterId);
         JobDefinition job = new JobDefinition();
         job.setProjectId(projectId);
+        job.setClusterId(cluster == null ? null : cluster.getId());
         job.setName(name.trim());
         job.setJobType(jobType);
         if (editMode != null && !MODE_FORM.equals(editMode) && !MODE_SCRIPT.equals(editMode)) {
@@ -251,8 +266,14 @@ public class JobService {
      */
     @Transactional
     public JobView copy(String id, String name, String projectId) {
+        return copy(id, name, projectId, null);
+    }
+
+    @Transactional
+    public JobView copy(String id, String name, String projectId, String clusterId) {
         JobDefinition source = require(id);
-        JobView created = create(projectId == null ? source.getProjectId() : projectId, name, source.getJobType(),
+        String targetCluster = (clusterId == null || clusterId.isBlank()) ? source.getClusterId() : clusterId;
+        JobView created = create(projectId == null ? source.getProjectId() : projectId, targetCluster, name, source.getJobType(),
                 source.getEditMode(), source.getDescription());
         if (source.getCurrentVersionId() == null) {
             return created;
@@ -270,12 +291,26 @@ public class JobService {
             }
         }
 
+        String hoconTemplate = from.getHoconTemplate();
+        String validationJson = from.getValidationJson();
+        if (MODE_FORM.equals(job.getEditMode()) && from.getFormJson() != null) {
+            var sourceEngine = engines.engineType(source.getClusterId());
+            var targetEngine = engines.engineType(job.getClusterId());
+            if (sourceEngine != targetEngine) {
+                WizardForm savedForm = objectMapper.readValue(from.getFormJson(), WizardForm.class);
+                var regenerated = com.dataintegration.console.server.job.wizard.WizardGenerator.generate(
+                        savedForm, wizardService.endpoints(savedForm), targetEngine);
+                hoconTemplate = regenerated.hocon();
+                validationJson = regenerated.validation() == null ? null : objectMapper.writeValueAsString(regenerated.validation());
+            }
+        }
+
         JobVersion version = new JobVersion();
         version.setJobDefinitionId(job.getId());
         version.setVersionNo(1);
-        version.setHoconTemplate(from.getHoconTemplate());
+        version.setHoconTemplate(hoconTemplate);
         version.setParamsJson(from.getParamsJson());
-        version.setValidationJson(from.getValidationJson());
+        version.setValidationJson(validationJson);
         version.setFormJson(from.getFormJson());
         version.setRemark("复制自 " + source.getName() + " v" + from.getVersionNo());
         version.setCreatedBy(CurrentUser.idOrNull());
@@ -335,6 +370,16 @@ public class JobService {
         if (backfills > 0) {
             throw new ConsoleException(ErrorCodes.CONFLICT, "任务还有进行中或暂停的补数，请先在「补数」里取消再删除");
         }
+        if (TYPE_STREAMING.equals(job.getJobType())) {
+            JobStream stream = streams.find(id);
+            if (stream != null && stream.getRestorePath() != null && !stream.getRestorePath().isBlank()) {
+                try {
+                    engines.clientFor(job.getClusterId()).disposeSavepoint(stream.getRestorePath());
+                } catch (RuntimeException e) {
+                    log.warn("Could not dispose Flink savepoint {} for deleted job {}: {}", stream.getRestorePath(), id, e.getMessage());
+                }
+            }
+        }
         if (deleteRuns) {
             runCleanup.deleteHistory(id);
         }
@@ -376,7 +421,10 @@ public class JobService {
             requireFormType(job, form);
             requireOwnersDatasources(job, wizardDatasources(form));
             WizardService.PrecheckResult check = withCdcReadiness(job, form,
-                    wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), null)));
+                    wizardService.precheck(
+                            form,
+                            renderer.variables(job, params, Map.of(), LocalDateTime.now(), null),
+                            engines.engineType(job.getClusterId())));
             if (!check.passed()) {
                 throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "预检查未通过：" + String.join("；", check.errors()));
             }
@@ -489,7 +537,10 @@ public class JobService {
         requireFormType(job, form);
         requireOwnersDatasources(job, wizardDatasources(form));
         return withCdcReadiness(job, form,
-                wizardService.precheck(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID)));
+                wizardService.precheck(
+                        form,
+                        renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID),
+                        engines.engineType(job.getClusterId())));
     }
 
     /** A real-time job's form carries the stream settings, an offline job's does not. */
@@ -791,10 +842,19 @@ public class JobService {
 
     private JobView view(
             JobDefinition job, Integer currentVersionNo, String projectName, Map<String, String> owners, Activity activity) {
+        EngineCluster cluster = null;
+        try {
+            cluster = engines.resolveCluster(job.getClusterId());
+        } catch (ConsoleException ignored) {
+            // cluster deleted or missing; fall back to defaults
+        }
         return new JobView(
                 job.getId(),
                 job.getProjectId(),
                 projectName,
+                cluster == null ? job.getClusterId() : cluster.getId(),
+                cluster == null ? "默认 Zeta 集群" : cluster.getName(),
+                cluster == null ? "ZETA" : cluster.getEngineType(),
                 job.getName(),
                 job.getJobType(),
                 job.getEditMode(),

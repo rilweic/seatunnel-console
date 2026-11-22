@@ -5,17 +5,21 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The only way the console talks to an execution engine. P1 ships {@code ZetaRestClient}; Flink and
- * Spark implementations are planned for P3 (see docs/design.md §4.2).
+ * The only way the console talks to an execution engine. Supports Zeta REST API v2 and Flink
+ * (CLI submission + Flink REST API v1).
  */
 public interface EngineClient {
 
     EngineType type();
 
+    /** Generates a fresh caller-chosen engine job id so a lost submission response can be looked up. */
+    String newJobId();
+
     /**
-     * Option definitions of a connector, read from the cluster so they always match its version.
+     * Option definitions of a connector, read from the cluster or its SeaTunnel distribution so
+     * they match its version.
      *
-     * @param pluginType {@code source} or {@code sink}
+     * @param pluginType {@code source}, {@code sink} or {@code transform}
      * @param plugin connector name, e.g. {@code Jdbc}
      */
     List<ConnectorOption> connectorOptions(String pluginType, String plugin);
@@ -36,29 +40,48 @@ public interface EngineClient {
     Map<String, String> overview();
 
     /** Submits a job and returns the engine job id. */
-    long submit(SubmitJobRequest request);
+    String submit(SubmitJobRequest request);
 
     /**
      * Stops a job.
      *
      * @param withSavepoint stop with a savepoint so the job can be restored later
      * @param force cancel immediately, ignoring withSavepoint
+     * @return stop result, carrying the savepoint path on engines that require it for restore
      */
-    void stop(long jobId, boolean withSavepoint, boolean force);
+    StopResult stop(String jobId, boolean withSavepoint, boolean force);
+
+    /** Disposes an external savepoint or retained checkpoint path no longer needed (Flink). */
+    default void disposeSavepoint(String path) {}
 
     /** Empty when the engine no longer knows the job, e.g. after history expiry. */
-    Optional<EngineJobInfo> jobInfo(long jobId);
+    Optional<EngineJobInfo> jobInfo(String jobId);
 
     /** Checkpoint statistics of a job; empty when the engine has none for it. */
-    default Optional<EngineCheckpoints> checkpoints(long jobId) {
+    default Optional<EngineCheckpoints> checkpoints(String jobId) {
         return Optional.empty();
     }
 
+    /** Detailed exception trace from the engine (e.g. Flink {@code /jobs/{id}/exceptions}). */
+    default Optional<String> jobExceptions(String jobId) {
+        return Optional.empty();
+    }
+
+    /** Whether {@link #listLogs(String)} returns per-job logs suitable for archiving after an attempt. */
+    default boolean archivesPerJobLogs() {
+        return true;
+    }
+
+    /** Configuration warnings detected on the cluster (e.g. missing Flink savepoint dir). */
+    default List<String> configWarnings() {
+        return List.of();
+    }
+
     /**
-     * Log files of a job across all engine nodes. Empty when the engine keeps no per-job logs, for
+     * Log files of a job across engine nodes. Empty when the engine keeps no per-job logs, for
      * example when Zeta's log4j2 routing is not enabled or the files have expired.
      */
-    List<EngineLogFile> listLogs(long jobId);
+    List<EngineLogFile> listLogs(String jobId);
 
     /**
      * Reads one log file, keeping at most the last {@code maxBytes} bytes.
@@ -66,6 +89,10 @@ public interface EngineClient {
      * @return the content; {@link LogContent#truncated()} tells whether the head was dropped
      */
     LogContent readLog(EngineLogFile file, long maxBytes);
+
+    record StopResult(String savepointPath) {
+        public static final StopResult NONE = new StopResult(null);
+    }
 
     record LogContent(String text, boolean truncated) {}
 }

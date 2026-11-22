@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /** New offline or real-time job: project, name and how it is configured; opens its editor after. */
 import { ElMessage } from 'element-plus'
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { clustersApi, type ClusterView } from '@/api/clusters'
 import { jobApi, type JobView, type ProjectView } from '@/api/console'
 
 const props = defineProps<{
@@ -15,16 +16,20 @@ const props = defineProps<{
 const visible = defineModel<boolean>({ required: true })
 const router = useRouter()
 
-const form = reactive({ projectId: '', name: '', editMode: 'FORM' as 'FORM' | 'SCRIPT', description: '', saving: false })
+const clusters = ref<ClusterView[]>([])
+const form = reactive({ projectId: '', clusterId: '', name: '', editMode: 'FORM' as 'FORM' | 'SCRIPT', description: '', saving: false })
 
-watch(visible, (open) => {
+watch(visible, async (open) => {
   if (open) {
     Object.assign(form, {
       projectId: props.projects.find((p) => p.id === props.defaultProjectId)?.id ?? props.projects[0]?.id ?? '',
+      clusterId: '',
       name: '',
       editMode: 'FORM',
       description: '',
     })
+    clusters.value = await clustersApi.list()
+    form.clusterId = clusters.value.find((c) => c.isDefault)?.id ?? clusters.value[0]?.id ?? ''
   }
 })
 
@@ -39,6 +44,7 @@ async function create() {
   try {
     const job = await jobApi.create({
       projectId: form.projectId,
+      clusterId: form.clusterId || undefined,
       name: form.name,
       jobType: props.jobType,
       editMode: form.editMode,
@@ -59,6 +65,17 @@ async function create() {
         <el-select v-model="form.projectId" class="full" placeholder="只能在自己的项目里建任务">
           <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
         </el-select>
+      </el-form-item>
+      <el-form-item v-if="clusters.length" label="执行集群" required>
+        <el-select v-model="form.clusterId" class="full" placeholder="选择任务运行的集群">
+          <el-option
+            v-for="c in clusters"
+            :key="c.id"
+            :label="`${c.name}（${c.engineType}${c.isDefault ? ' · 默认' : ''}）`"
+            :value="c.id"
+          />
+        </el-select>
+        <div class="mode-tip">任务创建后不能更换集群；如需切换引擎，可复制任务到目标集群。</div>
       </el-form-item>
       <el-form-item label="名称" required>
         <el-input v-model="form.name" maxlength="128" />

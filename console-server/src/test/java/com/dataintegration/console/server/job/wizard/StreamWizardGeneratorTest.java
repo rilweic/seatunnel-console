@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.dataintegration.console.server.job.HoconTemplate;
+import com.dataintegration.console.engine.EngineType;
 import com.dataintegration.console.server.job.wizard.WizardForm.FieldProcess;
 import com.dataintegration.console.server.job.wizard.WizardForm.Mask;
 import com.dataintegration.console.server.job.wizard.WizardForm.MaskPreset;
@@ -105,5 +106,14 @@ class StreamWizardGeneratorTest {
                 new Endpoints("MYSQL", null, "MYSQL", null, Map.of("orders", List.of("id", "phone")))).hocon();
 
         assertThat(hocon).contains("Sql {").doesNotContain("schema-changes");
+    }
+
+    @Test
+    void flinkStreamingOmitsZetaOnlyRetainOption() {
+        String zeta = WizardGenerator.generate(form(List.of(table("orders")), ALL_CHANGES), MYSQL_TO_MYSQL, EngineType.ZETA).hocon();
+        String flink = WizardGenerator.generate(form(List.of(table("orders")), ALL_CHANGES), MYSQL_TO_MYSQL, EngineType.FLINK).hocon();
+
+        assertThat(zeta).contains("checkpoint.retain-after-job-cancelled = true");
+        assertThat(flink).contains("checkpoint.interval = ").doesNotContain("checkpoint.retain-after-job-cancelled");
     }
 }

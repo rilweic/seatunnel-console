@@ -2,10 +2,10 @@ package com.dataintegration.console.server.run;
 
 import com.dataintegration.console.common.ConsoleException;
 import com.dataintegration.console.common.ErrorCodes;
-import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.EngineJobInfo;
 import com.dataintegration.console.engine.EngineJobStatus;
 import com.dataintegration.console.engine.SubmitJobRequest;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.job.JobConfigRenderer;
 import com.dataintegration.console.server.job.RowCountValidator;
 import com.dataintegration.console.server.job.ScriptChecker;
@@ -62,7 +62,7 @@ public class RunExecutor {
     static final String REJECTED =
             "SeaTunnel rejected the job at submission (see logs/seatunnel-engine-server.log on the master for the root cause): ";
 
-    private static final long NOT_SUBMITTED = -1;
+    private static final String NOT_SUBMITTED = null;
 
     private static final TypeReference<Map<String, String>> STRING_MAP = new TypeReference<>() {};
 
@@ -76,10 +76,10 @@ public class RunExecutor {
     private final ScriptChecker scriptChecker;
     private final JobScheduleMapper scheduleMapper;
     private final WatermarkService watermarks;
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
     private final AttemptLogArchiver logArchiver;
     private final ObjectMapper objectMapper;
-    private final BatchJobRunner runner;
+    private final Duration pollInterval;
     private final Messages messages;
 
     /** Runs driven by this process, by instance id; the console is single-instance. */
@@ -93,7 +93,7 @@ public class RunExecutor {
             ScriptChecker scriptChecker,
             JobScheduleMapper scheduleMapper,
             WatermarkService watermarks,
-            EngineClient engineClient,
+            EngineRegistry engines,
             AttemptLogArchiver logArchiver,
             ObjectMapper objectMapper,
             Messages messages,
@@ -105,11 +105,11 @@ public class RunExecutor {
         this.scriptChecker = scriptChecker;
         this.scheduleMapper = scheduleMapper;
         this.watermarks = watermarks;
-        this.engineClient = engineClient;
+        this.engines = engines;
         this.logArchiver = logArchiver;
         this.objectMapper = objectMapper;
         this.messages = messages;
-        this.runner = new BatchJobRunner(engineClient, pollInterval);
+        this.pollInterval = pollInterval;
     }
 
     /**
@@ -216,7 +216,7 @@ public class RunExecutor {
             }
         } else if (status == RunStatus.CANCELED) {
             message = signal.isCancelled() ? signal.reason() : outcome.errorMessage();
-        } else if (outcome.engineJobId() == NOT_SUBMITTED || outcome.finalStatus() == EngineJobStatus.UNKNOWABLE) {
+        } else if (outcome.engineJobId() == null || outcome.finalStatus() == EngineJobStatus.UNKNOWABLE) {
             message = outcome.errorMessage();
         } else {
             message = "engine job " + outcome.engineJobId() + " " + outcome.finalStatus()
@@ -239,6 +239,7 @@ public class RunExecutor {
         instance.setAttemptCount(attemptNo);
         recorder.update(instance);
 
+        BatchJobRunner runner = new BatchJobRunner(engines.clientFor(prepared.job().getClusterId()), pollInterval);
         BatchJobRunner.Outcome outcome;
         try {
             outcome = runner.run(prepared.request(), new RecordingListener(instance.getId(), attempt, schedulerLog), signal);
@@ -261,7 +262,7 @@ public class RunExecutor {
         attempt.setErrorMessage(RunRecorder.clip(outcome.errorMessage()));
         attempt.setFinishedAt(LocalDateTime.now());
         recorder.update(attempt);
-        logArchiver.archive(instance.getId(), attempt, outcome.engineJobId());
+        logArchiver.archive(prepared.job().getClusterId(), instance.getId(), attempt, outcome.engineJobId());
         return outcome;
     }
 
@@ -292,7 +293,7 @@ public class RunExecutor {
      * the sync window it reads (null when it reads none) with the watermark generation it was read under.
      */
     private record Prepared(
-            SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation, SyncWindow window, int watermarkGen) {}
+            JobDefinition job, SubmitJobRequest request, JobConfigRenderer.Rendered rendered, ValidationSpec validation, SyncWindow window, int watermarkGen) {}
 
     /**
      * Counts source and target rows if the version asks for it (docs/design.md §10.3). The result is
@@ -353,6 +354,7 @@ public class RunExecutor {
                             + String.join(", ", rendered.unresolved()));
         }
         return new Prepared(
+                job,
                 SubmitJobRequest.fresh(job.getName() + "#" + instance.getId(), rendered.config()),
                 rendered,
                 jobService.validation(version),
@@ -407,7 +409,7 @@ public class RunExecutor {
         instance.setStatus(RunStatus.PENDING.name());
         instance.setAttemptCount(0);
         instance.setMaxAttempts(scheduleRetries(job.getId()) + 1);
-        instance.setEngineType(engineClient.type().name());
+        instance.setEngineType(engines.engineType(job.getClusterId()).name());
         String startup = trigger.startupParams().isEmpty() ? null : objectMapper.writeValueAsString(trigger.startupParams());
         instance.setStartupParamsJson(startup);
         instance.setVariablesJson(startup);
@@ -514,8 +516,8 @@ public class RunExecutor {
         }
 
         @Override
-        public void onSubmitted(long engineJobId) {
-            attempt.setEngineJobId(String.valueOf(engineJobId));
+        public void onSubmitted(String engineJobId) {
+            attempt.setEngineJobId(engineJobId);
             attempt.setSubmittedAt(LocalDateTime.now());
             recorder.update(attempt);
             recorder.event(instanceId, attempt.getAttemptNo(), RunEventType.SUBMITTED, Level.INFO,

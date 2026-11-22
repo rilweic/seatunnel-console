@@ -3,8 +3,8 @@ package com.dataintegration.console.server.dashboard;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.dataintegration.console.common.ConsoleException;
-import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.server.auth.CurrentUser;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.persistence.entity.JobDefinition;
 import com.dataintegration.console.server.persistence.entity.JobInstance;
@@ -74,7 +74,7 @@ public class DashboardService {
     private final JobInstanceMapper instanceMapper;
     private final JobScheduleMapper scheduleMapper;
     private final InstanceService instanceService;
-    private final EngineClient engineClient;
+    private final EngineRegistry engines;
     private final StreamDashboard streamDashboard;
 
     public DashboardService(
@@ -82,14 +82,14 @@ public class DashboardService {
             JobInstanceMapper instanceMapper,
             JobScheduleMapper scheduleMapper,
             InstanceService instanceService,
-            EngineClient engineClient,
+            EngineRegistry engines,
             StreamDashboard streamDashboard) {
         this.streamDashboard = streamDashboard;
         this.jobMapper = jobMapper;
         this.instanceMapper = instanceMapper;
         this.scheduleMapper = scheduleMapper;
         this.instanceService = instanceService;
-        this.engineClient = engineClient;
+        this.engines = engines;
     }
 
     /** @param mine only jobs the current user created, and their runs */
@@ -236,7 +236,7 @@ public class DashboardService {
 
     private Map<String, String> cluster() {
         try {
-            Map<String, String> overview = engineClient.overview();
+            Map<String, String> overview = engines.defaultClient().overview();
             Map<String, String> picked = new HashMap<>();
             for (String key : Set.of("workers", "runningJobs", "pendingJobs", "totalSlot", "unassignedSlot", "projectVersion")) {
                 if (overview.get(key) != null) {

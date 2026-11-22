@@ -69,7 +69,7 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`
 }
 
-/** Rows per second, compact: 0.4, 12, 3.2万. */
+/** Rows per second, compact: 0, 0.02, 0.4, 12, 3.2万. */
 export function formatRate(perSecond: number | null | undefined): string {
   if (perSecond === null || perSecond === undefined || !Number.isFinite(perSecond)) {
     return '-'
@@ -77,7 +77,16 @@ export function formatRate(perSecond: number | null | undefined): string {
   if (perSecond >= 10000) {
     return `${(perSecond / 10000).toFixed(1)}万`
   }
-  return perSecond >= 10 ? Math.round(perSecond).toLocaleString('zh-CN') : perSecond.toFixed(1)
+  if (perSecond >= 10) {
+    return Math.round(perSecond).toLocaleString('zh-CN')
+  }
+  if (perSecond === 0 || perSecond >= 0.1) {
+    return perSecond.toFixed(1)
+  }
+  if (perSecond >= 0.01) {
+    return perSecond.toFixed(2)
+  }
+  return perSecond.toFixed(3)
 }
 
 /** Large counts for stat cards: 1,234 / 12.3万 / 1.2亿. */

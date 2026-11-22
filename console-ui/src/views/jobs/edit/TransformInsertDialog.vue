@@ -8,6 +8,7 @@ import { computed, ref, watch } from 'vue'
 
 import { connectorApi, type ConnectorOption } from '@/api/console'
 
+const props = defineProps<{ clusterId?: string | null }>()
 const visible = defineModel<boolean>({ required: true })
 const emit = defineEmits<{ insert: [snippet: string] }>()
 
@@ -167,7 +168,7 @@ async function pick(t: Template) {
   optionsError.value = ''
   loading.value = true
   try {
-    options.value = (await connectorApi.options('transform', t.plugin)).filter((o) => !['table_transform', 'table_match_regex', 'rule_match_mode'].includes(o.key))
+    options.value = (await connectorApi.options('transform', t.plugin, props.clusterId)).filter((o) => !['table_transform', 'table_match_regex', 'rule_match_mode'].includes(o.key))
   } catch {
     optionsError.value = '无法从 SeaTunnel 集群读取这个插件的参数说明'
   } finally {

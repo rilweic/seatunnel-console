@@ -2,21 +2,23 @@ package com.dataintegration.console.server.health;
 
 import com.dataintegration.console.engine.EngineClient;
 import com.dataintegration.console.engine.MasterStatus;
+import com.dataintegration.console.server.cluster.EngineRegistry;
 import com.dataintegration.console.server.message.MessageCategory;
 import com.dataintegration.console.server.message.Messages;
 import com.dataintegration.console.server.run.RunRecorder.Level;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
- * Tells the admins when no SeaTunnel master answers for a few checks in a row, and when one does
- * again (docs/design.md §10.7). A single missed check is not reported: a master restarting or a
- * network blip would otherwise raise a message every time.
+ * Tells the admins when no master of the default cluster answers for a few checks in a row, and
+ * when one does again (docs/design.md §10.7).
  */
 @Component
 public class ClusterWatcher {
@@ -26,7 +28,7 @@ public class ClusterWatcher {
     static final int FAILURES_TO_REPORT = 3;
     private static final String SUBJECT = "seatunnel";
 
-    private final EngineClient engine;
+    private final Supplier<EngineClient> engine;
     private final Messages messages;
 
     private int failures;
@@ -38,7 +40,16 @@ public class ClusterWatcher {
      */
     private boolean knownUp;
 
-    public ClusterWatcher(EngineClient engine, Messages messages) {
+    @Autowired
+    public ClusterWatcher(EngineRegistry engines, Messages messages) {
+        this(engines::defaultClient, messages);
+    }
+
+    ClusterWatcher(EngineClient engine, Messages messages) {
+        this(() -> engine, messages);
+    }
+
+    private ClusterWatcher(Supplier<EngineClient> engine, Messages messages) {
         this.engine = engine;
         this.messages = messages;
     }
@@ -47,7 +58,7 @@ public class ClusterWatcher {
     public void check() {
         List<MasterStatus> masters;
         try {
-            masters = engine.probeMasters();
+            masters = engine.get().probeMasters();
         } catch (RuntimeException e) {
             log.warn("Probing the SeaTunnel masters failed: {}", e.toString());
             return;

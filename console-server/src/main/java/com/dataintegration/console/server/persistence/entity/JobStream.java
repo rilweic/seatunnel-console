@@ -28,6 +28,7 @@ public class JobStream {
     private LocalDateTime stopRequestedAt;
     private LocalDateTime restartAt;
     private String restoreEngineJobId;
+    private String restorePath;
     private String restoreKind;
     private String restoreVersionId;
     private String restoreBlocked;
