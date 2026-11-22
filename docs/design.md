@@ -667,7 +667,7 @@ P2 已完成，2026-10-27 合并到 main：
 
 ### P3 扩展
 
-- Flink 引擎（EngineClient 的新实现）和集群登记：方案见 [flink-spark.md](flink-spark.md)，方向已定（§0），剩余问题见其 §8
+- **Flink 引擎与多集群登记（已完成，合并到 `main`）**：方案与实测结论见 [flink-spark.md](flink-spark.md)。包含 `engine_cluster` 表（V16）、`EngineRegistry` 路由、`EngineClient` 改为 `String` jobId、`FlinkEngineClient`（本机 `flink run -d` + Flink REST API v1 + 离线连接器选项读取）、离线批任务与实时 CDC 任务支持（含 savepoint 停止/CLAIM 恢复/`/savepoint-disposal` 清理与并发保护）以及多集群前端管理界面
 - 告警的外部渠道（Webhook、钉钉、企微），订阅 §10.7 的消息
 - 更多数据源；ES 作为来源（HTTP 来源已提前，§7.13）
 - 类似 Tapdata Board 的拖拽快速创建

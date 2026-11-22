@@ -1,6 +1,6 @@
-# Flink 引擎方案（P3，2026-10-28 草案）
+# Flink 引擎方案（P3，已实现并合并到 `main`）
 
-本文是 design.md §4.2、§12 P3「Flink 和 Spark 引擎」的展开：SeaTunnel 跑在 Flink 上要什么前提、官方启动脚本到底做了什么、不同部署方式的提交差别、和 Zeta 差在哪、console 要怎么接、本地怎么搭测试环境。**方向已定（§0），还没有写代码**；§8 是剩下要讨论的问题。
+本文是 design.md §4.2、§12 P3「Flink 引擎与多集群登记」的设计与实测记录：SeaTunnel 跑在 Flink 上要什么前提、不同部署方式的提交差别、和 Zeta 差在哪、console 怎么接以及本地 Docker 集群实测结论。**第一版（Standalone / Session + 多集群登记 + 离线与实时 CDC）已完成实现并合并到 `main`**。
 
 ## 0. 已定的方向（2026-10-28）
 
@@ -21,7 +21,7 @@
 
 ### 0.1 整体流程图
 
-下图是当前设计，Flink 接入尚未实现；提交、恢复和连接器加载等行为仍需按 §7.6 实测。
+下图是当前实现架构，§7.6 实测项均已验证通过。
 
 ```mermaid
 flowchart TD
@@ -528,14 +528,14 @@ FLINK_HOME=~/software/flink-1.20.1 ~/software/seatunnel-engines/bin/start-seatun
 - 官方 Flink 镜像不带 Hadoop。JDBC、CDC、ES、HTTP 用不到；HDFS、S3 等文件类连接器可能缺类，到时按需补
 - 已有的一份 Flink compose（1.19.1、端口 8081、挂载 `/mnt/flink`）的问题：1.19 不在支持范围，改 1.20.1；没配 checkpoint / savepoint 目录，CDC 停止做 savepoint 会失败；在这台 Mac 上 8081 冲突、`/mnt` 不能用；Linux 上访问宿主机数据库要加 `extra_hosts`
 
-### 7.6 要先做的验证
+### 7.6 实测验证结果（Flink 1.20.1 Docker 单节点，已全部验证通过）
 
-1. **集群节点不放发行包能否运行**（§2.5）：jobmanager / taskmanager 两个容器**都不挂** SeaTunnel 发行包，从宿主机以 `-m localhost:8082` 提交 FakeSource → Console，再提交一个 JDBC 作业。通过则集群上什么都不用装
-2. **savepoint 停止和恢复**：实时作业 `-d` 提交，`POST /jobs/{id}/stop` 拿到 savepoint 路径，再 `-s <路径> -restoreMode claim` 恢复（确认启动脚本能透传、做完 checkpoint 后旧 savepoint 被删）；`/savepoint-disposal` 能否删保留的 checkpoint
-3. **按作业名找回 jobId、固定 jobId**：`/jobs/overview` 能否按 `--name` 找到；`$internal.pipeline.job-id` 能否让 console 指定 Flink jobId（§5.2 "不重复提交"）
-4. **计数**：SeaTunnel 的读写条数在 Flink REST 的哪个指标里，运行中能否拿到
-5. **离线读选项**：`seatunnel-connector.sh -o` 对向导用到的连接器和 transform 是否都能输出（§5.2）
-6. **日志**：taskmanager 日志里 SeaTunnel 连接器的行能否按 jobId / task 名过滤出来；作业结束后 `/jobs/{id}/exceptions` 的保留时间（§5.8）
+1. **集群节点不放发行包能否运行**（§2.5）：**通过**。纯外部 Flink 1.20.1 容器（未挂载 SeaTunnel）下，从宿主机通过 `bin/flink run -d -m localhost:8082` 提交 `FakeSource → Console` 以及 **MySQL CDC → PostgreSQL** 实时同步均正常运行，TaskManager 自动经 BlobServer 加载连接器与 JDBC 驱动。
+2. **savepoint 停止、CLAIM 恢复与清理**：**通过**。`POST /jobs/{id}/stop` 返回 `request-id`，轮询 `/jobs/{id}/savepoints/{reqId}` 拿到 `operation.location`；`-s <路径> -restoreMode claim` 恢复至 `RUNNING`；`POST /savepoint-disposal` 请求体字段名为 **`savepoint-path`**（连字符）。
+3. **固定 jobId 与防重提交**：**通过**。`-D$internal.pipeline.job-id=<32位hex>` 生效，console 预选 32 位十六进制 jobId，所有 CLI 非零退出一律保守归类为 `ENGINE_RESPONSE_LOST` 反查 Flink，避免重复提交；实际实现直接通过 `ProcessBuilder` 调用 `${FLINK_HOME}/bin/flink run -d`，绕过 shell `eval` 与 `FlinkStarter` 二次 JVM，并加并发信号量限流与提交超时强杀。
+4. **计数与速率**：**通过**。`/jobs/{id}/accumulators` 的 `user-task-accumulators` 直接返回 `SourceReceivedCount`、`SourceReceivedBytes`、`SinkWriteCount`、`SinkWriteBytes`（与 Zeta 键名一致），`FlinkRestClient` 结合 `/jobs/{id}` 的 `duration` 补算 `SourceReceivedQPS` / `SinkWriteQPS`。
+5. **离线读选项**：**通过**。`bin/seatunnel-connector.sh -o <plugin> -pt source|sink|transform` 可正常解析并按集群 ID + 更新时间缓存。
+6. **日志与异常**：**通过**。尝试结束时归档 `/jobs/{id}/exceptions`；实时查看日志时按 `/jobs/{id}` + `/vertices/{vid}` 过滤本次作业涉及的 TaskManager 主日志（跳过 `.log.1` 等滚动归档，单文件上限 512 KB）。
 
 ## 8. 待讨论
 

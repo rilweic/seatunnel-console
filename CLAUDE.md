@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-seatunnel-console generates, schedules and monitors Apache SeaTunnel 3.0 batch jobs. Design and decisions: `docs/design.md` (read the relevant section before changing behaviour; it records why things are the way they are). Table docs: `docs/schema.md`. User-facing setup: `README.md`. UI text and docs are in Chinese; code, comments and commit messages in English.
+seatunnel-console generates, schedules and monitors Apache SeaTunnel 3.0 batch and real-time (CDC) jobs on Zeta and Flink clusters. Design and decisions: `docs/design.md` and `docs/flink-spark.md` (read the relevant section before changing behaviour; they record why things are the way they are). Table docs: `docs/schema.md`. User-facing setup: `README.md`. UI text and docs are in Chinese; code, comments and commit messages in English.
 
 ## Commands
 
@@ -29,10 +29,11 @@ When the shell has an HTTP proxy set, local `curl` needs `--noproxy '*'`.
 
 ## Architecture
 
-Modules: `console-common` (Result, ConsoleException, ErrorCodes, UuidV7) ← `console-engine` (EngineClient + Zeta REST impl) and `console-datasource` (one plugin per datasource type: MySQL, PostgreSQL, Elasticsearch, HTTP) ← `console-server` (Spring Boot 4.1, MyBatis-Plus, Flyway, Spring Security, embedded XXL-JOB executor) ; `console-ui` (Vue 3 + Element Plus, themed to look like Ant Design via CSS tokens in `src/styles/main.css`).
+Modules: `console-common` (Result, ConsoleException, ErrorCodes, UuidV7) ← `console-engine` (EngineClient + ZetaRestClient + FlinkEngineClient) and `console-datasource` (one plugin per datasource type: MySQL, PostgreSQL, Elasticsearch, HTTP) ← `console-server` (Spring Boot 4.1, MyBatis-Plus, Flyway, Spring Security, multi-cluster `cluster/` registry, embedded XXL-JOB executor) ; `console-ui` (Vue 3 + Element Plus, themed to look like Ant Design via CSS tokens in `src/styles/main.css`).
 
 Hard constraints:
-- The console talks to SeaTunnel **only via the Zeta REST API v2** (`EngineClient`); never depend on SeaTunnel jars. `EngineClient` exists so Flink/Spark engines can be added later.
+- The console never depends on SeaTunnel or Flink jars. Zeta clusters are accessed **only via Zeta REST API v2** (`ZetaRestClient`); Flink Standalone/Session clusters submit via local `flink run -d` (`FlinkCliSubmitter`, mode-0600 temp config deleted in `finally`, bounded concurrency) and monitor/control via Flink REST API v1 (`FlinkRestClient`). `EngineClient` uses `String` job IDs and `StopResult(savepointPath)`; `EngineRegistry` resolves clients per `job_definition.cluster_id`.
+- Any non-zero exit of `flink run` is conservatively classified as `ENGINE_RESPONSE_LOST` so callers look up the pre-chosen 32-hex jobId instead of retrying blindly.
 - Datasource passwords never appear in stored config. Job templates hold `datasource_id = "<id>"`; `HoconTemplate.render` injects connector options (decrypted with `CONSOLE_SECRET_KEY`, AES-GCM) in memory at submit time; the archived config is masked (`******`). Field-encryption keys work the same way: configs hold `encrypt_key_id`, swapped for the key from `encrypt_key` (`encryptkey/EncryptKeyService`) at submit; a plain `key` in a FieldEncrypt block is refused like a password.
 - The console is single-instance: run cancel signals, login lockouts and account-change markers live in memory.
 

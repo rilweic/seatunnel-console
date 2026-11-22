@@ -1,19 +1,19 @@
-# seatunnel-console 表结构（P1）
+# seatunnel-console 表结构
 
-> 状态：已确认（2026-10-23）
-> 建表脚本：`console-server/src/main/resources/db/migration/V1__init.sql`，由 Flyway 在启动时执行
-> 总体设计见 [design.md](design.md)
+> 状态：已更新至 V16（P1 / P2 实时 / P3 多集群与 Flink）
+> 建表脚本：`console-server/src/main/resources/db/migration/V1__init.sql` – `V16__engine_clusters.sql`，由 Flyway 在启动时执行
+> 总体设计见 [design.md](design.md)，Flink 方案见 [flink-spark.md](flink-spark.md)
 
 ## 1. 通用约定
 
 | 约定 | 说明 |
 |---|---|
 | 主键 | **UUID v7**，存为带横线的 `CHAR(36)`，由 console 在代码里生成，不用数据库自增 |
-| 外部系统的 id | 保持原样：`engine_job_id` 是 `VARCHAR(64)`（Zeta 返回字符串），`xxl_job_id` 是 `INT`，`xxl_log_id` 是 `BIGINT` |
+| 外部系统的 id | 保持原样：`engine_job_id` 是 `VARCHAR(64)`（Zeta 返回数字字符串，Flink 返回 32 位十六进制字符串），`xxl_job_id` 是 `INT`，`xxl_log_id` 是 `BIGINT` |
 | 时间 | `DATETIME(3)`，使用服务器时区（Asia/Shanghai） |
-| 软删除 | `project`、`datasource`、`job_definition` 用 `deleted_at` 标记删除；生成列 `live_name` 保证**只在未删除的数据中**名称唯一，删除后可以重新使用同一个名字 |
+| 软删除 | `project`、`datasource`、`job_definition`、`engine_cluster` 用 `deleted_at` 标记删除；生成列 `live_name` 保证**只在未删除的数据中**名称唯一，删除后可以重新使用同一个名字 |
 | 不可修改的数据 | `job_version` 只插入，不更新，所以没有 `updated_at` |
-| 敏感信息 | 只有 `datasource.secret_cipher` 存放凭据，用 AES-GCM 加密，密钥由环境变量 `CONSOLE_SECRET_KEY` 提供；登录密码用 BCrypt 哈希 |
+| 敏感信息 | `datasource.secret_cipher`、`encrypt_key.key_cipher`、`engine_cluster.password_enc` 均用 AES-GCM 加密，密钥由环境变量 `CONSOLE_SECRET_KEY` 提供；登录密码用 BCrypt 哈希 |
 
 ### 为什么用 UUID v7，不用雪花 ID
 
@@ -26,10 +26,12 @@
 
 ```
 sys_user
+engine_cluster ──< job_definition
 
 project ─┬─< project_param
          └─< job_definition ─┬─< job_version ─< job_version_datasource >─ datasource
                              ├── job_schedule (1:1, 只有离线任务有)
+                             ├── job_stream (1:1, 只有实时任务有)
                              ├─< backfill_batch
                              └─< job_instance ─┬─< job_instance_attempt   (每次提交到引擎一条)
                                                ├─< job_instance_event     (时间线)
@@ -46,7 +48,8 @@ project ─┬─< project_param
 | `project` | 给任务分组，不做权限隔离 |
 | `project_param` | 项目参数，变量优先级为：启动参数 > 任务参数 > 项目参数 > 内置参数 |
 | `datasource` | `config_json` 存放不敏感的配置（host、port、database 等），`secret_cipher` 存放加密后的敏感字段。**如果仍被某个任务的当前版本引用，就不允许删除**，通过 `job_version_datasource` 判断 |
-| `job_definition` | 任务的身份信息：名称、类型（BATCH / STREAMING）、编辑模式（FORM / SCRIPT）。`current_version_id` 指向当前版本。`watermark` 是连续增量的水位（上一个成功窗口的终点，null = 从最早开始），`window_lag_seconds` 是窗口终点比计划时间早多少秒（V10，design.md §7.5）；`watermark_gen` 每次手动调整水位加 1，运行开始时记下，推进水位时对不上就不推进（V13） |
+| `engine_cluster` | 登记的执行集群（V16，flink-spark.md §5.3）：名称、`engine_type`（`ZETA` / `FLINK`）、`rest_urls`、Zeta Basic 认证（`username` / `password_enc`）、Flink 版本与提交端本地路径（`flink_version` / `flink_home` / `seatunnel_home` / `java_home`）以及 `is_default`。升级时由 `console.zeta` 自动导入默认 Zeta 集群，并为历史 `job_definition` 回填 `cluster_id` |
+| `job_definition` | 任务的身份信息：名称、所属项目 `project_id`、绑定集群 `cluster_id`（V16，建好后不可修改）、类型（BATCH / STREAMING）、编辑模式（FORM / SCRIPT）。`current_version_id` 指向当前版本。`watermark` 是连续增量的水位（上一个成功窗口的终点，null = 从最早开始），`window_lag_seconds` 是窗口终点比计划时间早多少秒（V10，design.md §7.5）；`watermark_gen` 每次手动调整水位加 1，运行开始时记下，推进水位时对不上就不推进（V13） |
 | `job_version` | 每次保存新增一行。`hocon_template` 里只有 `datasource_id`、`encrypt_key_id` 和变量，**不含密码和密钥**。`params_json` 是任务参数，也跟着版本走。向导任务的 `form_json` 里还有表 / 字段映射和字段处理（design.md §7.8、§7.10） |
 | `job_version_datasource` | 某个版本引用了哪些数据源，用来判断数据源能不能删除 |
 | `job_schedule` | 调度配置，console 是唯一权威，XXL-JOB 只是同步过去的副本。`sync_status` 记录同步结果（PENDING / SYNCED / FAILED），出错时把原因写在 `sync_error` |
@@ -56,7 +59,7 @@ project ─┬─< project_param
 | `job_instance_event` | 运行实例详情页的时间线 |
 | `job_metric_sample` | 运行中每次轮询记一行引擎累计计数（读写行数、字节数），用来画吞吐量曲线（design.md §10.4）。最新的完整指标快照在 `job_instance_attempt.metrics_json` |
 | `encrypt_key` | 字段加密的密钥（design.md §7.11）。`key_cipher` 是用 `CONSOLE_SECRET_KEY` 加密后的 Base64 密钥，接口从不返回密钥本身；任务配置里只写 `encrypt_key_id`，提交运行时才在内存里换成密钥。只停用，不删除 |
-| `job_stream` | 实时任务（`job_type = STREAMING`）自己的设置和运行状态，和 `job_definition` 一对一（V11，design.md §12 P2）：失败自动重启的设置；源库上的复制身份（MySQL-CDC 的 server-id 段，每个任务 8 个，`server_id_start` 起；PG 的复制槽和 publication 名 `replication_name`）；下次启动能从哪里恢复（`restore_engine_job_id`、`restore_kind` 为 SAVEPOINT 或 CHECKPOINT、当时的版本 `restore_version_id`，以及恢复必然失败时的原因 `restore_blocked`）；监控最近看到的情况（当前运行 `current_instance_id`、最近读到数据的时间、最近一次 checkpoint 和异常、引擎自动恢复次数）。实时任务一次"启动 → 停止或失败"是一条 `job_instance`（`trigger_type = START`），其中每次自动重启是一条 attempt |
+| `job_stream` | 实时任务（`job_type = STREAMING`）自己的设置和运行状态，和 `job_definition` 一对一（V11，design.md §12 P2）：失败自动重启的设置；源库上的复制身份（MySQL-CDC 的 server-id 段，每个任务 8 个，`server_id_start` 起；PG 的复制槽和 publication 名 `replication_name`）；下次启动能从哪里恢复（`restore_engine_job_id`、Flink 外部恢复路径 `restore_path`（V16）、`restore_kind` 为 SAVEPOINT 或 CHECKPOINT、当时的版本 `restore_version_id`，以及恢复必然失败时的原因 `restore_blocked`）；监控最近看到的情况（当前运行 `current_instance_id`、最近读到数据的时间、最近一次 checkpoint 和异常、引擎自动恢复次数）。实时任务一次"启动 → 停止或失败"是一条 `job_instance`（`trigger_type = START`），其中每次自动重启是一条 attempt |
 | `stream_table_schema` | 实时任务每张表、每一端一行：`columns_json` 是最近一次看到的结构，运行中定时和实际结构对比、发现表结构变更（V11）；`start_columns_json` 是最近一次启动时的结构，详情页按它列出启动以来每张表的变化（V12）。删除任务时一起删掉 |
 | `message` | 站内消息（V15，design.md §10.7）。`owner_id` 是接收人（任务创建人；集群类为空，只有管理员能看到，管理员看到全部）。会被解决的消息带 `dedup_key`，生成列 `open_key` 在未解决时等于它并且唯一，同一件事未解决期间（或解决后一小时内，会被重新打开）只累加 `repeat_count`、更新 `last_at`；`notified_at` 是最近一次要求关注的时间，重复发生时最多一小时往后挪一次；`resolved_at` 是解决时间。最近一次发生超过 90 天的每天清理，删除任务时一起删除 |
 | `message_read` | 谁在什么时候读过哪条消息；`read_at` 早于消息的 `notified_at`（读过之后又要求关注）算未读 |
@@ -95,7 +98,7 @@ PENDING ──提交──> RUNNING ──┬── SUCCESS
 | 日志 | 存放位置 | 查看方式 |
 |---|---|---|
 | 运行事件 | `job_instance_event` | console 详情页的时间线；存在数据库里，多实例部署也能看到 |
-| **SeaTunnel 作业日志**（最重要） | 各个 Zeta 节点上的 `job-<jobId>.log`，**1 天后**自动删除（`history-job-expire-minutes`） | **运行中，以及结束后 1 天以内**：console 调 `/logs/{jobId}` 实时读取，它会汇总所有节点的日志。**每次尝试结束后**：处理器拉取所有节点的日志，通过 `LogStorage` 归档，再把位置写进 `job_instance_attempt.log_*` |
+| **引擎作业日志**（最重要） | **Zeta**：各节点上的 `job-<jobId>.log`（默认 1 天后删除）；**Flink**：JM / TM 共享主日志（`.log` / `.out`）及 `/jobs/{id}/exceptions`（默认保留 1 小时） | **Zeta**：运行中调 `/logs/{jobId}` 实时读取，每次尝试结束后拉取归档进 `LogStorage`；**Flink**：不归档全集群 JM/TM 日志，仅在尝试结束后归档 `/jobs/{id}/exceptions` 异常快照，运行详情页按需拉取本次作业涉及的 JM/TM 主日志（单文件上限 512 KB，跳过历史滚动文件） |
 | XXL-JOB 调度日志 | 执行这次任务的 console 实例的本地磁盘 | 只给管理员看，在 xxl-job-admin 里查看；console 只记录 `xxl_log_id` |
 
 `LogStorage` 接口：
