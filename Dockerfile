@@ -16,9 +16,10 @@ COPY console-common/ console-common/
 COPY console-engine/ console-engine/
 COPY console-datasource/ console-datasource/
 COPY console-server/ console-server/
+COPY console-dist/ console-dist/
 # The SPA is served by Spring Boot from classpath:/static.
 COPY --from=ui /build/console-ui/dist/ console-server/src/main/resources/static/
-RUN --mount=type=cache,target=/root/.m2 mvn -B -q -DskipTests package
+RUN --mount=type=cache,target=/root/.m2 mvn -B -q -DskipTests -pl console-server -am package
 
 FROM eclipse-temurin:17-jre
 # The console works in local time (scheduled times, variables); keep it in line with MySQL and XXL-JOB.
@@ -27,7 +28,8 @@ ENV TZ=Asia/Shanghai \
 RUN groupadd --system console && useradd --system --gid console --home /app console \
     && mkdir -p /app/data /app/logs && chown -R console:console /app
 WORKDIR /app
-COPY --from=server --chown=console:console /build/console-server/target/seatunnel-console.jar app.jar
+COPY --from=server --chown=console:console /build/console-server/target/lib/ /app/lib/
+COPY --from=server --chown=console:console /build/console-server/target/seatunnel-console.jar /app/app.jar
 USER console
 # data: archived SeaTunnel job logs (console.data-dir); logs: XXL-JOB executor logs
 VOLUME ["/app/data", "/app/logs"]

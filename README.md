@@ -85,10 +85,11 @@ seatunnel-console/
 ├── console-datasource   数据源插件抽象与元数据探测（MySQL / PostgreSQL / Elasticsearch / HTTP）
 ├── console-server       Spring Boot 应用：HTTP API、持久化（MyBatis-Plus + Flyway）、
 │                        集群登记与路由（cluster）、离线执行与补数（run）、实时监控（stream）、
-│                        内嵌 XXL-JOB 执行器（seatunnelJobHandler）与调度客户端（scheduler）
+│                        数据保留清理（retention）、内嵌 XXL-JOB 执行器（seatunnelJobHandler）与调度客户端（scheduler）
+├── console-dist         发布打包模块：组装瘦包（seatunnel-console.jar + lib/）、配置模板与 Linux 启停脚本（bin/console.sh）
 ├── console-ui           Vue 3 + Vite + Element Plus 前端工程
 ├── docker/              docker-compose（MySQL、xxl-job-admin、console）与 MySQL 初始化脚本
-└── Dockerfile           多阶段构建：先构建前端静态资源，再打入 console-server 可执行 jar
+└── Dockerfile           多阶段构建：先构建前端静态资源，再分两层拷入 lib/ 与瘦包 app.jar
 ```
 
 ### 核心设计机制
@@ -128,12 +129,13 @@ seatunnel-console/
 
 ## 快速开始
 
-有两条路线：
+有三条路线：
 
-- **A. 用 Docker 部署**：MySQL、xxl-job-admin、console 一起起来，建库、建 XXL-JOB 执行器都是自动的。适合试用和交付
-- **B. 本地开发**：自己装 MySQL 和 xxl-job-admin，后端用 jar 或 IDE 启动，前端用 Vite 开发服务器
+- **A. 用 Docker 部署**：MySQL、xxl-job-admin、console 一起起来，建库、建 XXL-JOB 执行器都是自动的，适合试用和容器化交付
+- **B. 本地开发**：自己装 MySQL 和 xxl-job-admin，后端用瘦包 jar 或 IDE 启动，前端用 Vite 开发服务器
+- **C. Linux 瘦包部署（`console-dist`）**：打成 `tar.gz` 发布包（瘦包主 jar + 外部 `lib/` + Linux 启停脚本），适合传统 Linux 物理机/虚拟机部署和增量升级
 
-两条路线都先做第 0 步。
+所有路线都先做第 0 步。
 
 ### 0. 准备 SeaTunnel 集群（两条路线都需要）
 
@@ -253,6 +255,65 @@ npm run dev        # http://localhost:5173，/api 请求代理到 8088
 ```bash
 curl localhost:8088/actuator/health          # {"status":"UP"}；其他接口都要先登录
 ```
+
+### C. Linux 瘦包打包与部署（`console-dist`）
+
+`console-server` 默认以**瘦包**模式构建（主程序 `seatunnel-console.jar` 仅约 800 KB，运行时依赖放在同级 `lib/` 目录中，`MANIFEST.MF` 已自动写入 `Class-Path: lib/...`），由 `console-dist` 模块统一组装为 Linux 发布包。
+
+#### 1. 打包发布归档
+
+```bash
+# 1) 如需将前端一起打入发布包，先构建前端并拷贝到静态资源目录
+cd console-ui
+npm ci && npm run build
+mkdir -p ../console-server/src/main/resources/static
+cp -r dist/* ../console-server/src/main/resources/static/
+cd ..
+
+# 2) 构建瘦包与发布归档
+mvn -DskipTests clean package
+```
+
+产物位于 `console-dist/target/seatunnel-console-0.1.0-SNAPSHOT.tar.gz`，解压后的目录结构：
+
+```text
+seatunnel-console-0.1.0-SNAPSHOT/
+├── bin/
+│   └── console.sh              # Linux 启停控制脚本（start | stop | restart | status | run）
+├── config/
+│   ├── application.yml         # 外置配置（可选覆盖内置默认配置）
+│   └── console.env.example     # 环境变量配置模板（复制为 console.env 使用）
+├── lib/                        # 运行时第三方与内部子模块依赖 jar（约 48 MB）
+├── seatunnel-console.jar       # 瘦包主程序（不含前端约 800 KB，含前端约 2.5 MB）
+├── data/                       # 启动时自动创建：归档引擎日志目录（CONSOLE_DATA_DIR）
+└── logs/                       # 启动时自动创建：console.out、console.pid 与 xxl-job 日志
+```
+
+#### 2. 服务器部署与启停
+
+```bash
+tar -xzf seatunnel-console-0.1.0-SNAPSHOT.tar.gz
+cd seatunnel-console-0.1.0-SNAPSHOT
+
+# 复制并填写数据库连接、CONSOLE_SECRET_KEY 与 XXL-JOB 配置
+cp config/console.env.example config/console.env
+vi config/console.env
+
+# 启停与状态管理
+./bin/console.sh start          # 后台启动（日志输出到 logs/console.out）
+./bin/console.sh status         # 查看进程状态
+./bin/console.sh restart        # 优雅重启
+./bin/console.sh stop           # 优雅停止（最多等待 30 秒）
+./bin/console.sh run            # 前台运行（适合 systemd 或排查问题）
+```
+
+#### 3. 内存配置与增量升级
+
+- **默认 JVM 内存**：`bin/console.sh` 与 `Dockerfile` 默认均为 `-Xms256m -Xmx1g`（初始堆 256 MB，最大堆 1 GB）。可在 `config/console.env` 中通过 `JAVA_OPTS` 覆盖，例如：
+  ```bash
+  JAVA_OPTS="-Xms512m -Xmx2g -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
+  ```
+- **增量升级**：第三方依赖未变更时，日常发版只需上传覆盖 `seatunnel-console.jar`（若改动了 `console-common` / `console-engine` / `console-datasource` 一并替换 `lib/` 中对应 jar），再执行 `./bin/console.sh restart` 即可，无需重复上传整个 `lib/` 目录。
 
 ---
 

@@ -16,6 +16,7 @@
         <module>console-engine</module>
         <module>console-datasource</module>
         <module>console-server</module>
+        <module>console-dist</module>
     </modules>
 
     <properties>
@@ -88,6 +89,21 @@
                         <!-- Spring MVC binds @RequestParam/@PathVariable by parameter name -->
                         <parameters>true</parameters>
                     </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>3.5.0</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-dependency-plugin</artifactId>
+                    <version>3.8.1</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>3.7.1</version>
                 </plugin>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
