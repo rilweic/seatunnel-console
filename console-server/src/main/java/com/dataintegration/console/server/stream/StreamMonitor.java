@@ -239,7 +239,7 @@ public class StreamMonitor {
             // forced stop resumes; until then it is still the point the run started from.
             // On Flink, a checkpoint is only restorable when it has an external path; never record
             // a pathless checkpoint as a restore point (otherwise a restore would fail or silently start fresh).
-            boolean canRestore = engine.type() != EngineType.FLINK
+            boolean canRestore = !engine.restoresByExternalPath()
                     || (checkpoints.latestExternalPath() != null && !checkpoints.latestExternalPath().isBlank());
             boolean pathChanged = checkpoints.latestExternalPath() != null
                     && !checkpoints.latestExternalPath().equals(stream.getRestorePath());
@@ -298,7 +298,7 @@ public class StreamMonitor {
         // finishes polling /savepoints/{reqId} and atomically calls runs.finish(). Always wait
         // within the grace window (even if an earlier checkpoint path is already on job_stream) so
         // the monitor never mistakes the old checkpoint for the new savepoint or frees the job early.
-        if (engine.type() == EngineType.FLINK
+        if (engine.restoresByExternalPath()
                 && status == EngineJobStatus.FINISHED
                 && "SAVEPOINT".equals(latest.getStopRequested())) {
             if (latest.getStopRequestedAt() != null

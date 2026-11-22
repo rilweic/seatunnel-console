@@ -60,7 +60,7 @@ public class StreamProbe {
             StopResult stopped = engine.stop(jobId, true, false);
             savepointPath = stopped.savepointPath();
             String restoredId;
-            if (engine.type() == EngineType.FLINK) {
+            if (engine.restoresByExternalPath()) {
                 if (savepointPath == null || savepointPath.isBlank()) {
                     return error("带 savepoint 停止没有返回保存路径：检查 Flink 集群的 execution.checkpointing.savepoint-dir 配置");
                 }

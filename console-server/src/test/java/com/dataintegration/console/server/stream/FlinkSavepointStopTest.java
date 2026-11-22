@@ -83,6 +83,7 @@ class FlinkSavepointStopTest {
         when(runs.recorder()).thenReturn(recorder);
         when(engines.clientFor(CLUSTER_ID)).thenReturn(flinkEngine);
         when(flinkEngine.type()).thenReturn(EngineType.FLINK);
+        when(flinkEngine.restoresByExternalPath()).thenReturn(true);
 
         job = new JobDefinition();
         job.setId(JOB_ID);

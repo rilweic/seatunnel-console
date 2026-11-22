@@ -71,11 +71,17 @@ public class JobController {
     public record IncrementalRequest(LocalDateTime watermark, Integer lagSeconds) {}
 
     private final JobService jobService;
+    private final JobPreviewService previewService;
     private final ScheduleService scheduleService;
     private final WatermarkService watermarks;
 
-    public JobController(JobService jobService, ScheduleService scheduleService, WatermarkService watermarks) {
+    public JobController(
+            JobService jobService,
+            JobPreviewService previewService,
+            ScheduleService scheduleService,
+            WatermarkService watermarks) {
         this.jobService = jobService;
+        this.previewService = previewService;
         this.scheduleService = scheduleService;
         this.watermarks = watermarks;
     }
@@ -127,12 +133,12 @@ public class JobController {
 
     @PostMapping("/{id}/preview")
     public Result<JobService.PreviewResult> preview(@PathVariable String id, @Valid @RequestBody PreviewRequest body) {
-        return Result.ok(jobService.preview(id, body.hocon(), body.params(), body.startupParams(), body.scheduledTime()));
+        return Result.ok(previewService.preview(id, body.hocon(), body.params(), body.startupParams(), body.scheduledTime()));
     }
 
     @PostMapping("/{id}/render-text")
     public Result<JobService.RenderedText> renderText(@PathVariable String id, @Valid @RequestBody RenderTextRequest body) {
-        return Result.ok(jobService.renderText(id, body.text(), body.params(), body.scheduledTime()));
+        return Result.ok(previewService.renderText(id, body.text(), body.params(), body.scheduledTime()));
     }
 
     /** Continuous incremental state (docs/design.md §7.5): the watermark, the lag and the next window. */
@@ -149,7 +155,7 @@ public class JobController {
     /** Checks unsaved script content: every Jdbc source query is run once under where 1 = 0. */
     @PostMapping("/{id}/check")
     public Result<List<WizardService.Check>> checkScript(@PathVariable String id, @Valid @RequestBody ScriptCheckRequest body) {
-        return Result.ok(jobService.checkScript(id, body.hocon(), body.params()));
+        return Result.ok(previewService.checkScript(id, body.hocon(), body.params()));
     }
 
     @PostMapping("/{id}/wizard/precheck")
@@ -159,7 +165,7 @@ public class JobController {
 
     @PostMapping("/{id}/wizard/http-preview")
     public Result<WizardService.HttpPreviewResult> httpPreview(@PathVariable String id, @RequestBody WizardRequest body) {
-        return Result.ok(jobService.httpPreview(id, body.form(), body.params()));
+        return Result.ok(previewService.httpPreview(id, body.form(), body.params()));
     }
 
     @PostMapping("/{id}/switch-to-script")
@@ -169,7 +175,7 @@ public class JobController {
 
     @PostMapping("/{id}/validation/test")
     public Result<JobService.ValidationTest> testValidation(@PathVariable String id, @Valid @RequestBody ValidationTestRequest body) {
-        return Result.ok(jobService.testValidation(id, body.hocon(), body.params(), body.validation(), body.scheduledTime()));
+        return Result.ok(previewService.testValidation(id, body.hocon(), body.params(), body.validation(), body.scheduledTime()));
     }
 
     @GetMapping("/{id}/versions")

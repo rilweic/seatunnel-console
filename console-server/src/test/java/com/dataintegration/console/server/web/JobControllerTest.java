@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.dataintegration.console.server.auth.AccountChanges;
 import com.dataintegration.console.server.auth.SecurityConfig;
 import com.dataintegration.console.server.job.JobController;
+import com.dataintegration.console.server.job.JobPreviewService;
 import com.dataintegration.console.server.job.JobService;
 import com.dataintegration.console.server.job.ScheduleService;
 import com.dataintegration.console.server.job.WatermarkService;
@@ -28,6 +29,7 @@ class JobControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @MockitoBean private JobService jobService;
+    @MockitoBean private JobPreviewService jobPreviewService;
     @MockitoBean private ScheduleService scheduleService;
     @MockitoBean private WatermarkService watermarkService;
     @MockitoBean private SysUserMapper userMapper;

@@ -108,6 +108,16 @@ public class FlinkEngineClient implements EngineClient {
     }
 
     @Override
+    public boolean restoresByExternalPath() {
+        return true;
+    }
+
+    @Override
+    public boolean reusesJobIdOnSavepointRestore() {
+        return false;
+    }
+
+    @Override
     public List<String> configWarnings() {
         return rest.configWarnings();
     }

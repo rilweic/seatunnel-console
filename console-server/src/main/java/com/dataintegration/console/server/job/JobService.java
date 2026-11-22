@@ -142,7 +142,6 @@ public class JobService {
     private final RowCountValidator validator;
     private final WizardService wizardService;
     private final UserDirectory users;
-    private final ScriptChecker scriptChecker;
     private final JobInstanceMapper instanceMapper;
     private final BackfillBatchMapper backfillMapper;
     private final EncryptKeyService encryptKeys;
@@ -165,7 +164,6 @@ public class JobService {
             RowCountValidator validator,
             WizardService wizardService,
             UserDirectory users,
-            ScriptChecker scriptChecker,
             JobInstanceMapper instanceMapper,
             BackfillBatchMapper backfillMapper,
             EncryptKeyService encryptKeys,
@@ -186,7 +184,6 @@ public class JobService {
         this.validator = validator;
         this.wizardService = wizardService;
         this.users = users;
-        this.scriptChecker = scriptChecker;
         this.instanceMapper = instanceMapper;
         this.backfillMapper = backfillMapper;
         this.encryptKeys = encryptKeys;
@@ -518,16 +515,6 @@ public class JobService {
                 "回滚到 v" + old.getVersionNo());
     }
 
-    /** Runs the Jdbc source queries of unsaved script content under where 1 = 0 (docs/design.md §4.3). */
-    public List<WizardService.Check> checkScript(String jobId, String hocon, Map<String, String> params) {
-        JobDefinition job = requireEditable(jobId);
-        LocalDateTime now = LocalDateTime.now();
-        HoconTemplate template = HoconTemplate.parse(
-                Variables.render(hocon, renderer.variables(job, params, Map.of(), now, PREVIEW_INSTANCE_ID), now));
-        requireOwnersDatasources(job, template.datasourceRefs().stream().map(DatasourceRef::datasourceId).toList());
-        return scriptChecker.check(template);
-    }
-
     /** Checks a wizard form against the live datasources and returns what saving it would generate. */
     public WizardService.PrecheckResult wizardPrecheck(String jobId, WizardForm form, Map<String, String> params) {
         JobDefinition job = requireEditable(jobId);
@@ -561,16 +548,6 @@ public class JobService {
         return new WizardService.PrecheckResult(checks, result.generated());
     }
 
-    /** Sends the first page of an unsaved HTTP source with the same variables as a precheck. */
-    public WizardService.HttpPreviewResult httpPreview(String jobId, WizardForm form, Map<String, String> params) {
-        JobDefinition job = requireEditable(jobId);
-        if (!MODE_FORM.equals(job.getEditMode())) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "this job is not edited with the wizard");
-        }
-        requireOwnersDatasources(job, wizardDatasources(form));
-        return wizardService.previewHttp(form, renderer.variables(job, params, Map.of(), LocalDateTime.now(), PREVIEW_INSTANCE_ID));
-    }
-
     /**
      * One-way switch from the wizard to the script editor (docs/design.md §7.3). The current version
      * stays as it is; the next save is a plain script version.
@@ -588,53 +565,8 @@ public class JobService {
         return view(saved, currentVersionNo(saved));
     }
 
-    /** Runs the validation counts now against the editor's content, as a run at scheduledTime would. */
-    public ValidationTest testValidation(
-            String jobId,
-            String hocon,
-            Map<String, String> params,
-            ValidationSpec validation,
-            LocalDateTime scheduledTime) {
-        JobDefinition job = requireEditable(jobId);
-        if (validation == null || !validation.enabled()) {
-            throw new ConsoleException(ErrorCodes.INVALID_ARGUMENT, "validation is not enabled");
-        }
-        LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
-        JobConfigRenderer.Rendered rendered = renderer.render(job, hocon, params, Map.of(), time, PREVIEW_INSTANCE_ID, false);
-        // The counts run with the datasources' credentials, so the same ownership rule as saving applies.
-        List<String> used = new ArrayList<>(validationDatasources(validation));
-        rendered.template().datasourceRefs().forEach(ref -> used.add(ref.datasourceId()));
-        requireOwnersDatasources(job, used);
-        validator.check(validation, rendered.template());
-        return new ValidationTest(validator.validate(validation, rendered.template(), rendered.variables(), time), rendered.variables());
-    }
-
     public ValidationSpec validation(JobVersion version) {
         return version.getValidationJson() == null ? null : objectMapper.readValue(version.getValidationJson(), ValidationSpec.class);
-    }
-
-    public PreviewResult preview(
-            String jobId, String hocon, Map<String, String> params, Map<String, String> startupParams, LocalDateTime scheduledTime) {
-        JobDefinition job = requireEditable(jobId);
-        LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
-        JobConfigRenderer.Rendered rendered = renderer.render(job, hocon, params, startupParams, time, PREVIEW_INSTANCE_ID,
-                JobConfigRenderer.nextWindow(job, time), false, streams.extras(jobId));
-        return new PreviewResult(rendered.variables(), rendered.masked(), List.copyOf(rendered.unresolved()));
-    }
-
-    /**
-     * Renders a piece of config with the variables a run at scheduledTime would have (§8), for a live
-     * preview while typing: a text that cannot be rendered comes back with the reason, not as an error.
-     */
-    public RenderedText renderText(String jobId, String text, Map<String, String> params, LocalDateTime scheduledTime) {
-        JobDefinition job = require(jobId);
-        LocalDateTime time = scheduledTime == null ? LocalDateTime.now() : scheduledTime;
-        try {
-            String rendered = Variables.render(text, renderer.variables(job, params, Map.of(), time, PREVIEW_INSTANCE_ID), time);
-            return new RenderedText(rendered, List.copyOf(Variables.unresolved(rendered)), null);
-        } catch (ConsoleException e) {
-            return new RenderedText(null, List.of(), e.getMessage());
-        }
     }
 
     public List<VersionSummary> versions(String jobId) {
@@ -705,7 +637,7 @@ public class JobService {
      * A job may only use datasources of its own creator (docs/design.md §2), also when an
      * administrator edits it; an administrator moves datasources by transferring ownership.
      */
-    private void requireOwnersDatasources(JobDefinition job, Collection<String> datasourceIds) {
+    void requireOwnersDatasources(JobDefinition job, Collection<String> datasourceIds) {
         for (String id : new LinkedHashSet<>(datasourceIds)) {
             if (id == null) {
                 continue;
@@ -720,7 +652,7 @@ public class JobService {
     }
 
     /** Datasources a validation counts on by itself (custom SQL or ES); AUTO uses the job's source. */
-    private static List<String> validationDatasources(ValidationSpec validation) {
+    static List<String> validationDatasources(ValidationSpec validation) {
         List<String> ids = new ArrayList<>();
         if (validation == null || !validation.enabled()) {
             return ids;
@@ -743,7 +675,7 @@ public class JobService {
         return ids;
     }
 
-    private static List<String> wizardDatasources(WizardForm form) {
+    static List<String> wizardDatasources(WizardForm form) {
         List<String> ids = new ArrayList<>();
         if (form.source() != null) {
             ids.add(form.source().datasourceId());

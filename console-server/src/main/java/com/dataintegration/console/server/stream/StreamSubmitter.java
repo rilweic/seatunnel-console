@@ -95,9 +95,9 @@ public class StreamSubmitter {
             String from,
             String restorePath) {
         EngineClient engine = engines.clientFor(job.getClusterId());
-        // On Zeta a savepoint restore runs under the old id; on Flink (and Zeta checkpoint/fresh)
-        // a fresh id is chosen here so a lost answer can be looked up.
-        boolean keepOldId = engine.type() == EngineType.ZETA && mode == RestoreMode.SAVEPOINT && from != null;
+        // Engines that reuse the old id on savepoint restore (Zeta) submit without a fresh id;
+        // otherwise a fresh id is pre-chosen so a lost answer can be looked up.
+        boolean keepOldId = engine.reusesJobIdOnSavepointRestore() && mode == RestoreMode.SAVEPOINT && from != null;
         String id = keepOldId ? from : engine.newJobId();
         SubmitJobRequest request = new SubmitJobRequest(
                 job.getName() + "#" + instance.getId(),

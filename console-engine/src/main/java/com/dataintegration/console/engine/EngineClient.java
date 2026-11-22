@@ -72,6 +72,22 @@ public interface EngineClient {
         return true;
     }
 
+    /**
+     * Whether savepoint/checkpoint restore requires an external storage path (e.g. Flink) rather
+     * than restoring by previous engine job id (e.g. Zeta).
+     */
+    default boolean restoresByExternalPath() {
+        return false;
+    }
+
+    /**
+     * Whether restoring from a savepoint reuses the previous engine job id (Zeta) instead of
+     * assigning a fresh job id (Flink).
+     */
+    default boolean reusesJobIdOnSavepointRestore() {
+        return true;
+    }
+
     /** Configuration warnings detected on the cluster (e.g. missing Flink savepoint dir). */
     default List<String> configWarnings() {
         return List.of();
